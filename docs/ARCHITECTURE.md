@@ -46,14 +46,16 @@ As dependências apontam **para dentro**:
 presentation ──► application ──► domain ◄── infra
 ```
 
-| Camada | Pode importar | Não pode importar |
-|---|---|---|
-| `domain` | apenas `shared/domain` | NestJS HTTP, TypeORM, `application`, `infra`, `presentation` |
-| `application` | `domain`, `shared/application` | `infra`, `presentation` |
-| `infra` | `domain`, `application`, bibliotecas externas | `presentation` |
-| `presentation` | `application` (casos de uso e DTOs) | `infra` diretamente |
+| Camada         | Pode importar                                 | Não pode importar                                       |
+| -------------- | --------------------------------------------- | ------------------------------------------------------- |
+| `domain`       | apenas `shared/domain`                        | NestJS, TypeORM, `application`, `infra`, `presentation` |
+| `application`  | `domain`, `shared/application`                | `infra`, `presentation`                                 |
+| `infra`        | `domain`, `application`, bibliotecas externas | `presentation`                                          |
+| `presentation` | `application` (casos de uso e DTOs)           | `infra` diretamente                                     |
 
-O decorator `@Injectable()` é permitido em casos de uso, porque é só metadado de DI e não acopla a lógica ao framework.
+O decorator `@Injectable()` é permitido em casos de uso, porque é só metadado de DI e não acopla a lógica ao framework. No `domain`, nenhum import de `@nestjs/*` é permitido.
+
+Essas regras são **verificadas pelo ESLint** (`no-restricted-imports` em [eslint.config.mjs](../eslint.config.mjs)). Um import que viole uma fronteira quebra o `npm run lint` e bloqueia o commit.
 
 ### Inversão de dependência com repositórios
 
@@ -85,19 +87,19 @@ Um módulo só acessa outro pelo que este **exporta** no seu `@Module({ exports:
 
 ## Convenções de nomenclatura
 
-| Item | Padrão | Exemplo |
-|---|---|---|
-| Arquivos e pastas | `kebab-case` | `create-report.use-case.ts` |
-| Sufixo por tipo | `.module`, `.controller`, `.use-case`, `.entity`, `.orm-entity`, `.repository`, `.mapper`, `.dto`, `.error` | `report.orm-entity.ts` |
-| Implementação de repositório | prefixo da tecnologia | `typeorm-report.repository.ts` → `TypeOrmReportRepository` |
-| Classes | `PascalCase` + sufixo do tipo | `CreateReportUseCase`, `ReportsController` |
-| Interfaces e tipos | `PascalCase`, sem prefixo `I` | `UseCase`, `CheckHealthOutput` |
-| Variáveis e funções | `camelCase` | `reportRepository` |
-| Constantes globais | `UPPER_SNAKE_CASE` | `DEFAULT_PAGE_SIZE` |
-| Módulos de feature | plural, em inglês | `reports`, `users` |
-| Rotas HTTP | plural, `kebab-case`, sob `/api` | `GET /api/reports` |
-| Testes unitários | ao lado do arquivo testado, `*.spec.ts` | `create-report.use-case.spec.ts` |
-| Testes e2e | em `test/`, `*.e2e-spec.ts` | `test/reports.e2e-spec.ts` |
+| Item                         | Padrão                                                                                                      | Exemplo                                                    |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Arquivos e pastas            | `kebab-case`                                                                                                | `create-report.use-case.ts`                                |
+| Sufixo por tipo              | `.module`, `.controller`, `.use-case`, `.entity`, `.orm-entity`, `.repository`, `.mapper`, `.dto`, `.error` | `report.orm-entity.ts`                                     |
+| Implementação de repositório | prefixo da tecnologia                                                                                       | `typeorm-report.repository.ts` → `TypeOrmReportRepository` |
+| Classes                      | `PascalCase` + sufixo do tipo                                                                               | `CreateReportUseCase`, `ReportsController`                 |
+| Interfaces e tipos           | `PascalCase`, sem prefixo `I`                                                                               | `UseCase`, `CheckHealthOutput`                             |
+| Variáveis e funções          | `camelCase`                                                                                                 | `reportRepository`                                         |
+| Constantes globais           | `UPPER_SNAKE_CASE`                                                                                          | `DEFAULT_PAGE_SIZE`                                        |
+| Módulos de feature           | plural, em inglês                                                                                           | `reports`, `users`                                         |
+| Rotas HTTP                   | plural, `kebab-case`, sob `/api`                                                                            | `GET /api/reports`                                         |
+| Testes unitários             | ao lado do arquivo testado, `*.spec.ts`                                                                     | `create-report.use-case.spec.ts`                           |
+| Testes e2e                   | em `test/`, `*.e2e-spec.ts`                                                                                 | `test/reports.e2e-spec.ts`                                 |
 
 O código fica em inglês. Documentação, mensagens de commit e textos voltados ao usuário ficam em português.
 
@@ -105,11 +107,11 @@ O código fica em inglês. Documentação, mensagens de commit e textos voltados
 
 Configurados em `tsconfig.json` (`paths`). O `nest build` reescreve os aliases para caminhos relativos no `dist/`.
 
-| Alias | Aponta para |
-|---|---|
-| `@/*` | `src/*` |
-| `@config/*` | `src/config/*` |
-| `@shared/*` | `src/shared/*` |
+| Alias        | Aponta para     |
+| ------------ | --------------- |
+| `@/*`        | `src/*`         |
+| `@config/*`  | `src/config/*`  |
+| `@shared/*`  | `src/shared/*`  |
 | `@modules/*` | `src/modules/*` |
 
 **Regra de uso:** dentro do mesmo módulo, use imports relativos (`../../application/...`). Entre módulos ou para `shared`/`config`, use o alias (`@shared/application/use-case.interface`).
