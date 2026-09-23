@@ -116,7 +116,7 @@ Configurados em `tsconfig.json` (`paths`). O `nest build` reescreve os aliases p
 
 **Regra de uso:** dentro do mesmo módulo, use imports relativos (`../../application/...`). Entre módulos ou para `shared`/`config`, use o alias (`@shared/application/use-case.interface`).
 
-> Ao configurar o Jest (issue #5), replique esses aliases em `moduleNameMapper`.
+> Os aliases também estão replicados no `moduleNameMapper` do Jest (`package.json`). Ao criar um alias novo, atualize os dois lugares.
 
 ## Adicionando uma nova feature
 

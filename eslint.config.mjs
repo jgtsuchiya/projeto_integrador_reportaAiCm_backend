@@ -1,5 +1,7 @@
 // @ts-check
 import eslint from '@eslint/js';
+import { defineConfig } from 'eslint/config';
+import eslintPluginJest from 'eslint-plugin-jest';
 import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
@@ -10,6 +12,7 @@ import tseslint from 'typescript-eslint';
  */
 const ORM_IMPORTS = ['typeorm', '@nestjs/typeorm'];
 
+/** @type {import('eslint').Linter.Config[]} */
 const layerBoundaries = [
   {
     files: ['src/**/domain/**/*.ts'],
@@ -93,7 +96,7 @@ const layerBoundaries = [
   },
 ];
 
-export default tseslint.config(
+export default defineConfig(
   {
     ignores: ['dist/**', 'coverage/**', 'node_modules/**', 'eslint.config.mjs'],
   },
@@ -162,4 +165,18 @@ export default tseslint.config(
     },
   },
   ...layerBoundaries,
+  {
+    files: ['**/*.spec.ts', '**/*.e2e-spec.ts'],
+    ...eslintPluginJest.configs['flat/recommended'],
+    rules: {
+      ...eslintPluginJest.configs['flat/recommended'].rules,
+      // Substitui a regra do typescript-eslint por uma versão que entende mocks do Jest.
+      '@typescript-eslint/unbound-method': 'off',
+      'jest/unbound-method': 'error',
+      'jest/no-focused-tests': 'error',
+      'jest/no-disabled-tests': 'error',
+      'jest/consistent-test-it': ['error', { fn: 'it' }],
+      'jest/prefer-lowercase-title': ['error', { ignore: ['describe'] }],
+    },
+  },
 );

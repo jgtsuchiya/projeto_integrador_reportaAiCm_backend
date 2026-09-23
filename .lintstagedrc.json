@@ -1,4 +1,7 @@
 {
-  "*.ts": ["eslint --fix --max-warnings=0"],
+  "*.ts": [
+    "eslint --fix --max-warnings=0",
+    "npm test -- --bail --findRelatedTests --passWithNoTests"
+  ],
   "*.{json,md,mjs,yml,yaml}": ["prettier --write"]
 }
