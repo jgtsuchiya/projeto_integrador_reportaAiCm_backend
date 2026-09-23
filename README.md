@@ -4,6 +4,8 @@ Backend do ReportaAi Cm em NestJS + TypeScript.
 
 ## Executando localmente
 
+Requer **Node 24.9+** (versão definida no [.nvmrc](.nvmrc); com o nvm, rode `nvm use`).
+
 ```bash
 npm install         # também instala os hooks do Husky
 npm run start:dev   # http://localhost:3000/api/health
@@ -26,6 +28,19 @@ ESLint (com regras de tipo do `typescript-eslint`) + Prettier. O Husky executa o
 | `npm run typecheck`    | Checa os tipos sem gerar build                                  |
 
 No VS Code, instale as extensões recomendadas (ESLint, Prettier e EditorConfig) para formatar e corrigir ao salvar.
+
+## Testes
+
+Jest + ts-jest + `@nestjs/testing`. Os testes unitários (`*.spec.ts`) ficam ao lado do arquivo testado.
+
+| Comando              | O que faz                     |
+| -------------------- | ----------------------------- |
+| `npm test`           | Roda todos os testes          |
+| `npm run test:watch` | Roda em modo watch            |
+| `npm run test:cov`   | Gera o relatório de cobertura |
+| `npm run test:debug` | Roda com o inspector do Node  |
+
+Convenções, o que testar em cada camada e detalhes da configuração estão em [docs/TESTING.md](docs/TESTING.md).
 
 ## Arquitetura
 
