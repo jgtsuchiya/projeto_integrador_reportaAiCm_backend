@@ -4,10 +4,11 @@ Testes unitários com **Jest** + **ts-jest**, usando **`@nestjs/testing`** quand
 
 ## Estrutura
 
-| Tipo             | Onde fica                             | Padrão de nome  |
-| ---------------- | ------------------------------------- | --------------- |
-| Unitário         | ao lado do arquivo testado, em `src/` | `*.spec.ts`     |
-| Integração / e2e | em `test/` (será criado na issue #6)  | `*.e2e-spec.ts` |
+| Tipo       | Onde fica                             | Padrão de nome          |
+| ---------- | ------------------------------------- | ----------------------- |
+| Unitário   | ao lado do arquivo testado, em `src/` | `*.spec.ts`             |
+| Integração | em `test/`                            | `*.integration-spec.ts` |
+| e2e (HTTP) | em `test/`                            | `*.e2e-spec.ts`         |
 
 ```
 src/modules/health/
@@ -28,7 +29,7 @@ Deixar o teste ao lado do código deixa claro o que ainda não tem teste e evita
 | `domain`       | Instanciar diretamente (`new`), sem Nest e sem mocks. São as regras de negócio puras e devem ter a maior cobertura.         |
 | `application`  | Instanciar o caso de uso com `new`, passando **fakes** dos repositórios (implementações em memória do contrato do domínio). |
 | `presentation` | `Test.createTestingModule` com o caso de uso mockado (`useValue`). Verifica só a delegação e o mapeamento de entrada/saída. |
-| `infra`        | Testes de integração com banco real, na issue #6. Não mocke o TypeORM em teste unitário.                                    |
+| `infra`        | Testes de integração com banco real (`test/*.integration-spec.ts`). Não mocke o TypeORM em teste unitário.                  |
 
 ## Convenções
 
@@ -64,12 +65,13 @@ describe('CreateReportUseCase', () => {
 
 ## Comandos
 
-| Comando              | O que faz                                      |
-| -------------------- | ---------------------------------------------- |
-| `npm test`           | Roda todos os testes                           |
-| `npm run test:watch` | Roda em modo watch                             |
-| `npm run test:cov`   | Gera o relatório de cobertura em `coverage/`   |
-| `npm run test:debug` | Roda com o inspector do Node (`--inspect-brk`) |
+| Comando                    | O que faz                                                                                           |
+| -------------------------- | --------------------------------------------------------------------------------------------------- |
+| `npm test`                 | Roda todos os testes                                                                                |
+| `npm run test:watch`       | Roda em modo watch                                                                                  |
+| `npm run test:cov`         | Gera o relatório de cobertura em `coverage/`                                                        |
+| `npm run test:debug`       | Roda com o inspector do Node (`--inspect-brk`)                                                      |
+| `npm run test:integration` | Roda os testes de integração contra o MySQL de teste ([detalhes](DATABASE.md#testes-de-integração)) |
 
 No pre-commit, o `lint-staged` roda apenas os testes relacionados aos arquivos `.ts` alterados (`--findRelatedTests`). Se algum falhar, o commit é bloqueado.
 

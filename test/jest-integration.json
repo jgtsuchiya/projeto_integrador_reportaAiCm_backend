@@ -1,0 +1,14 @@
+{
+  "rootDir": "..",
+  "moduleFileExtensions": ["ts", "js", "json"],
+  "testRegex": "test/.*\\.integration-spec\\.ts$",
+  "transform": { "^.+\\.ts$": "ts-jest" },
+  "testEnvironment": "node",
+  "testTimeout": 30000,
+  "moduleNameMapper": {
+    "^@config/(.*)$": "<rootDir>/src/config/$1",
+    "^@shared/(.*)$": "<rootDir>/src/shared/$1",
+    "^@modules/(.*)$": "<rootDir>/src/modules/$1",
+    "^@/(.*)$": "<rootDir>/src/$1"
+  }
+}

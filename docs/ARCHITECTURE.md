@@ -99,6 +99,7 @@ Um módulo só acessa outro pelo que este **exporta** no seu `@Module({ exports:
 | Módulos de feature           | plural, em inglês                                                                                           | `reports`, `users`                                         |
 | Rotas HTTP                   | plural, `kebab-case`, sob `/api`                                                                            | `GET /api/reports`                                         |
 | Testes unitários             | ao lado do arquivo testado, `*.spec.ts`                                                                     | `create-report.use-case.spec.ts`                           |
+| Testes de integração         | em `test/`, `*.integration-spec.ts`                                                                         | `test/database.integration-spec.ts`                        |
 | Testes e2e                   | em `test/`, `*.e2e-spec.ts`                                                                                 | `test/reports.e2e-spec.ts`                                 |
 
 O código fica em inglês. Documentação, mensagens de commit e textos voltados ao usuário ficam em português.
@@ -123,6 +124,6 @@ Configurados em `tsconfig.json` (`paths`). O `nest build` reescreve os aliases p
 1. Crie `src/modules/<feature>/<feature>.module.ts`.
 2. Modele entidades e contratos de repositório em `domain/`.
 3. Escreva os casos de uso em `application/use-cases/`.
-4. Implemente os repositórios em `infra/database/` e ligue-os no módulo com `{ provide, useClass }`.
+4. Crie a entidade ORM e o mapper em `infra/database/`, registre a entidade com `TypeOrmModule.forFeature([...])`, implemente o repositório e ligue-o no módulo com `{ provide, useClass }`. Gere a migration correspondente (ver [DATABASE.md](DATABASE.md)).
 5. Exponha as rotas em `presentation/controllers/`, com DTOs de validação em `presentation/dtos/`.
 6. Importe o módulo em `app.module.ts`.

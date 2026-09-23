@@ -5,7 +5,7 @@
   "private": true,
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=24.9.0"
+    "node": ">=24.11.0"
   },
   "scripts": {
     "build": "nest build",
@@ -22,14 +22,27 @@
     "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --watch",
     "test:cov": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --coverage",
-    "test:debug": "node --inspect-brk --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --runInBand"
+    "test:debug": "node --inspect-brk --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --runInBand",
+    "test:integration": "node --env-file-if-exists=.env --env-file-if-exists=.env.test --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --config test/jest-integration.json --runInBand",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "typeorm": "node --env-file-if-exists=.env node_modules/typeorm/cli.js -d dist/shared/infra/database/data-source.js",
+    "migration:generate": "npm run build && npm run typeorm -- migration:generate",
+    "migration:run": "npm run build && npm run typeorm -- migration:run",
+    "migration:revert": "npm run build && npm run typeorm -- migration:revert",
+    "migration:show": "npm run build && npm run typeorm -- migration:show"
   },
   "dependencies": {
     "@nestjs/common": "12.0.4",
+    "@nestjs/config": "12.0.1",
     "@nestjs/core": "12.0.4",
     "@nestjs/platform-express": "12.0.4",
+    "@nestjs/typeorm": "12.0.1",
+    "mysql2": "3.24.4",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "typeorm": "1.1.1",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
