@@ -166,7 +166,7 @@ export default defineConfig(
   },
   ...layerBoundaries,
   {
-    files: ['**/*.spec.ts', '**/*.e2e-spec.ts'],
+    files: ['**/*.spec.ts', '**/*.integration-spec.ts', '**/*.e2e-spec.ts'],
     ...eslintPluginJest.configs['flat/recommended'],
     rules: {
       ...eslintPluginJest.configs['flat/recommended'].rules,

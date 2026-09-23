@@ -1,4 +1,7 @@
+import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+
+import { Env } from '@config/env.schema';
 
 import { AppModule } from './app.module';
 
@@ -8,7 +11,8 @@ async function bootstrap(): Promise<void> {
   app.setGlobalPrefix('api');
   app.enableShutdownHooks();
 
-  await app.listen(process.env.PORT ?? 3000);
+  const config = app.get<ConfigService<Env, true>>(ConfigService);
+  await app.listen(config.get('PORT', { infer: true }));
 }
 
 void bootstrap();

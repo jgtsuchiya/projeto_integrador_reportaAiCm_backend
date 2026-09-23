@@ -4,12 +4,30 @@ Backend do ReportaAi Cm em NestJS + TypeScript.
 
 ## Executando localmente
 
-Requer **Node 24.9+** (versão definida no [.nvmrc](.nvmrc); com o nvm, rode `nvm use`).
+Pré-requisitos: **Node 24.11+** (versão definida no [.nvmrc](.nvmrc); com o nvm, rode `nvm use`) e **Docker** com o Compose.
 
 ```bash
-npm install         # também instala os hooks do Husky
-npm run start:dev   # http://localhost:3000/api/health
+npm install            # também instala os hooks do Husky
+cp .env.example .env
+npm run db:up          # sobe o MySQL em Docker (porta 3307)
+npm run migration:run
+npm run start:dev      # http://localhost:3000/api/health
 ```
+
+## Banco de dados
+
+MySQL 9.7 + TypeORM. Todas as mudanças de schema são feitas por migrations.
+
+| Comando                      | O que faz                                    |
+| ---------------------------- | -------------------------------------------- |
+| `npm run db:up`              | Sobe o MySQL (Docker) e aguarda ficar pronto |
+| `npm run db:down`            | Para o container (os dados são mantidos)     |
+| `npm run migration:run`      | Aplica as migrations pendentes               |
+| `npm run migration:revert`   | Desfaz a última migration                    |
+| `npm run migration:show`     | Mostra o status das migrations               |
+| `npm run migration:generate` | Gera uma migration a partir das entidades    |
+
+Variáveis de ambiente, padrão de entidades e fluxo de migrations estão em [docs/DATABASE.md](docs/DATABASE.md).
 
 ## Dependências
 
@@ -33,12 +51,13 @@ No VS Code, instale as extensões recomendadas (ESLint, Prettier e EditorConfig)
 
 Jest + ts-jest + `@nestjs/testing`. Os testes unitários (`*.spec.ts`) ficam ao lado do arquivo testado.
 
-| Comando              | O que faz                     |
-| -------------------- | ----------------------------- |
-| `npm test`           | Roda todos os testes          |
-| `npm run test:watch` | Roda em modo watch            |
-| `npm run test:cov`   | Gera o relatório de cobertura |
-| `npm run test:debug` | Roda com o inspector do Node  |
+| Comando                    | O que faz                                             |
+| -------------------------- | ----------------------------------------------------- |
+| `npm test`                 | Roda todos os testes                                  |
+| `npm run test:watch`       | Roda em modo watch                                    |
+| `npm run test:cov`         | Gera o relatório de cobertura                         |
+| `npm run test:debug`       | Roda com o inspector do Node                          |
+| `npm run test:integration` | Roda os testes de integração (requer `npm run db:up`) |
 
 Convenções, o que testar em cada camada e detalhes da configuração estão em [docs/TESTING.md](docs/TESTING.md).
 

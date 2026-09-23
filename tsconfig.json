@@ -11,7 +11,7 @@
     "isolatedModules": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "./",
     "incremental": true,
     "skipLibCheck": true,
     "strict": true,
@@ -26,5 +26,5 @@
       "@modules/*": ["./src/modules/*"]
     }
   },
-  "include": ["./src/**/*"]
+  "include": ["./src/**/*", "./test/**/*"]
 }
