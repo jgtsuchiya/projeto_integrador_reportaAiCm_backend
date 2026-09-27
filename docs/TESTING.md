@@ -52,7 +52,7 @@ class InMemoryReportRepository extends ReportRepository {
 }
 
 describe('CreateReportUseCase', () => {
-  it('deve persistir o relato criado', async () => {
+  it('deve persistir o reporte criado', async () => {
     const repository = new InMemoryReportRepository();
     const sut = new CreateReportUseCase(repository);
 

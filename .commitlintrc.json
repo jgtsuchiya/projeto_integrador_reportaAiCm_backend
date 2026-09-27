@@ -1,0 +1,4 @@
+{
+  "extends": ["@commitlint/config-conventional"],
+  "helpUrl": "https://github.com/jgtsuchiya/projeto_integrador_reportaAiCm_backend/blob/develop/CONTRIBUTING.md#commits"
+}
