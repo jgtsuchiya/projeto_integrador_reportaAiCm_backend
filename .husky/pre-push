@@ -1,0 +1,30 @@
+# Valida o nome das branches enviadas ao remoto e bloqueia push direto em main/develop.
+# Padrões documentados em CONTRIBUTING.md. Em emergência: git push --no-verify.
+ZERO_SHA=0000000000000000000000000000000000000000
+BRANCH_PATTERN='^((feature|fix|chore|docs|refactor|test|hotfix)/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*|release/[0-9]+\.[0-9]+\.[0-9]+)$'
+
+while read -r _local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/*) branch="${remote_ref#refs/heads/}" ;;
+    *) continue ;; # tags e outras refs
+  esac
+
+  # Remoção de branch remota
+  [ "$local_sha" = "$ZERO_SHA" ] && continue
+
+  if [ "$branch" = "main" ] || [ "$branch" = "develop" ]; then
+    # Permite apenas a criação inicial da branch no remoto.
+    [ "$remote_sha" = "$ZERO_SHA" ] && continue
+    echo "✖ Push direto em '$branch' não é permitido. Abra um Pull Request (ver CONTRIBUTING.md)." >&2
+    exit 1
+  fi
+
+  if ! printf '%s' "$branch" | grep -Eq "$BRANCH_PATTERN"; then
+    echo "✖ Nome de branch inválido: '$branch'" >&2
+    echo "  Use <tipo>/<nº da issue>-<descricao-em-kebab-case>, ex.: feature/12-cadastro-de-denuncia" >&2
+    echo "  Tipos: feature, fix, chore, docs, refactor, test, hotfix. Releases: release/1.2.0" >&2
+    exit 1
+  fi
+done
+
+exit 0

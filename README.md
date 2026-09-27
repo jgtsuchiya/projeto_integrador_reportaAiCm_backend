@@ -64,3 +64,15 @@ Convenções, o que testar em cada camada e detalhes da configuração estão em
 ## Arquitetura
 
 Módulos por funcionalidade, com camadas `domain`, `application`, `infra` e `presentation`. Estrutura de pastas, regras de dependência, convenções de nomenclatura e aliases de importação estão documentados em [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Contribuindo
+
+Git Flow (`main` para produção e `develop` para integração) com commits no padrão Conventional Commits. Os nomes de branch e as mensagens de commit são validados pelos hooks do Husky, e os PRs precisam de aprovação e do CI passando.
+
+```bash
+git switch develop && git pull
+git switch -c feature/12-cadastro-de-denuncia
+git commit -m "feat(reports): cria endpoint de cadastro de denúncia"
+```
+
+O fluxo completo (branches, releases, hotfixes, commits, PRs e configuração do GitHub) está em [CONTRIBUTING.md](CONTRIBUTING.md).
