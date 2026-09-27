@@ -17,7 +17,7 @@ Closes #<!-- número da issue -->
 
 ## Checklist
 
-- [ ] O título do PR segue o padrão de commits (ex.: `feat(reports): cria endpoint de reporte`)
+- [ ] O título do PR segue o padrão de commits (ex.: `feat(reports): cria endpoint de denúncia`)
 - [ ] A branch de destino está correta (`develop` para features/fixes; `main` apenas para `release/*` e `hotfix/*`)
 - [ ] Testes adicionados ou atualizados
 - [ ] Migration criada, se houve mudança de schema

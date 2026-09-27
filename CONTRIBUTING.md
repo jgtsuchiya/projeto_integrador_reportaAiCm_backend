@@ -40,7 +40,7 @@ Formato: **`<tipo>/<nº da issue>-<descricao-em-kebab-case>`**, em letras minús
 | `release/`  | Preparação de versão: `release/<x.y.z>`  | `develop` | `main`, com back-merge em `develop` |
 | `hotfix/`   | Correção urgente em produção             | `main`    | `main`, com back-merge em `develop` |
 
-Exemplos: `feature/12-cadastro-de-reporte`, `fix/15-corrige-paginacao`, `chore/2-git-flow`, `release/0.1.0`.
+Exemplos: `feature/12-cadastro-de-denuncia`, `fix/15-corrige-paginacao`, `chore/2-git-flow`, `release/0.1.0`.
 
 Toda branch de trabalho está ligada a uma issue. Se a issue não existir, crie-a antes.
 
@@ -49,11 +49,11 @@ Toda branch de trabalho está ligada a uma issue. Se a issue não existir, crie-
 ```bash
 git switch develop
 git pull
-git switch -c feature/12-cadastro-de-reporte
+git switch -c feature/12-cadastro-de-denuncia
 
 # ... desenvolva, com commits pequenos no padrão abaixo ...
 
-git push -u origin feature/12-cadastro-de-reporte
+git push -u origin feature/12-cadastro-de-denuncia
 # Abra o PR para a develop no GitHub
 ```
 
@@ -107,7 +107,7 @@ Padrão [Conventional Commits](https://www.conventionalcommits.org/pt-br/v1.0.0/
 Exemplos:
 
 ```
-feat(reports): cria endpoint de cadastro de reporte
+feat(reports): cria endpoint de cadastro de denúncia
 fix(database): corrige timezone das datas salvas
 chore(deps): atualiza typeorm para 1.1.2
 docs: documenta fluxo de migrations
@@ -124,7 +124,7 @@ Regras:
 ## Pull Requests
 
 - **Destino:** `develop` para qualquer branch de trabalho. A `main` recebe apenas `release/*`, `hotfix/*` e nada mais.
-- **Título:** no mesmo padrão dos commits, por exemplo `feat(reports): cria endpoint de reporte`. No squash merge, o título do PR vira o commit na `develop`.
+- **Título:** no mesmo padrão dos commits, por exemplo `feat(reports): cria endpoint de denúncia`. No squash merge, o título do PR vira o commit na `develop`.
 - **Descrição:** preencha o template e vincule a issue com `Closes #12`, que fecha a issue automaticamente no merge.
 - **Para o merge, são obrigatórios:**
   - **1 aprovação** de outra pessoa da equipe;

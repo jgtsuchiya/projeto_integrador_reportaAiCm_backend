@@ -102,9 +102,6 @@ Para verificar se está tudo certo, acesse **http://localhost:3000/api/health**.
 
 O modelo está em [.env.example](.env.example). As variáveis são validadas quando a aplicação sobe: se alguma estiver faltando ou inválida, a API não inicia e mostra qual variável está errada.
 
-<<<<<<< Updated upstream
-Módulos por funcionalidade, com camadas `domain`, `application`, `infra` e `presentation`. Estrutura de pastas, regras de dependência, convenções de nomenclatura e aliases de importação estão documentados em [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-=======
 
 | Variável           | Obrigatória | Padrão        | Descrição                                         |
 | ------------------ | ----------- | ------------- | ------------------------------------------------- |
@@ -210,3 +207,15 @@ git commit -m "feat(reports): cria endpoint de cadastro de reporte"
 Os hooks do Git validam o código, a mensagem de commit e o nome da branch. Os Pull Requests para a `develop` precisam de aprovação e do CI passando. O fluxo completo está no [CONTRIBUTING.md](CONTRIBUTING.md).
 
 > > > > > > > Stashed changes
+
+## Contribuindo
+
+Git Flow (`main` para produção e `develop` para integração) com commits no padrão Conventional Commits. Os nomes de branch e as mensagens de commit são validados pelos hooks do Husky, e os PRs precisam de aprovação e do CI passando.
+
+```bash
+git switch develop && git pull
+git switch -c feature/12-cadastro-de-denuncia
+git commit -m "feat(reports): cria endpoint de cadastro de denúncia"
+```
+
+O fluxo completo (branches, releases, hotfixes, commits, PRs e configuração do GitHub) está em [CONTRIBUTING.md](CONTRIBUTING.md).
