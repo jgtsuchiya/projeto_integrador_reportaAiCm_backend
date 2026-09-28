@@ -103,7 +103,7 @@ Para verificar se está tudo certo, acesse **http://localhost:3000/api/health**.
 
 > O MySQL do Docker usa a porta **3307**, para não conflitar com um MySQL instalado localmente. Todas as rotas da API ficam sob o prefixo `/api`.
 >
-> O **SuperTokens Core** (autenticação) responde em **http://localhost:3567/hello**. Ele usa um PostgreSQL próprio, que só é acessível pela rede interna do Docker. As rotas nativas de autenticação ficam em `/api/auth` (ex.: `POST /api/auth/signin`). O sign-up nativo fica desativado: o cidadão se cadastra pelo `POST /api/clients`.
+> O **SuperTokens Core** (autenticação) responde em **http://localhost:3567/hello**. Ele usa um PostgreSQL próprio, que só é acessível pela rede interna do Docker. As rotas nativas de autenticação ficam em `/api/auth` (ex.: `POST /api/auth/signin`). O sign-up nativo fica desativado: o cidadão se cadastra pelo `POST /api/clients`. O ADM é convidado pelo SuperAdm (`POST /api/admins`) e ativa o acesso definindo a senha pelo link do e-mail (`POST /api/invitations/accept`).
 >
 > O **Mailpit** captura os e-mails que a API envia em dev, e nenhum deles sai para a internet. A caixa de entrada fica em **http://localhost:8025**, e o SMTP, na porta 1025.
 
@@ -111,31 +111,32 @@ Para verificar se está tudo certo, acesse **http://localhost:3000/api/health**.
 
 O modelo está em [.env.example](.env.example). As variáveis são validadas quando a aplicação sobe: se alguma estiver faltando ou inválida, a API não inicia e mostra qual variável está errada.
 
-| Variável                     | Obrigatória | Padrão        | Descrição                                                                                                         |
-| ---------------------------- | ----------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `NODE_ENV`                   | não         | `development` | `development`, `test` ou `production`                                                                             |
-| `PORT`                       | não         | `3000`        | Porta HTTP da API                                                                                                 |
-| `DB_HOST`                    | sim         | (nenhum)      | Host do MySQL                                                                                                     |
-| `DB_PORT`                    | não         | `3306`        | Porta do MySQL (`3307` no Docker local)                                                                           |
-| `DB_USERNAME`                | sim         | (nenhum)      | Usuário do banco                                                                                                  |
-| `DB_PASSWORD`                | sim         | (nenhum)      | Senha do banco                                                                                                    |
-| `DB_DATABASE`                | sim         | (nenhum)      | Nome do banco                                                                                                     |
-| `DB_LOGGING`                 | não         | `false`       | Exibe as queries SQL no log                                                                                       |
-| `DB_ROOT_PASSWORD`           | só Docker   | (nenhum)      | Senha de root do MySQL, usada pelo docker-compose                                                                 |
-| `SUPERTOKENS_CONNECTION_URI` | sim         | (nenhum)      | Endereço do SuperTokens Core (`http://localhost:3567`)                                                            |
-| `SUPERTOKENS_API_KEY`        | sim         | (nenhum)      | Chave da API no Core (mín. 20 caracteres: letras, números, `=` e `-`). O docker-compose usa o mesmo valor no Core |
-| `API_DOMAIN`                 | sim         | (nenhum)      | URL pública da API, usada pelo SuperTokens                                                                        |
-| `WEB_APP_URL`                | sim         | (nenhum)      | URL do painel web, usada pelo SuperTokens e pelo CORS                                                             |
-| `SUPERTOKENS_DB_PASSWORD`    | só Docker   | (nenhum)      | Senha do PostgreSQL do SuperTokens, usada pelo docker-compose                                                     |
-| `SMTP_HOST`                  | sim         | (nenhum)      | Servidor SMTP (`localhost` com o Mailpit do Docker)                                                               |
-| `SMTP_PORT`                  | não         | `587`         | Porta do SMTP (`1025` no Mailpit)                                                                                 |
-| `SMTP_SECURE`                | não         | `false`       | `true` para TLS direto (porta 465). Com `false`, o STARTTLS é usado se o servidor oferecer                        |
-| `SMTP_USER`                  | não         | (vazio)       | Usuário do SMTP. Vazio, a conexão é feita sem autenticação (caso do Mailpit)                                      |
-| `SMTP_PASSWORD`              | não         | (vazio)       | Senha do SMTP                                                                                                     |
-| `MAIL_FROM`                  | sim         | (nenhum)      | Remetente dos e-mails, no formato `Nome <email>` ou só o e-mail                                                   |
-| `SUPER_ADMIN_NAME`           | só seed     | (nenhum)      | Nome do SuperAdm criado pelo `npm run seed`                                                                       |
-| `SUPER_ADMIN_EMAIL`          | só seed     | (nenhum)      | E-mail (login) do SuperAdm                                                                                        |
-| `SUPER_ADMIN_PASSWORD`       | só seed     | (nenhum)      | Senha do SuperAdm: de 8 a 128 caracteres, com pelo menos uma letra e um número                                    |
+| Variável                      | Obrigatória | Padrão        | Descrição                                                                                                         |
+| ----------------------------- | ----------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                    | não         | `development` | `development`, `test` ou `production`                                                                             |
+| `PORT`                        | não         | `3000`        | Porta HTTP da API                                                                                                 |
+| `DB_HOST`                     | sim         | (nenhum)      | Host do MySQL                                                                                                     |
+| `DB_PORT`                     | não         | `3306`        | Porta do MySQL (`3307` no Docker local)                                                                           |
+| `DB_USERNAME`                 | sim         | (nenhum)      | Usuário do banco                                                                                                  |
+| `DB_PASSWORD`                 | sim         | (nenhum)      | Senha do banco                                                                                                    |
+| `DB_DATABASE`                 | sim         | (nenhum)      | Nome do banco                                                                                                     |
+| `DB_LOGGING`                  | não         | `false`       | Exibe as queries SQL no log                                                                                       |
+| `DB_ROOT_PASSWORD`            | só Docker   | (nenhum)      | Senha de root do MySQL, usada pelo docker-compose                                                                 |
+| `SUPERTOKENS_CONNECTION_URI`  | sim         | (nenhum)      | Endereço do SuperTokens Core (`http://localhost:3567`)                                                            |
+| `SUPERTOKENS_API_KEY`         | sim         | (nenhum)      | Chave da API no Core (mín. 20 caracteres: letras, números, `=` e `-`). O docker-compose usa o mesmo valor no Core |
+| `API_DOMAIN`                  | sim         | (nenhum)      | URL pública da API, usada pelo SuperTokens                                                                        |
+| `WEB_APP_URL`                 | sim         | (nenhum)      | URL do painel web, usada pelo SuperTokens, pelo CORS e no link do convite de ADM                                  |
+| `INVITATION_EXPIRES_IN_HOURS` | não         | `48`          | Validade, em horas, do link de convite de ADM                                                                     |
+| `SUPERTOKENS_DB_PASSWORD`     | só Docker   | (nenhum)      | Senha do PostgreSQL do SuperTokens, usada pelo docker-compose                                                     |
+| `SMTP_HOST`                   | sim         | (nenhum)      | Servidor SMTP (`localhost` com o Mailpit do Docker)                                                               |
+| `SMTP_PORT`                   | não         | `587`         | Porta do SMTP (`1025` no Mailpit)                                                                                 |
+| `SMTP_SECURE`                 | não         | `false`       | `true` para TLS direto (porta 465). Com `false`, o STARTTLS é usado se o servidor oferecer                        |
+| `SMTP_USER`                   | não         | (vazio)       | Usuário do SMTP. Vazio, a conexão é feita sem autenticação (caso do Mailpit)                                      |
+| `SMTP_PASSWORD`               | não         | (vazio)       | Senha do SMTP                                                                                                     |
+| `MAIL_FROM`                   | sim         | (nenhum)      | Remetente dos e-mails, no formato `Nome <email>` ou só o e-mail                                                   |
+| `SUPER_ADMIN_NAME`            | só seed     | (nenhum)      | Nome do SuperAdm criado pelo `npm run seed`                                                                       |
+| `SUPER_ADMIN_EMAIL`           | só seed     | (nenhum)      | E-mail (login) do SuperAdm                                                                                        |
+| `SUPER_ADMIN_PASSWORD`        | só seed     | (nenhum)      | Senha do SuperAdm: de 8 a 128 caracteres, com pelo menos uma letra e um número                                    |
 
 O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md).
 

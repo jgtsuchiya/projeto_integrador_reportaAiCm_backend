@@ -24,6 +24,9 @@ export const envSchema = z.object({
   API_DOMAIN: z.url(),
   WEB_APP_URL: z.url(),
 
+  // Validade do link de convite do ADM (RN06).
+  INVITATION_EXPIRES_IN_HOURS: z.coerce.number().int().positive().default(48),
+
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
   // true para TLS direto (porta 465). Com false, o STARTTLS é usado se o servidor oferecer.

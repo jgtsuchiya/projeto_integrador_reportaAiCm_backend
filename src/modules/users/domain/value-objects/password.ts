@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import { InvalidPasswordError } from '../errors/invalid-password.error';
 
 export const PASSWORD_MIN_LENGTH = 8;
@@ -29,6 +31,15 @@ export class Password {
     }
 
     return new Password(raw);
+  }
+
+  /**
+   * Senha que ninguém conhece, para a credencial do ADMIN convidado, que define a própria
+   * senha ao aceitar o convite (RN06). São 256 bits aleatórios em base64url, com uma letra e um
+   * número no fim para garantir a política.
+   */
+  static random(): Password {
+    return Password.create(`${randomBytes(32).toString('base64url')}a1`);
   }
 
   get value(): string {

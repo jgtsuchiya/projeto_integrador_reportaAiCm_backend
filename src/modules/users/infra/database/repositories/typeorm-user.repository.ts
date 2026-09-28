@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 
 import { ClientProfile } from '../../../domain/entities/client-profile.entity';
+import { UserToken } from '../../../domain/entities/user-token.entity';
 import { User } from '../../../domain/entities/user.entity';
 import { CpfAlreadyInUseError } from '../../../domain/errors/cpf-already-in-use.error';
 import { EmailAlreadyInUseError } from '../../../domain/errors/email-already-in-use.error';
@@ -12,6 +13,7 @@ import { Role } from '../../../domain/value-objects/role';
 import { ClientProfileOrmEntity } from '../entities/client-profile.orm-entity';
 import { UserOrmEntity } from '../entities/user.orm-entity';
 import { ClientProfileMapper } from '../mappers/client-profile.mapper';
+import { UserTokenMapper } from '../mappers/user-token.mapper';
 import { ROLE_IDS, UserMapper } from '../mappers/user.mapper';
 
 /** Erros de domínio para cada restrição UNIQUE, pelo nome dado nas entidades ORM. */
@@ -57,6 +59,18 @@ export class TypeOrmUserRepository implements UserRepository {
       await this.repository.manager.transaction(async (manager) => {
         await manager.insert(UserOrmEntity, UserMapper.toPersistence(user));
         await manager.insert(ClientProfileOrmEntity, ClientProfileMapper.toPersistence(profile));
+      });
+    } catch (error) {
+      throw toUniqueConstraintError(error) ?? error;
+    }
+  }
+
+  async saveWithToken(user: User, token: UserToken): Promise<void> {
+    try {
+      await this.repository.manager.transaction(async (manager) => {
+        // O token referencia o usuário (FK), então o usuário é gravado primeiro.
+        await manager.save(UserMapper.toPersistence(user));
+        await manager.save(UserTokenMapper.toPersistence(token));
       });
     } catch (error) {
       throw toUniqueConstraintError(error) ?? error;

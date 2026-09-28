@@ -1,4 +1,5 @@
 import { ClientProfile } from '../entities/client-profile.entity';
+import { UserToken } from '../entities/user-token.entity';
 import { User } from '../entities/user.entity';
 import { Email } from '../value-objects/email';
 import { Role } from '../value-objects/role';
@@ -17,4 +18,10 @@ export abstract class UserRepository {
    * grava o mesmo e-mail ou CPF antes (RN02, RN07).
    */
   abstract saveClient(user: User, profile: ClientProfile): Promise<void>;
+  /**
+   * Grava o usuário e o token na mesma transação: se um falhar, nenhum é gravado. Usado no
+   * convite do ADMIN (insere os dois) e no aceite (atualiza os dois). Lança
+   * `EmailAlreadyInUseError` quando um cadastro concorrente grava o mesmo e-mail antes (RN02).
+   */
+  abstract saveWithToken(user: User, token: UserToken): Promise<void>;
 }

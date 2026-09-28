@@ -32,6 +32,10 @@ class InMemoryUserRepository extends UserRepository {
   async saveClient(user: User): Promise<void> {
     await this.save(user);
   }
+
+  async saveWithToken(user: User): Promise<void> {
+    await this.save(user);
+  }
 }
 
 describe('AuthorizeSignInUseCase', () => {

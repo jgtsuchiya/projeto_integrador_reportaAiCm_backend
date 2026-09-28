@@ -22,6 +22,7 @@ describe('envSchema', () => {
       PORT: 3000,
       DB_PORT: 3306,
       DB_LOGGING: false,
+      INVITATION_EXPIRES_IN_HOURS: 48,
       SMTP_PORT: 587,
       SMTP_SECURE: false,
       SMTP_USER: '',
@@ -35,6 +36,7 @@ describe('envSchema', () => {
       PORT: '8080',
       DB_PORT: '3307',
       DB_LOGGING: 'true',
+      INVITATION_EXPIRES_IN_HOURS: '72',
       SMTP_PORT: '1025',
       SMTP_SECURE: 'true',
     });
@@ -42,6 +44,7 @@ describe('envSchema', () => {
     expect(env.PORT).toBe(8080);
     expect(env.DB_PORT).toBe(3307);
     expect(env.DB_LOGGING).toBe(true);
+    expect(env.INVITATION_EXPIRES_IN_HOURS).toBe(72);
     expect(env.SMTP_PORT).toBe(1025);
     expect(env.SMTP_SECURE).toBe(true);
   });
@@ -89,6 +92,15 @@ describe('envSchema', () => {
     'deve rejeitar %s que não seja uma URL',
     (variable) => {
       const result = envSchema.safeParse({ ...validEnv, [variable]: 'localhost' });
+
+      expect(result.success).toBe(false);
+    },
+  );
+
+  it.each(['0', '-1', '1.5', 'abc'])(
+    'deve rejeitar a validade do convite %p, que não é um número inteiro de horas',
+    (hours) => {
+      const result = envSchema.safeParse({ ...validEnv, INVITATION_EXPIRES_IN_HOURS: hours });
 
       expect(result.success).toBe(false);
     },
