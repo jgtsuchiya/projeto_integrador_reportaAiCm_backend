@@ -17,6 +17,14 @@ npm run start:dev
 - Na primeira inicialização, o script [docker/mysql/init](../docker/mysql/init/01-create-test-database.sh) cria também o banco de testes `<DB_DATABASE>_test`.
 - Os dados ficam no volume `mysql-data`. Para zerar o banco, rode `docker compose down -v`. Isso **apaga todos os dados**, e os scripts de inicialização rodam de novo na próxima subida.
 
+### PostgreSQL do SuperTokens
+
+As credenciais, as sessões e os papéis dos usuários ficam no **SuperTokens Core**, que não suporta MySQL. Por isso, o `npm run db:up` também sobe um **PostgreSQL 18** exclusivo do Core (serviço `supertokens-db`, volume `supertokens-db-data`).
+
+- As tabelas do SuperTokens são criadas e migradas pelo próprio Core. Elas **não** entram nas migrations do TypeORM.
+- O PostgreSQL não expõe porta no host: só o Core o acessa, pela rede interna do Docker. A API fala apenas com o Core, em `SUPERTOKENS_CONNECTION_URI`.
+- O `docker compose down -v` também apaga esse volume, e com ele todas as credenciais e sessões.
+
 ## Variáveis de ambiente
 
 As variáveis são validadas na inicialização pelo schema Zod em [src/config/env.schema.ts](../src/config/env.schema.ts). Se alguma estiver inválida, a aplicação não sobe e mostra qual variável está errada.

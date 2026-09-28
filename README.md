@@ -58,6 +58,7 @@ flowchart LR
 | Linguagem             | TypeScript 6.0                                       |
 | Framework             | NestJS 12                                            |
 | Banco de dados        | MySQL 9.7 (Docker)                                   |
+| Autenticação          | SuperTokens Core 12.2 (Docker, com PostgreSQL 18)    |
 | ORM e migrations      | TypeORM 1.1                                          |
 | Validação de ambiente | Zod + `@nestjs/config`                               |
 | Testes                | Jest + ts-jest + `@nestjs/testing`                   |
@@ -69,7 +70,7 @@ Todas as dependências usam **versão exata** (sem `^` ou `~`). O [.npmrc](.npmr
 ## Pré-requisitos
 
 - **Node.js 24.11+**: a versão está no [.nvmrc](.nvmrc). Com o nvm, rode `nvm use`.
-- **Docker** com o **Docker Compose**, para o banco de dados local.
+- **Docker** com o **Docker Compose**, para o MySQL e o SuperTokens locais.
 - **Git**.
 
 ## Instalação e execução local
@@ -86,7 +87,7 @@ npm install
 # 3. Crie o arquivo de ambiente
 cp .env.example .env
 
-# 4. Suba o MySQL em Docker e aplique as migrations
+# 4. Suba o MySQL e o SuperTokens em Docker e aplique as migrations
 npm run db:up
 npm run migration:run
 
@@ -97,22 +98,29 @@ npm run start:dev
 Para verificar se está tudo certo, acesse **http://localhost:3000/api/health**. A resposta esperada é `{"status":"ok", ...}`.
 
 > O MySQL do Docker usa a porta **3307**, para não conflitar com um MySQL instalado localmente. Todas as rotas da API ficam sob o prefixo `/api`.
+>
+> O **SuperTokens Core** (autenticação) responde em **http://localhost:3567/hello**. Ele usa um PostgreSQL próprio, que só é acessível pela rede interna do Docker. As rotas nativas de autenticação ficam em `/api/auth` (ex.: `POST /api/auth/signin`).
 
 ## Variáveis de ambiente
 
 O modelo está em [.env.example](.env.example). As variáveis são validadas quando a aplicação sobe: se alguma estiver faltando ou inválida, a API não inicia e mostra qual variável está errada.
 
-| Variável           | Obrigatória | Padrão        | Descrição                                         |
-| ------------------ | ----------- | ------------- | ------------------------------------------------- |
-| `NODE_ENV`         | não         | `development` | `development`, `test` ou `production`             |
-| `PORT`             | não         | `3000`        | Porta HTTP da API                                 |
-| `DB_HOST`          | sim         | (nenhum)      | Host do MySQL                                     |
-| `DB_PORT`          | não         | `3306`        | Porta do MySQL (`3307` no Docker local)           |
-| `DB_USERNAME`      | sim         | (nenhum)      | Usuário do banco                                  |
-| `DB_PASSWORD`      | sim         | (nenhum)      | Senha do banco                                    |
-| `DB_DATABASE`      | sim         | (nenhum)      | Nome do banco                                     |
-| `DB_LOGGING`       | não         | `false`       | Exibe as queries SQL no log                       |
-| `DB_ROOT_PASSWORD` | só Docker   | (nenhum)      | Senha de root do MySQL, usada pelo docker-compose |
+| Variável                     | Obrigatória | Padrão        | Descrição                                                                                                         |
+| ---------------------------- | ----------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                   | não         | `development` | `development`, `test` ou `production`                                                                             |
+| `PORT`                       | não         | `3000`        | Porta HTTP da API                                                                                                 |
+| `DB_HOST`                    | sim         | (nenhum)      | Host do MySQL                                                                                                     |
+| `DB_PORT`                    | não         | `3306`        | Porta do MySQL (`3307` no Docker local)                                                                           |
+| `DB_USERNAME`                | sim         | (nenhum)      | Usuário do banco                                                                                                  |
+| `DB_PASSWORD`                | sim         | (nenhum)      | Senha do banco                                                                                                    |
+| `DB_DATABASE`                | sim         | (nenhum)      | Nome do banco                                                                                                     |
+| `DB_LOGGING`                 | não         | `false`       | Exibe as queries SQL no log                                                                                       |
+| `DB_ROOT_PASSWORD`           | só Docker   | (nenhum)      | Senha de root do MySQL, usada pelo docker-compose                                                                 |
+| `SUPERTOKENS_CONNECTION_URI` | sim         | (nenhum)      | Endereço do SuperTokens Core (`http://localhost:3567`)                                                            |
+| `SUPERTOKENS_API_KEY`        | sim         | (nenhum)      | Chave da API no Core (mín. 20 caracteres: letras, números, `=` e `-`). O docker-compose usa o mesmo valor no Core |
+| `API_DOMAIN`                 | sim         | (nenhum)      | URL pública da API, usada pelo SuperTokens                                                                        |
+| `WEB_APP_URL`                | sim         | (nenhum)      | URL do painel web, usada pelo SuperTokens e pelo CORS                                                             |
+| `SUPERTOKENS_DB_PASSWORD`    | só Docker   | (nenhum)      | Senha do PostgreSQL do SuperTokens, usada pelo docker-compose                                                     |
 
 O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md).
 
@@ -139,23 +147,23 @@ O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes
 
 **Testes**
 
-| Comando                    | O que faz                                               |
-| -------------------------- | ------------------------------------------------------- |
-| `npm test`                 | Roda os testes unitários                                |
-| `npm run test:watch`       | Roda os testes unitários em modo watch                  |
-| `npm run test:cov`         | Gera o relatório de cobertura em `coverage/`            |
-| `npm run test:integration` | Roda os testes de integração com MySQL (requer `db:up`) |
+| Comando                    | O que faz                                                             |
+| -------------------------- | --------------------------------------------------------------------- |
+| `npm test`                 | Roda os testes unitários                                              |
+| `npm run test:watch`       | Roda os testes unitários em modo watch                                |
+| `npm run test:cov`         | Gera o relatório de cobertura em `coverage/`                          |
+| `npm run test:integration` | Roda os testes de integração com MySQL e SuperTokens (requer `db:up`) |
 
 **Banco de dados e migrations**
 
-| Comando                                                                     | O que faz                                     |
-| --------------------------------------------------------------------------- | --------------------------------------------- |
-| `npm run db:up`                                                             | Sobe o MySQL em Docker e aguarda ficar pronto |
-| `npm run db:down`                                                           | Para o container (os dados são mantidos)      |
-| `npm run migration:run`                                                     | Aplica as migrations pendentes                |
-| `npm run migration:revert`                                                  | Desfaz a última migration                     |
-| `npm run migration:show`                                                    | Lista as migrations e o status de cada uma    |
-| `npm run migration:generate -- src/shared/infra/database/migrations/<Nome>` | Gera uma migration a partir das entidades     |
+| Comando                                                                     | O que faz                                                                            |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `npm run db:up`                                                             | Sobe o MySQL e o SuperTokens (Core + PostgreSQL) em Docker e aguarda ficarem prontos |
+| `npm run db:down`                                                           | Para os containers (os dados são mantidos)                                           |
+| `npm run migration:run`                                                     | Aplica as migrations pendentes                                                       |
+| `npm run migration:revert`                                                  | Desfaz a última migration                                                            |
+| `npm run migration:show`                                                    | Lista as migrations e o status de cada uma                                           |
+| `npm run migration:generate -- src/shared/infra/database/migrations/<Nome>` | Gera uma migration a partir das entidades                                            |
 
 ## Estrutura de pastas
 
@@ -179,7 +187,7 @@ O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes
 ├── docs/                      # documentação técnica
 ├── docker/                    # scripts de inicialização do MySQL
 ├── .github/                   # CI, template de PR e rulesets
-└── docker-compose.yml         # MySQL para desenvolvimento local
+└── docker-compose.yml         # MySQL, SuperTokens Core e PostgreSQL para desenvolvimento local
 ```
 
 Cada funcionalidade é um módulo independente, dividido em camadas. As regras de dependência entre as camadas são verificadas pelo ESLint. Os detalhes estão em [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
