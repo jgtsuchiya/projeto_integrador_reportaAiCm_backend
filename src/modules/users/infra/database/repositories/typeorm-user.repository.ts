@@ -1,13 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { QueryFailedError, Repository } from 'typeorm';
+import { FindOptionsWhere, QueryFailedError, Repository } from 'typeorm';
+
+import { Page, PageRequest } from '@shared/domain/pagination';
 
 import { ClientProfile } from '../../../domain/entities/client-profile.entity';
 import { UserToken } from '../../../domain/entities/user-token.entity';
 import { User } from '../../../domain/entities/user.entity';
 import { CpfAlreadyInUseError } from '../../../domain/errors/cpf-already-in-use.error';
 import { EmailAlreadyInUseError } from '../../../domain/errors/email-already-in-use.error';
-import { UserRepository } from '../../../domain/repositories/user.repository';
+import { UserFilter, UserRepository } from '../../../domain/repositories/user.repository';
 import { Email } from '../../../domain/value-objects/email';
 import { Role } from '../../../domain/value-objects/role';
 import { ClientProfileOrmEntity } from '../entities/client-profile.orm-entity';
@@ -48,6 +50,23 @@ export class TypeOrmUserRepository implements UserRepository {
 
   async existsByRole(role: Role): Promise<boolean> {
     return this.repository.existsBy({ roleId: ROLE_IDS[role] });
+  }
+
+  async findPage(filter: UserFilter, { page, pageSize }: PageRequest): Promise<Page<User>> {
+    const where: FindOptionsWhere<UserOrmEntity> = { roleId: ROLE_IDS[filter.role] };
+    if (filter.status) {
+      where.status = filter.status;
+    }
+
+    const [entities, total] = await this.repository.findAndCount({
+      where,
+      // O id desempata os cadastros no mesmo milissegundo, para a paginação ser estável.
+      order: { createdAt: 'DESC', id: 'ASC' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    });
+
+    return { items: entities.map((entity) => UserMapper.toDomain(entity)), page, pageSize, total };
   }
 
   async save(user: User): Promise<void> {

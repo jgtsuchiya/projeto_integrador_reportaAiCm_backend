@@ -1,3 +1,5 @@
+import type { Page } from '@shared/domain/pagination';
+
 import { User } from '../../domain/entities/user.entity';
 import { UserRepository } from '../../domain/repositories/user.repository';
 import { Email } from '../../domain/value-objects/email';
@@ -24,6 +26,10 @@ class InMemoryUserRepository extends UserRepository {
 
   async existsByRole(role: Role): Promise<boolean> {
     return [...this.items.values()].some((user) => user.role === role);
+  }
+
+  async findPage(): Promise<Page<User>> {
+    throw new Error('Não usado neste teste.');
   }
 
   async save(user: User): Promise<void> {

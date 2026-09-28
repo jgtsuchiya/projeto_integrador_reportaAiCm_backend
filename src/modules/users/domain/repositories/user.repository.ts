@@ -1,8 +1,17 @@
+import { Page, PageRequest } from '@shared/domain/pagination';
+
 import { ClientProfile } from '../entities/client-profile.entity';
 import { UserToken } from '../entities/user-token.entity';
 import { User } from '../entities/user.entity';
 import { Email } from '../value-objects/email';
 import { Role } from '../value-objects/role';
+import { UserStatus } from '../value-objects/user-status';
+
+/** Filtros das listagens de usuários. */
+export interface UserFilter {
+  role: Role;
+  status?: UserStatus;
+}
 
 /** As buscas ignoram os usuários excluídos (`deleted_at` preenchido). */
 export abstract class UserRepository {
@@ -10,6 +19,8 @@ export abstract class UserRepository {
   abstract findByEmail(email: Email): Promise<User | null>;
   abstract existsByEmail(email: Email): Promise<boolean>;
   abstract existsByRole(role: Role): Promise<boolean>;
+  /** Lista paginada, dos mais recentes para os mais antigos. */
+  abstract findPage(filter: UserFilter, page: PageRequest): Promise<Page<User>>;
   /** Insere ou atualiza, inclusive a exclusão lógica feita por `User.delete()`. */
   abstract save(user: User): Promise<void>;
   /**

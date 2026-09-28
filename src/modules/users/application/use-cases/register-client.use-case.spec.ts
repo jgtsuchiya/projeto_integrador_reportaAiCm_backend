@@ -1,3 +1,5 @@
+import type { Page } from '@shared/domain/pagination';
+
 import { ClientProfile } from '../../domain/entities/client-profile.entity';
 import { User } from '../../domain/entities/user.entity';
 import { CpfAlreadyInUseError } from '../../domain/errors/cpf-already-in-use.error';
@@ -44,6 +46,10 @@ class InMemoryUserRepository extends UserRepository {
 
   async existsByRole(role: Role): Promise<boolean> {
     return this.database.users.some((user) => user.role === role);
+  }
+
+  async findPage(): Promise<Page<User>> {
+    throw new Error('Não usado neste teste.');
   }
 
   async save(user: User): Promise<void> {

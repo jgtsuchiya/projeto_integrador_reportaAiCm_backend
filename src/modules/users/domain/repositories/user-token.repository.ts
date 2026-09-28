@@ -8,4 +8,6 @@ export abstract class UserTokenRepository {
    * É assim que o reenvio do convite invalida os links antigos (RN06).
    */
   abstract replace(token: UserToken): Promise<void>;
+  /** Remove todos os tokens do usuário, como o convite pendente de um ADMIN excluído. */
+  abstract deleteByUserId(userId: string): Promise<void>;
 }
