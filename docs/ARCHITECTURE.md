@@ -85,6 +85,62 @@ Assim, o caso de uso depende apenas de `ReportRepository`. Os testes unitários 
 
 Um módulo só acessa outro pelo que este **exporta** no seu `@Module({ exports: [...] })`, em geral um caso de uso ou um serviço de fachada. Nunca importe arquivos internos (`domain/`, `infra/`) de outro módulo.
 
+## Validação, erros e paginação
+
+A base HTTP compartilhada fica em `shared/` e vale para todas as rotas. O pipe e o filtro são globais, registrados no `AppModule` (e não no `main.ts`), para valerem também nos testes e2e.
+
+### Validação de request
+
+O [`ZodValidationPipe`](../src/shared/presentation/pipes/zod-validation.pipe.ts) valida o parâmetro com o schema Zod passado no próprio decorator e entrega o valor já transformado (coerções, defaults, `trim`):
+
+```ts
+@Post()
+create(@Body({ schema: createClientSchema }) body: CreateClientBody) {}
+
+@Get(':id')
+findOne(@Param('id', { schema: z.uuid() }) id: string) {}
+```
+
+Parâmetros sem schema passam sem validação. As mensagens padrão do Zod saem em português, e o schema pode definir mensagens próprias.
+
+### Erros
+
+O domínio lança erros de uma das categorias de [`shared/domain/errors`](../src/shared/domain/errors), e o [`GlobalExceptionFilter`](../src/shared/presentation/filters/global-exception.filter.ts) os converte em HTTP:
+
+| Categoria           | Status | Exemplo                             |
+| ------------------- | ------ | ----------------------------------- |
+| `NotFoundError`     | 404    | Usuário não encontrado              |
+| `ConflictError`     | 409    | E-mail ou CPF já cadastrado         |
+| `BusinessRuleError` | 422    | Transição de status inválida        |
+| `ForbiddenError`    | 403    | Operação não permitida para o papel |
+
+Os erros de cada feature estendem uma categoria (ex.: `class EmailAlreadyInUseError extends ConflictError`). O segundo argumento do construtor vai para `details`.
+
+Todas as respostas de erro seguem o mesmo corpo:
+
+```json
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": "Dados inválidos.",
+  "details": [{ "field": "email", "message": "Formato do endereço de e-mail inválido" }]
+}
+```
+
+`details` só aparece quando existe. Qualquer erro não mapeado vira 500 com `"message": "Erro interno do servidor."`: a mensagem original e o stack vão só para o log.
+
+O Nest consulta os filtros globais na ordem inversa de registro. Um filtro mais específico (como o dos erros do SuperTokens) precisa ser registrado depois do `GlobalExceptionFilter` para ter precedência.
+
+### Paginação
+
+As listagens recebem `?page=1&pageSize=20` (`pageSize` de 1 a 100) e respondem `{ items, page, pageSize, total }`. Os tipos `PageRequest` e `Page<T>` ficam em [`shared/domain/pagination.ts`](../src/shared/domain/pagination.ts), para que os contratos de repositório também os usem, e o schema da query em [`page-request.schema.ts`](../src/shared/presentation/pagination/page-request.schema.ts). Os filtros de cada listagem estendem esse schema:
+
+```ts
+const listClientsQuerySchema = pageRequestSchema.extend({
+  status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+});
+```
+
 ## Convenções de nomenclatura
 
 | Item                         | Padrão                                                                                                      | Exemplo                                                    |
