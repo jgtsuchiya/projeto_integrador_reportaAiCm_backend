@@ -65,6 +65,13 @@ export class SuperTokensIdentityProvider implements IdentityProvider {
     await Session.revokeAllSessionsForUser(userId);
   }
 
+  async createRoles(roles: readonly Role[]): Promise<void> {
+    // Sem permissões: a autorização é feita pelo papel, conferido no MySQL.
+    for (const role of roles) {
+      await UserRoles.createNewRoleOrAddPermissions(role, []);
+    }
+  }
+
   async assignRole(userId: string, role: Role): Promise<void> {
     const result = await UserRoles.addRoleToUser(TENANT_ID, userId, role);
 
