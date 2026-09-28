@@ -5,6 +5,13 @@ import UserRoles from 'supertokens-node/recipe/userroles';
 
 import type { Env } from '@config/env.schema';
 
+import {
+  buildPasswordField,
+  overrideEmailPasswordApis,
+  overrideEmailPasswordFunctions,
+  SuperTokensHooks,
+} from './email-password.overrides';
+
 export type SuperTokensEnv = Pick<
   Env,
   'SUPERTOKENS_CONNECTION_URI' | 'SUPERTOKENS_API_KEY' | 'API_DOMAIN' | 'WEB_APP_URL'
@@ -16,8 +23,15 @@ export const SUPERTOKENS_API_BASE_PATH = '/api/auth';
 /**
  * Configuração do `supertokens.init`. As validades dos tokens e o algoritmo de hash da
  * senha são configurados no Core (docker-compose), não aqui.
+ *
+ * A sessão aceita os tokens por cookie (painel web) e por header (app, com
+ * `st-auth-mode: header`), que é o padrão do SDK: na criação da sessão vale o modo pedido
+ * pelo front, e na verificação o SDK procura nos dois lugares.
  */
-export function buildSuperTokensConfig(env: SuperTokensEnv): SuperTokensConfig {
+export function buildSuperTokensConfig(
+  env: SuperTokensEnv,
+  hooks: SuperTokensHooks,
+): SuperTokensConfig {
   return {
     framework: 'express',
     supertokens: {
@@ -30,6 +44,16 @@ export function buildSuperTokensConfig(env: SuperTokensEnv): SuperTokensConfig {
       websiteDomain: env.WEB_APP_URL,
       apiBasePath: SUPERTOKENS_API_BASE_PATH,
     },
-    recipeList: [EmailPassword.init(), Session.init(), UserRoles.init()],
+    recipeList: [
+      EmailPassword.init({
+        signUpFeature: { formFields: [buildPasswordField(hooks)] },
+        override: {
+          functions: overrideEmailPasswordFunctions(hooks),
+          apis: overrideEmailPasswordApis,
+        },
+      }),
+      Session.init(),
+      UserRoles.init(),
+    ],
   };
 }

@@ -34,7 +34,13 @@ describe('Seed do SuperAdm (integração)', () => {
       throw new Error(`DB_DATABASE deve terminar com "_test" (recebido: "${env.DB_DATABASE}").`);
     }
 
-    supertokens.init(buildSuperTokensConfig(env));
+    // Os hooks só são usados pelas rotas nativas do SuperTokens, que este teste não chama.
+    supertokens.init(
+      buildSuperTokensConfig(env, {
+        authorizeSignIn: async () => true,
+        checkPasswordPolicy: async () => null,
+      }),
+    );
     dataSource = new DataSource({
       ...buildDataSourceOptions(env),
       entities: [RoleOrmEntity, UserOrmEntity, ClientProfileOrmEntity, UserTokenOrmEntity],

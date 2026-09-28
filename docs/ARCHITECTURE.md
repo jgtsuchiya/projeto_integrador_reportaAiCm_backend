@@ -152,6 +152,24 @@ const listClientsQuerySchema = pageRequestSchema.extend({
 });
 ```
 
+## Autenticação e autorização
+
+Toda rota da aplicação exige uma sessão do SuperTokens (cookie no painel web, header no app). Quem garante isso é o [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts) global, registrado no `AppModule`. A cada requisição, ele carrega o usuário no MySQL e bloqueia quem não estiver ACTIVE ou tiver sido excluído, mesmo com o token ainda válido. O papel conferido é o do MySQL, não o do token.
+
+Os decorators ficam em [`modules/auth/presentation/decorators`](../src/modules/auth/presentation/decorators) e podem ser importados pelos controllers de qualquer módulo:
+
+```ts
+@Public() // libera sem sessão
+@Post()
+create() {}
+
+@Roles(Role.SUPER_ADMIN, Role.ADMIN) // 403 para os outros papéis
+@Get()
+list(@CurrentUser() user: AuthenticatedUser) {} // { id, role }
+```
+
+`@Public()` e `@Roles(...)` valem no método ou no controller inteiro. Quando os dois têm o decorator, vale o do método. Sem sessão, a resposta é 401 no formato do SuperTokens (`{ "message": "unauthorised" }`), que os SDKs de front usam para renovar a sessão.
+
 ## Convenções de nomenclatura
 
 | Item                         | Padrão                                                                                                      | Exemplo                                                    |
