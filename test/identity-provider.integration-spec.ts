@@ -20,7 +20,13 @@ describe('SuperTokensIdentityProvider (integração)', () => {
   const createdIds: string[] = [];
 
   beforeAll(async () => {
-    supertokens.init(buildSuperTokensConfig(env));
+    // Os hooks só são usados pelas rotas nativas do SuperTokens, que este teste não chama.
+    supertokens.init(
+      buildSuperTokensConfig(env, {
+        authorizeSignIn: async () => true,
+        checkPasswordPolicy: async () => null,
+      }),
+    );
     // Em produção, o seed cria os papéis. Aqui o teste garante que o CLIENT existe.
     await UserRoles.createNewRoleOrAddPermissions(Role.CLIENT, []);
   });
