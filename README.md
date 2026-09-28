@@ -91,7 +91,10 @@ cp .env.example .env
 npm run db:up
 npm run migration:run
 
-# 5. Inicie a API em modo de desenvolvimento
+# 5. Cadastre o SuperAdm (dados das variáveis SUPER_ADMIN_* do .env)
+npm run seed
+
+# 6. Inicie a API em modo de desenvolvimento
 npm run start:dev
 ```
 
@@ -121,6 +124,9 @@ O modelo está em [.env.example](.env.example). As variáveis são validadas qua
 | `API_DOMAIN`                 | sim         | (nenhum)      | URL pública da API, usada pelo SuperTokens                                                                        |
 | `WEB_APP_URL`                | sim         | (nenhum)      | URL do painel web, usada pelo SuperTokens e pelo CORS                                                             |
 | `SUPERTOKENS_DB_PASSWORD`    | só Docker   | (nenhum)      | Senha do PostgreSQL do SuperTokens, usada pelo docker-compose                                                     |
+| `SUPER_ADMIN_NAME`           | só seed     | (nenhum)      | Nome do SuperAdm criado pelo `npm run seed`                                                                       |
+| `SUPER_ADMIN_EMAIL`          | só seed     | (nenhum)      | E-mail (login) do SuperAdm                                                                                        |
+| `SUPER_ADMIN_PASSWORD`       | só seed     | (nenhum)      | Senha do SuperAdm: de 8 a 128 caracteres, com pelo menos uma letra e um número                                    |
 
 O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md).
 
@@ -164,6 +170,7 @@ O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes
 | `npm run migration:revert`                                                  | Desfaz a última migration                                                            |
 | `npm run migration:show`                                                    | Lista as migrations e o status de cada uma                                           |
 | `npm run migration:generate -- src/shared/infra/database/migrations/<Nome>` | Gera uma migration a partir das entidades                                            |
+| `npm run seed`                                                              | Cadastra o SuperAdm no MySQL e no SuperTokens (idempotente, requer as migrations)    |
 
 ## Estrutura de pastas
 

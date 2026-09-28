@@ -25,7 +25,7 @@ jest.mock('supertokens-node/recipe/session', () => ({
 }));
 jest.mock('supertokens-node/recipe/userroles', () => ({
   __esModule: true,
-  default: { addRoleToUser: jest.fn() },
+  default: { addRoleToUser: jest.fn(), createNewRoleOrAddPermissions: jest.fn() },
 }));
 
 const USER_ID = '5d1c1f0e-8a3b-4f6e-9c2d-7b8a9e0f1a2b';
@@ -143,6 +143,18 @@ describe('SuperTokensIdentityProvider', () => {
     await sut.revokeAllSessions(USER_ID);
 
     expect(Session.revokeAllSessionsForUser).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it('deve criar os papéis sem permissões', async () => {
+    jest
+      .mocked(UserRoles.createNewRoleOrAddPermissions)
+      .mockResolvedValue({ status: 'OK', createdNewRole: true });
+
+    await sut.createRoles([Role.SUPER_ADMIN, Role.CLIENT]);
+
+    expect(UserRoles.createNewRoleOrAddPermissions).toHaveBeenCalledTimes(2);
+    expect(UserRoles.createNewRoleOrAddPermissions).toHaveBeenCalledWith('SUPER_ADMIN', []);
+    expect(UserRoles.createNewRoleOrAddPermissions).toHaveBeenCalledWith('CLIENT', []);
   });
 
   describe('assignRole', () => {

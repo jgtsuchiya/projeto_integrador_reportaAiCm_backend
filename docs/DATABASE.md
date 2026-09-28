@@ -143,6 +143,23 @@ Regras:
 - Revise o SQL gerado antes de commitar. O `migration:generate` pode propor um `DROP` inesperado.
 - Implemente o `down` sempre que a reversão for possível.
 
+## Seed do SuperAdm
+
+O SUPER_ADMIN não é criado por nenhum endpoint (RN03): ele é cadastrado pelo seed, com os dados das variáveis `SUPER_ADMIN_NAME`, `SUPER_ADMIN_EMAIL` e `SUPER_ADMIN_PASSWORD` (só o seed as exige).
+
+```bash
+npm run migration:run  # o seed precisa da tabela roles
+npm run seed
+```
+
+Como as migrations, o script faz o build e roda sobre o `dist/` ([src/seed.ts](../src/seed.ts)). Ele:
+
+1. cria os papéis `SUPER_ADMIN`, `ADMIN` e `CLIENT` no UserRoles do SuperTokens, se ainda não existirem;
+2. se já existir um SUPER_ADMIN no MySQL, só avisa no log e termina;
+3. cria a credencial no SuperTokens, atribui o papel SUPER_ADMIN e grava o `users` com o mesmo id, `ACTIVE` e com `email_verified_at` preenchido.
+
+Se a gravação no MySQL falhar, a credencial criada no SuperTokens é removida, e o seed pode ser rodado de novo. Rodar o seed várias vezes não duplica o SuperAdm.
+
 ## Testes de integração
 
 Ficam em `test/`, com o padrão `*.integration-spec.ts`, e rodam contra um MySQL real:
