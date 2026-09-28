@@ -32,6 +32,9 @@ class InMemoryUserRepository extends UserRepository {
   async save(user: User): Promise<void> {
     this.items.push(user);
   }
+  async saveClient(user: User): Promise<void> {
+    await this.save(user);
+  }
 }
 
 class FakeIdentityProvider extends IdentityProvider {

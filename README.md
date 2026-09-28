@@ -103,7 +103,7 @@ Para verificar se está tudo certo, acesse **http://localhost:3000/api/health**.
 
 > O MySQL do Docker usa a porta **3307**, para não conflitar com um MySQL instalado localmente. Todas as rotas da API ficam sob o prefixo `/api`.
 >
-> O **SuperTokens Core** (autenticação) responde em **http://localhost:3567/hello**. Ele usa um PostgreSQL próprio, que só é acessível pela rede interna do Docker. As rotas nativas de autenticação ficam em `/api/auth` (ex.: `POST /api/auth/signin`).
+> O **SuperTokens Core** (autenticação) responde em **http://localhost:3567/hello**. Ele usa um PostgreSQL próprio, que só é acessível pela rede interna do Docker. As rotas nativas de autenticação ficam em `/api/auth` (ex.: `POST /api/auth/signin`). O sign-up nativo fica desativado: o cidadão se cadastra pelo `POST /api/clients`.
 >
 > O **Mailpit** captura os e-mails que a API envia em dev, e nenhum deles sai para a internet. A caixa de entrada fica em **http://localhost:8025**, e o SMTP, na porta 1025.
 
