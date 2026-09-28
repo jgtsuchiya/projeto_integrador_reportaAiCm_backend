@@ -40,6 +40,7 @@
     "@nestjs/platform-express": "12.0.4",
     "@nestjs/typeorm": "12.0.1",
     "mysql2": "3.24.4",
+    "nodemailer": "10.0.11",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
     "supertokens-node": "24.0.3",
