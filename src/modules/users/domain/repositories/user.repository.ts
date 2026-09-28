@@ -1,3 +1,4 @@
+import { ClientProfile } from '../entities/client-profile.entity';
 import { User } from '../entities/user.entity';
 import { Email } from '../value-objects/email';
 import { Role } from '../value-objects/role';
@@ -10,4 +11,10 @@ export abstract class UserRepository {
   abstract existsByRole(role: Role): Promise<boolean>;
   /** Insere ou atualiza, inclusive a exclusão lógica feita por `User.delete()`. */
   abstract save(user: User): Promise<void>;
+  /**
+   * Insere o CLIENT e o perfil dele na mesma transação: se um falhar, nenhum é gravado.
+   * Lança `EmailAlreadyInUseError` ou `CpfAlreadyInUseError` quando um cadastro concorrente
+   * grava o mesmo e-mail ou CPF antes (RN02, RN07).
+   */
+  abstract saveClient(user: User, profile: ClientProfile): Promise<void>;
 }
