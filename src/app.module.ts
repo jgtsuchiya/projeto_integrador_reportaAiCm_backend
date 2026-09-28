@@ -4,6 +4,7 @@ import { APP_FILTER, APP_PIPE } from '@nestjs/core';
 
 import { envSchema } from '@config/env.schema';
 import { HealthModule } from '@modules/health/health.module';
+import { UsersModule } from '@modules/users/users.module';
 import { DatabaseModule } from '@shared/infra/database/database.module';
 import { GlobalExceptionFilter } from '@shared/presentation/filters/global-exception.filter';
 import { ZodValidationPipe } from '@shared/presentation/pipes/zod-validation.pipe';
@@ -13,6 +14,7 @@ import { ZodValidationPipe } from '@shared/presentation/pipes/zod-validation.pip
     ConfigModule.forRoot({ isGlobal: true, cache: true, validationSchema: envSchema }),
     DatabaseModule,
     HealthModule,
+    UsersModule,
   ],
   providers: [
     // Registrados aqui (e não no main.ts) para valerem também nos testes e2e.
