@@ -54,6 +54,70 @@ Convenções de mapeamento:
 
 As entidades ORM são registradas no módulo da própria feature com `TypeOrmModule.forFeature([ReportOrmEntity])`. O `autoLoadEntities` já as inclui na conexão, então não existe uma lista global de entidades para manter.
 
+Outros cuidados:
+
+- **Nomes de índices e constraints** são explícitos nas entidades (`@Unique('uq_users_email', ...)`, `@Index('idx_users_role_id')`, `foreignKeyConstraintName: 'fk_users_role_id'`). Com os mesmos nomes na migration, o `migration:generate` não propõe diferenças falsas. O padrão é `uq_`, `idx_` e `fk_` + `<tabela>_<colunas>`.
+- **`created_at` e `updated_at`** usam `CREATED_AT_COLUMN` e `UPDATED_AT_COLUMN`, exportados de [`base.orm-entity.ts`](../src/shared/infra/database/base.orm-entity.ts). Sem eles, o TypeORM gera `DEFAULT CURRENT_TIMESTAMP(6)`, que o MySQL recusa numa coluna `datetime(3)`. As tabelas que não estendem `BaseOrmEntity` devem reaproveitá-los.
+- **Colunas `DATE`** (sem hora) são lidas como string `'YYYY-MM-DD'` (`dateStrings: ['DATE']` na conexão). Como `Date`, o dia mudaria em fusos negativos, como o do Brasil.
+
+## Tabelas
+
+```mermaid
+erDiagram
+    roles ||--o{ users : "role_id"
+    users ||--o| client_profiles : "user_id"
+    users ||--o{ user_tokens : "user_id"
+    users |o--o{ users : "created_by_id"
+
+    roles {
+        smallint id PK
+        varchar code UK
+        varchar name
+    }
+    users {
+        char id PK
+        smallint role_id FK
+        varchar name
+        varchar email UK
+        enum status
+        datetime email_verified_at
+        boolean mfa_enabled
+        datetime last_login_at
+        char created_by_id FK
+        datetime created_at
+        datetime updated_at
+        datetime deleted_at
+    }
+    client_profiles {
+        char user_id PK, FK
+        char cpf UK
+        varchar phone
+        date birth_date
+        datetime created_at
+        datetime updated_at
+    }
+    user_tokens {
+        char id PK
+        char user_id FK
+        enum type
+        char token_hash UK
+        datetime expires_at
+        datetime used_at
+        datetime created_at
+    }
+```
+
+| Tabela            | Conteúdo                                                                                                                                                 |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `roles`           | Papéis de acesso, carregados pela própria migration: `1` = `SUPER_ADMIN`, `2` = `ADMIN`, `3` = `CLIENT`. O `code` é o mesmo nome do papel no SuperTokens |
+| `users`           | Dados comuns a todos os papéis. O `id` é o mesmo do usuário no SuperTokens, e não há coluna de senha. `deleted_at` marca a exclusão lógica               |
+| `client_profiles` | Dados exclusivos do Client (1:1 com `users`, com a PK igual à FK): CPF e telefone só com dígitos, e a data de nascimento                                 |
+| `user_tokens`     | Tokens de uso único enviados por e-mail (convite de ADM). Guarda só o SHA-256 do token                                                                   |
+
+As FKs de `client_profiles` e `user_tokens` usam `ON DELETE CASCADE`, porque esses registros não existem sem o usuário. As de `users` (`role_id` e `created_by_id`) usam `RESTRICT`. Na prática, os usuários não são apagados fisicamente: a exclusão é lógica.
+
+As credenciais e as sessões ficam no PostgreSQL do SuperTokens, criado e mantido pelo próprio Core, fora das nossas migrations. O modelo completo e as regras de negócio estão em [sprints/sprint-2-usuarios.md](sprints/sprint-2-usuarios.md).
+
 ## Migrations
 
 As migrations ficam em [src/shared/infra/database/migrations](../src/shared/infra/database/migrations), numa única linha do tempo para todo o projeto. A CLI do TypeORM roda sobre o código **compilado** (`dist/`), e por isso os scripts fazem o build antes de executar.
