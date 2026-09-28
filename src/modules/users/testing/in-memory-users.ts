@@ -1,10 +1,12 @@
+import { Page, PageRequest } from '@shared/domain/pagination';
+
 import { IdentityProvider } from '../application/ports/identity-provider';
 import { ClientProfile } from '../domain/entities/client-profile.entity';
 import { UserToken } from '../domain/entities/user-token.entity';
 import { User } from '../domain/entities/user.entity';
 import { EmailAlreadyInUseError } from '../domain/errors/email-already-in-use.error';
 import { UserNotFoundError } from '../domain/errors/user-not-found.error';
-import { UserRepository } from '../domain/repositories/user.repository';
+import { UserFilter, UserRepository } from '../domain/repositories/user.repository';
 import { UserTokenRepository } from '../domain/repositories/user-token.repository';
 import { Email } from '../domain/value-objects/email';
 import { Password } from '../domain/value-objects/password';
@@ -47,6 +49,16 @@ export class InMemoryUserRepository extends UserRepository {
     return this.activeUsers().some((user) => user.role === role);
   }
 
+  async findPage(filter: UserFilter, { page, pageSize }: PageRequest): Promise<Page<User>> {
+    const users = this.activeUsers()
+      .filter((user) => user.role === filter.role)
+      .filter((user) => !filter.status || user.status === filter.status)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || a.id.localeCompare(b.id));
+    const start = (page - 1) * pageSize;
+
+    return { items: users.slice(start, start + pageSize), page, pageSize, total: users.length };
+  }
+
   async save(user: User): Promise<void> {
     this.database.users.set(user.id, user);
   }
@@ -85,6 +97,14 @@ export class InMemoryUserTokenRepository extends UserTokenRepository {
     }
 
     this.database.tokens.set(token.id, token);
+  }
+
+  async deleteByUserId(userId: string): Promise<void> {
+    for (const [id, token] of this.database.tokens) {
+      if (token.userId === userId) {
+        this.database.tokens.delete(id);
+      }
+    }
   }
 }
 

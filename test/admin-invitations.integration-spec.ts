@@ -218,8 +218,11 @@ describe('Convite de ADM por e-mail (integração)', () => {
         name: 'Ana Souza',
         email,
         status: 'PENDING',
+        emailVerifiedAt: null,
+        lastLoginAt: null,
         createdById: superAdmin.id,
         createdAt: expect.any(String) as string,
+        updatedAt: expect.any(String) as string,
         invitation: { sent: true, expiresAt: expect.any(String) as string },
       });
       await expect(findUser(body.id)).resolves.toMatchObject({

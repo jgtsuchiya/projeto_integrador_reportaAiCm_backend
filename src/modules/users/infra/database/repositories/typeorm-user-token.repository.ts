@@ -26,4 +26,8 @@ export class TypeOrmUserTokenRepository implements UserTokenRepository {
       await manager.insert(UserTokenOrmEntity, UserTokenMapper.toPersistence(token));
     });
   }
+
+  async deleteByUserId(userId: string): Promise<void> {
+    await this.repository.delete({ userId });
+  }
 }

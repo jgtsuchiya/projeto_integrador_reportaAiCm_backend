@@ -5,6 +5,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 
 import { envSchema } from '@config/env.schema';
 import { ClientProfile } from '@modules/users/domain/entities/client-profile.entity';
+import { UserToken } from '@modules/users/domain/entities/user-token.entity';
 import { User } from '@modules/users/domain/entities/user.entity';
 import { CpfAlreadyInUseError } from '@modules/users/domain/errors/cpf-already-in-use.error';
 import { EmailAlreadyInUseError } from '@modules/users/domain/errors/email-already-in-use.error';
@@ -13,11 +14,14 @@ import { Cpf } from '@modules/users/domain/value-objects/cpf';
 import { Email } from '@modules/users/domain/value-objects/email';
 import { Phone } from '@modules/users/domain/value-objects/phone';
 import { Role } from '@modules/users/domain/value-objects/role';
+import { UserStatus } from '@modules/users/domain/value-objects/user-status';
+import { UserTokenType } from '@modules/users/domain/value-objects/user-token-type';
 import { ClientProfileOrmEntity } from '@modules/users/infra/database/entities/client-profile.orm-entity';
 import { RoleOrmEntity } from '@modules/users/infra/database/entities/role.orm-entity';
 import { UserTokenOrmEntity } from '@modules/users/infra/database/entities/user-token.orm-entity';
 import { UserOrmEntity } from '@modules/users/infra/database/entities/user.orm-entity';
 import { TypeOrmClientProfileRepository } from '@modules/users/infra/database/repositories/typeorm-client-profile.repository';
+import { TypeOrmUserTokenRepository } from '@modules/users/infra/database/repositories/typeorm-user-token.repository';
 import { TypeOrmUserRepository } from '@modules/users/infra/database/repositories/typeorm-user.repository';
 import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
 
@@ -27,6 +31,7 @@ describe('Repositórios de usuários (integração)', () => {
   let queryRunner: QueryRunner;
   let users: TypeOrmUserRepository;
   let profiles: TypeOrmClientProfileRepository;
+  let tokens: TypeOrmUserTokenRepository;
 
   beforeAll(async () => {
     // Proteção: os testes de integração alteram o schema; nunca rode contra o banco de desenvolvimento.
@@ -57,6 +62,7 @@ describe('Repositórios de usuários (integração)', () => {
     profiles = new TypeOrmClientProfileRepository(
       queryRunner.manager.getRepository(ClientProfileOrmEntity),
     );
+    tokens = new TypeOrmUserTokenRepository(queryRunner.manager.getRepository(UserTokenOrmEntity));
   });
 
   afterEach(async () => {
@@ -146,6 +152,64 @@ describe('Repositórios de usuários (integração)', () => {
       });
     });
 
+    describe('findPage', () => {
+      // Datas no futuro: os ADMINs do teste ficam no topo da lista, antes de outros do banco.
+      async function savedAdmin(
+        createdAt: string,
+        status: UserStatus = UserStatus.PENDING,
+      ): Promise<User> {
+        const superAdmin = await saved(buildSuperAdminLike());
+        const date = new Date(createdAt);
+
+        return saved(
+          User.restore(randomUUID(), {
+            role: Role.ADMIN,
+            name: 'Admin Fulano',
+            email: Email.create(`admin.${randomUUID()}@example.com`),
+            status,
+            emailVerifiedAt: null,
+            mfaEnabled: false,
+            lastLoginAt: null,
+            createdById: superAdmin.id,
+            createdAt: date,
+            updatedAt: date,
+            deletedAt: null,
+          }),
+        );
+      }
+
+      it('deve listar só o papel pedido, dos mais recentes para os mais antigos, paginado', async () => {
+        const older = await savedAdmin('2999-01-01T00:00:00.000Z');
+        const newer = await savedAdmin('2999-01-02T00:00:00.000Z');
+        const newest = await savedAdmin('2999-01-03T00:00:00.000Z');
+
+        const first = await users.findPage({ role: Role.ADMIN }, { page: 1, pageSize: 2 });
+        const second = await users.findPage({ role: Role.ADMIN }, { page: 2, pageSize: 2 });
+
+        expect(first.items.map(({ id }) => id)).toEqual([newest.id, newer.id]);
+        expect(second.items[0].id).toBe(older.id);
+        expect(first.total).toBeGreaterThanOrEqual(3);
+        expect(first).toMatchObject({ page: 1, pageSize: 2 });
+        expect(first.items.every((user) => user.role === Role.ADMIN)).toBe(true);
+      });
+
+      it('deve filtrar pelo status e ignorar os excluídos', async () => {
+        const inactive = await savedAdmin('2999-02-01T00:00:00.000Z', UserStatus.INACTIVE);
+        const deleted = await savedAdmin('2999-02-02T00:00:00.000Z', UserStatus.INACTIVE);
+        deleted.delete();
+        await users.save(deleted);
+
+        const result = await users.findPage(
+          { role: Role.ADMIN, status: UserStatus.INACTIVE },
+          { page: 1, pageSize: 100 },
+        );
+
+        expect(result.items[0].id).toBe(inactive.id);
+        expect(result.items.map(({ id }) => id)).not.toContain(deleted.id);
+        expect(result.items.every((user) => user.status === UserStatus.INACTIVE)).toBe(true);
+      });
+    });
+
     describe('saveClient', () => {
       it('deve gravar o usuário e o perfil do Client', async () => {
         const user = buildClient();
@@ -179,6 +243,23 @@ describe('Repositórios de usuários (integração)', () => {
           users.saveClient(second, buildProfile(second.id, '111.444.777-35')),
         ).rejects.toThrow(EmailAlreadyInUseError);
       });
+    });
+  });
+
+  describe('TypeOrmUserTokenRepository', () => {
+    it('deve remover todos os tokens do usuário e manter os dos outros', async () => {
+      const superAdmin = await saved(buildSuperAdminLike());
+      const issue = (userId: string): UserToken =>
+        UserToken.issue({ userId, type: UserTokenType.INVITATION, validForHours: 48 }).token;
+      const token = issue(superAdmin.id);
+      const other = issue((await saved(buildClient())).id);
+      await tokens.replace(token);
+      await tokens.replace(other);
+
+      await tokens.deleteByUserId(superAdmin.id);
+
+      await expect(tokens.findByHash(token.tokenHash)).resolves.toBeNull();
+      await expect(tokens.findByHash(other.tokenHash)).resolves.not.toBeNull();
     });
   });
 

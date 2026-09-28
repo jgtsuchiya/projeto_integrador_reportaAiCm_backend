@@ -9,7 +9,7 @@ import { UserRepository } from '../../domain/repositories/user.repository';
 import { Email } from '../../domain/value-objects/email';
 import { Password } from '../../domain/value-objects/password';
 import { Role } from '../../domain/value-objects/role';
-import { UserStatus } from '../../domain/value-objects/user-status';
+import { AdminOutput, toAdminOutput } from '../dtos/admin.output';
 import { IdentityProvider } from '../ports/identity-provider';
 import { AdminInvitationService, InvitationOutput } from '../services/admin-invitation.service';
 
@@ -21,14 +21,7 @@ export interface InviteAdminInput {
 }
 
 /** ADMIN recém-convidado e a situação do convite. */
-export interface InviteAdminOutput {
-  id: string;
-  role: Role;
-  name: string;
-  email: string;
-  status: UserStatus;
-  createdById: string | null;
-  createdAt: Date;
+export interface InviteAdminOutput extends AdminOutput {
   invitation: InvitationOutput;
 }
 
@@ -58,7 +51,7 @@ export class InviteAdminUseCase implements UseCase<InviteAdminInput, InviteAdmin
     const { admin, invitation } = await this.createPendingAdmin(input, email);
     const sent = await this.invitationService.send(admin, invitation);
 
-    return toOutput(admin, sent);
+    return { ...toAdminOutput(admin), invitation: sent };
   }
 
   private async createPendingAdmin(
@@ -87,17 +80,4 @@ export class InviteAdminUseCase implements UseCase<InviteAdminInput, InviteAdmin
       throw error;
     }
   }
-}
-
-function toOutput(admin: User, invitation: InvitationOutput): InviteAdminOutput {
-  return {
-    id: admin.id,
-    role: admin.role,
-    name: admin.name,
-    email: admin.email.value,
-    status: admin.status,
-    createdById: admin.createdById,
-    createdAt: admin.createdAt,
-    invitation,
-  };
 }
