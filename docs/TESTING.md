@@ -63,15 +63,33 @@ describe('CreateReportUseCase', () => {
 });
 ```
 
+## Fakes compartilhados
+
+Um fake usado por um único teste fica no próprio arquivo de teste, como o repositório em memória acima. Os que servem a vários testes ficam em [`src/shared/testing`](../src/shared/testing), fora do build de produção, e são importados pelo alias (`@shared/testing/...`).
+
+O [`FakeMailSender`](../src/shared/testing/fake-mail-sender.ts) guarda em `messages` os e-mails que seriam enviados. Ele entra pelo construtor nos testes de caso de uso e pelo `overrideProvider` nos testes que sobem a aplicação:
+
+```ts
+const mailSender = new FakeMailSender();
+
+const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+  .overrideProvider(MailSender)
+  .useValue(mailSender)
+  .compile();
+
+// ...
+expect(mailSender.messages).toHaveLength(1);
+```
+
 ## Comandos
 
-| Comando                    | O que faz                                                                                           |
-| -------------------------- | --------------------------------------------------------------------------------------------------- |
-| `npm test`                 | Roda todos os testes                                                                                |
-| `npm run test:watch`       | Roda em modo watch                                                                                  |
-| `npm run test:cov`         | Gera o relatório de cobertura em `coverage/`                                                        |
-| `npm run test:debug`       | Roda com o inspector do Node (`--inspect-brk`)                                                      |
-| `npm run test:integration` | Roda os testes de integração contra o MySQL de teste ([detalhes](DATABASE.md#testes-de-integração)) |
+| Comando                    | O que faz                                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `npm test`                 | Roda todos os testes                                                                                                           |
+| `npm run test:watch`       | Roda em modo watch                                                                                                             |
+| `npm run test:cov`         | Gera o relatório de cobertura em `coverage/`                                                                                   |
+| `npm run test:debug`       | Roda com o inspector do Node (`--inspect-brk`)                                                                                 |
+| `npm run test:integration` | Roda os testes de integração contra o MySQL de teste, o SuperTokens e o Mailpit ([detalhes](DATABASE.md#testes-de-integração)) |
 
 No pre-commit, o `lint-staged` roda apenas os testes relacionados aos arquivos `.ts` alterados (`--findRelatedTests`). Se algum falhar, o commit é bloqueado.
 

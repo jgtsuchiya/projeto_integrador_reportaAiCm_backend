@@ -10,6 +10,8 @@ describe('envSchema', () => {
     SUPERTOKENS_API_KEY: 'reportaai-dev-supertokens-api-key',
     API_DOMAIN: 'http://localhost:3000',
     WEB_APP_URL: 'http://localhost:5173',
+    SMTP_HOST: 'localhost',
+    MAIL_FROM: 'ReportaAi Cm <no-reply@reportaai.local>',
   };
 
   it('deve aplicar os valores padrão quando variáveis opcionais estão ausentes', () => {
@@ -20,15 +22,28 @@ describe('envSchema', () => {
       PORT: 3000,
       DB_PORT: 3306,
       DB_LOGGING: false,
+      SMTP_PORT: 587,
+      SMTP_SECURE: false,
+      SMTP_USER: '',
+      SMTP_PASSWORD: '',
     });
   });
 
   it('deve converter strings do process.env para os tipos corretos', () => {
-    const env = envSchema.parse({ ...validEnv, PORT: '8080', DB_PORT: '3307', DB_LOGGING: 'true' });
+    const env = envSchema.parse({
+      ...validEnv,
+      PORT: '8080',
+      DB_PORT: '3307',
+      DB_LOGGING: 'true',
+      SMTP_PORT: '1025',
+      SMTP_SECURE: 'true',
+    });
 
     expect(env.PORT).toBe(8080);
     expect(env.DB_PORT).toBe(3307);
     expect(env.DB_LOGGING).toBe(true);
+    expect(env.SMTP_PORT).toBe(1025);
+    expect(env.SMTP_SECURE).toBe(true);
   });
 
   it('deve rejeitar quando uma variável obrigatória está ausente', () => {
@@ -74,6 +89,32 @@ describe('envSchema', () => {
     'deve rejeitar %s que não seja uma URL',
     (variable) => {
       const result = envSchema.safeParse({ ...validEnv, [variable]: 'localhost' });
+
+      expect(result.success).toBe(false);
+    },
+  );
+
+  it.each(['SMTP_HOST', 'MAIL_FROM'])('deve rejeitar quando %s está ausente', (variable) => {
+    const result = envSchema.safeParse({ ...validEnv, [variable]: undefined });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual([variable]);
+  });
+
+  it.each(['ReportaAi Cm <no-reply@reportaai.local>', ' no-reply@reportaai.local '])(
+    'deve aceitar o remetente %p',
+    (mailFrom) => {
+      const result = envSchema.safeParse({ ...validEnv, MAIL_FROM: mailFrom });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.MAIL_FROM).toBe(mailFrom.trim());
+    },
+  );
+
+  it.each(['ReportaAi Cm', 'ReportaAi Cm no-reply@reportaai.local', 'ReportaAi Cm <no-reply>'])(
+    'deve rejeitar o remetente %p, sem um e-mail válido',
+    (mailFrom) => {
+      const result = envSchema.safeParse({ ...validEnv, MAIL_FROM: mailFrom });
 
       expect(result.success).toBe(false);
     },

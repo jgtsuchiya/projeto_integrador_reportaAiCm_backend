@@ -23,6 +23,22 @@ export const envSchema = z.object({
     .regex(/^[A-Za-z0-9=-]+$/, 'Use apenas letras, números, "=" e "-".'),
   API_DOMAIN: z.url(),
   WEB_APP_URL: z.url(),
+
+  SMTP_HOST: z.string().min(1),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  // true para TLS direto (porta 465). Com false, o STARTTLS é usado se o servidor oferecer.
+  SMTP_SECURE: z.stringbool().default(false),
+  // Vazios quando o servidor não exige autenticação, como o Mailpit em dev.
+  SMTP_USER: z.string().default(''),
+  SMTP_PASSWORD: z.string().default(''),
+  MAIL_FROM: z.string().trim().refine(isMailbox, 'Use o formato "Nome <email>" ou só o e-mail.'),
 });
 
 export type Env = z.infer<typeof envSchema>;
+
+/** Remetente no formato `Nome <email>` ou só o e-mail. */
+function isMailbox(value: string): boolean {
+  const address = /<([^<>]+)>$/.exec(value)?.[1] ?? value;
+
+  return z.email().safeParse(address).success;
+}
