@@ -30,7 +30,8 @@
     "migration:generate": "npm run build && npm run typeorm -- migration:generate",
     "migration:run": "npm run build && npm run typeorm -- migration:run",
     "migration:revert": "npm run build && npm run typeorm -- migration:revert",
-    "migration:show": "npm run build && npm run typeorm -- migration:show"
+    "migration:show": "npm run build && npm run typeorm -- migration:show",
+    "seed": "npm run build && node --env-file-if-exists=.env dist/seed.js"
   },
   "dependencies": {
     "@nestjs/common": "12.0.4",
@@ -39,8 +40,10 @@
     "@nestjs/platform-express": "12.0.4",
     "@nestjs/typeorm": "12.0.1",
     "mysql2": "3.24.4",
+    "nodemailer": "10.0.11",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
+    "supertokens-node": "24.0.3",
     "typeorm": "1.1.1",
     "zod": "4.6.5"
   },
@@ -99,6 +102,14 @@
     "coverageReporters": [
       "text",
       "lcov"
-    ]
+    ],
+    "coverageThreshold": {
+      "./src/modules/users/domain/": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    }
   }
 }

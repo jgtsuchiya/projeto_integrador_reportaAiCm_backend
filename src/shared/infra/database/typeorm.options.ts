@@ -21,6 +21,9 @@ export function buildDataSourceOptions(env: DatabaseEnv): DataSourceOptions {
     database: env.DB_DATABASE,
     charset: 'utf8mb4_0900_ai_ci',
     timezone: 'Z',
+    // DATE (sem hora) volta como string 'YYYY-MM-DD'. Como Date, o driver criaria meia-noite UTC,
+    // e o TypeORM a formataria no fuso local, trocando o dia em fusos negativos (ex.: UTC-3).
+    dateStrings: ['DATE'],
     logging: env.DB_LOGGING,
     // O schema só muda por migrations, nunca por sincronização automática.
     synchronize: false,

@@ -12,6 +12,9 @@ import tseslint from 'typescript-eslint';
  */
 const ORM_IMPORTS = ['typeorm', '@nestjs/typeorm'];
 
+/** O SDK do SuperTokens fica restrito à infra, atrás de portas como o IdentityProvider. */
+const SUPERTOKENS_IMPORTS = ['supertokens-node', 'supertokens-node/*'];
+
 /** @type {import('eslint').Linter.Config[]} */
 const layerBoundaries = [
   {
@@ -33,6 +36,10 @@ const layerBoundaries = [
               group: ['@nestjs/*'],
               message: 'O domínio deve ser TypeScript puro, sem dependência do NestJS.',
             },
+            {
+              group: SUPERTOKENS_IMPORTS,
+              message: 'O domínio não pode depender do SuperTokens.',
+            },
           ],
         },
       ],
@@ -52,6 +59,10 @@ const layerBoundaries = [
             {
               group: ['**/infra/**', '**/presentation/**'],
               message: 'A aplicação não pode depender de infra ou presentation.',
+            },
+            {
+              group: SUPERTOKENS_IMPORTS,
+              message: 'A aplicação não pode depender do SuperTokens; use o IdentityProvider.',
             },
           ],
         },
