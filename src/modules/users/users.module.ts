@@ -13,13 +13,16 @@ import {
 import { AcceptInvitationUseCase } from './application/use-cases/accept-invitation.use-case';
 import { AuthorizeSignInUseCase } from './application/use-cases/authorize-sign-in.use-case';
 import { ChangeAdminStatusUseCase } from './application/use-cases/change-admin-status.use-case';
+import { ChangeClientStatusUseCase } from './application/use-cases/change-client-status.use-case';
 import { CheckPasswordPolicyUseCase } from './application/use-cases/check-password-policy.use-case';
 import { CreateSuperAdminUseCase } from './application/use-cases/create-super-admin.use-case';
 import { DeleteAdminUseCase } from './application/use-cases/delete-admin.use-case';
 import { GetAdminUseCase } from './application/use-cases/get-admin.use-case';
 import { GetAuthenticatedUserUseCase } from './application/use-cases/get-authenticated-user.use-case';
+import { GetClientUseCase } from './application/use-cases/get-client.use-case';
 import { InviteAdminUseCase } from './application/use-cases/invite-admin.use-case';
 import { ListAdminsUseCase } from './application/use-cases/list-admins.use-case';
+import { ListClientsUseCase } from './application/use-cases/list-clients.use-case';
 import { RegisterClientUseCase } from './application/use-cases/register-client.use-case';
 import { ResendAdminInvitationUseCase } from './application/use-cases/resend-admin-invitation.use-case';
 import { UpdateAdminUseCase } from './application/use-cases/update-admin.use-case';
@@ -62,6 +65,9 @@ import { InvitationsController } from './presentation/controllers/invitations.co
     UpdateAdminUseCase,
     ChangeAdminStatusUseCase,
     DeleteAdminUseCase,
+    ListClientsUseCase,
+    GetClientUseCase,
+    ChangeClientStatusUseCase,
     AuthorizeSignInUseCase,
     GetAuthenticatedUserUseCase,
     CheckPasswordPolicyUseCase,

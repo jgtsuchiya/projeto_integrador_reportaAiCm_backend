@@ -10,7 +10,7 @@ import { InvalidEmailError } from '../../domain/errors/invalid-email.error';
 import { InvalidPasswordError } from '../../domain/errors/invalid-password.error';
 import { InvalidPhoneError } from '../../domain/errors/invalid-phone.error';
 import { ClientProfileRepository } from '../../domain/repositories/client-profile.repository';
-import { UserRepository } from '../../domain/repositories/user.repository';
+import { ClientWithProfile, UserRepository } from '../../domain/repositories/user.repository';
 import { BirthDate } from '../../domain/value-objects/birth-date';
 import { Cpf } from '../../domain/value-objects/cpf';
 import { Email } from '../../domain/value-objects/email';
@@ -49,6 +49,10 @@ class InMemoryUserRepository extends UserRepository {
   }
 
   async findPage(): Promise<Page<User>> {
+    throw new Error('Não usado neste teste.');
+  }
+
+  async findClientPage(): Promise<Page<ClientWithProfile>> {
     throw new Error('Não usado neste teste.');
   }
 
