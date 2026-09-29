@@ -4,7 +4,7 @@ import { User } from '../../domain/entities/user.entity';
 import { EmailAlreadyInUseError } from '../../domain/errors/email-already-in-use.error';
 import { InvalidEmailError } from '../../domain/errors/invalid-email.error';
 import { InvalidPasswordError } from '../../domain/errors/invalid-password.error';
-import { UserRepository } from '../../domain/repositories/user.repository';
+import { ClientWithProfile, UserRepository } from '../../domain/repositories/user.repository';
 import { Email } from '../../domain/value-objects/email';
 import { Password } from '../../domain/value-objects/password';
 import { Role, ROLES } from '../../domain/value-objects/role';
@@ -32,6 +32,10 @@ class InMemoryUserRepository extends UserRepository {
   }
 
   async findPage(): Promise<Page<User>> {
+    throw new Error('Não usado neste teste.');
+  }
+
+  async findClientPage(): Promise<Page<ClientWithProfile>> {
     throw new Error('Não usado neste teste.');
   }
 
