@@ -15,6 +15,7 @@ import { ConflictError } from '@shared/domain/errors/conflict.error';
 import { DomainError } from '@shared/domain/errors/domain.error';
 import { ForbiddenError } from '@shared/domain/errors/forbidden.error';
 import { NotFoundError } from '@shared/domain/errors/not-found.error';
+import { UnauthorizedError } from '@shared/domain/errors/unauthorized.error';
 
 export const INTERNAL_ERROR_MESSAGE = 'Erro interno do servidor.';
 
@@ -31,12 +32,13 @@ const DOMAIN_ERROR_STATUS: ReadonlyArray<[new (...args: never[]) => DomainError,
   [ConflictError, HttpStatus.CONFLICT],
   [BusinessRuleError, HttpStatus.UNPROCESSABLE_ENTITY],
   [ForbiddenError, HttpStatus.FORBIDDEN],
+  [UnauthorizedError, HttpStatus.UNAUTHORIZED],
 ];
 
 /**
  * Converte qualquer exceção lançada nas rotas no corpo padrão `ErrorResponseBody`:
  *
- * - erros de domínio viram 404, 409, 422 ou 403, conforme a categoria;
+ * - erros de domínio viram 404, 409, 422, 403 ou 401, conforme a categoria;
  * - `HttpException` (inclusive a do `ZodValidationPipe`) mantém o status e a mensagem;
  * - qualquer outro erro vira 500 com mensagem genérica. O stack vai só para o log.
  *

@@ -65,6 +65,15 @@ export class SuperTokensIdentityProvider implements IdentityProvider {
     await Session.revokeAllSessionsForUser(userId);
   }
 
+  async revokeOtherSessions(userId: string, currentSessionHandle: string): Promise<void> {
+    const handles = await Session.getAllSessionHandlesForUser(userId);
+    const others = handles.filter((handle) => handle !== currentSessionHandle);
+
+    if (others.length > 0) {
+      await Session.revokeMultipleSessions(others);
+    }
+  }
+
   async createRoles(roles: readonly Role[]): Promise<void> {
     // Sem permissões: a autorização é feita pelo papel, conferido no MySQL.
     for (const role of roles) {

@@ -136,6 +136,7 @@ O domínio lança erros de uma das categorias de [`shared/domain/errors`](../src
 | `ConflictError`     | 409    | E-mail ou CPF já cadastrado         |
 | `BusinessRuleError` | 422    | Transição de status inválida        |
 | `ForbiddenError`    | 403    | Operação não permitida para o papel |
+| `UnauthorizedError` | 401    | Senha atual incorreta               |
 
 Os erros de cada feature estendem uma categoria (ex.: `class EmailAlreadyInUseError extends ConflictError`). O segundo argumento do construtor vai para `details`.
 

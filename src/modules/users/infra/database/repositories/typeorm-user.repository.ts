@@ -135,6 +135,20 @@ export class TypeOrmUserRepository implements UserRepository {
     }
   }
 
+  async updateClient(user: User, profile: ClientProfile): Promise<void> {
+    await this.repository.manager.transaction(async (manager) => {
+      await manager.save(UserMapper.toPersistence(user));
+      await manager.save(ClientProfileMapper.toPersistence(profile));
+    });
+  }
+
+  async deleteClient(user: User): Promise<void> {
+    await this.repository.manager.transaction(async (manager) => {
+      await manager.save(UserMapper.toPersistence(user));
+      await manager.delete(ClientProfileOrmEntity, { userId: user.id });
+    });
+  }
+
   async saveWithToken(user: User, token: UserToken): Promise<void> {
     try {
       await this.repository.manager.transaction(async (manager) => {

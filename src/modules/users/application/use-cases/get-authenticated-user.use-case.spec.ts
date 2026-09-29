@@ -21,19 +21,19 @@ describe('GetAuthenticatedUserUseCase', () => {
     });
   }
 
-  it('deve retornar o id e o papel de um usuário ACTIVE', async () => {
+  it('deve retornar o id, o papel e a sessão de um usuário ACTIVE', async () => {
     userRepository.findById.mockResolvedValue(createClient());
 
-    const result = await sut.execute({ userId: 'client-1' });
+    const result = await sut.execute({ userId: 'client-1', sessionHandle: 'session-1' });
 
-    expect(result).toEqual({ id: 'client-1', role: Role.CLIENT });
+    expect(result).toEqual({ id: 'client-1', role: Role.CLIENT, sessionHandle: 'session-1' });
     expect(userRepository.findById).toHaveBeenCalledWith('client-1');
   });
 
   it('deve retornar null quando o usuário não existe ou foi excluído', async () => {
     userRepository.findById.mockResolvedValue(null);
 
-    const result = await sut.execute({ userId: 'client-1' });
+    const result = await sut.execute({ userId: 'client-1', sessionHandle: 'session-1' });
 
     expect(result).toBeNull();
   });
@@ -43,7 +43,7 @@ describe('GetAuthenticatedUserUseCase', () => {
     user.deactivate();
     userRepository.findById.mockResolvedValue(user);
 
-    const result = await sut.execute({ userId: user.id });
+    const result = await sut.execute({ userId: user.id, sessionHandle: 'session-1' });
 
     expect(result).toBeNull();
   });
@@ -58,7 +58,7 @@ describe('GetAuthenticatedUserUseCase', () => {
       }),
     );
 
-    const result = await sut.execute({ userId: 'admin-1' });
+    const result = await sut.execute({ userId: 'admin-1', sessionHandle: 'session-1' });
 
     expect(result).toBeNull();
   });

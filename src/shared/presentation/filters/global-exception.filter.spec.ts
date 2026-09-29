@@ -12,6 +12,7 @@ import { ConflictError } from '@shared/domain/errors/conflict.error';
 import { DomainError } from '@shared/domain/errors/domain.error';
 import { ForbiddenError } from '@shared/domain/errors/forbidden.error';
 import { NotFoundError } from '@shared/domain/errors/not-found.error';
+import { UnauthorizedError } from '@shared/domain/errors/unauthorized.error';
 
 import { GlobalExceptionFilter, INTERNAL_ERROR_MESSAGE } from './global-exception.filter';
 
@@ -54,6 +55,7 @@ describe('GlobalExceptionFilter', () => {
       'Unprocessable Entity',
     ],
     [new ForbiddenError('Operação não permitida.'), HttpStatus.FORBIDDEN, 'Forbidden'],
+    [new UnauthorizedError('Senha incorreta.'), HttpStatus.UNAUTHORIZED, 'Unauthorized'],
   ])('deve converter %p no status %p', (exception, statusCode, error) => {
     sut.catch(exception, createHost(response));
 

@@ -8,6 +8,8 @@ import { Role } from '../../domain/value-objects/role';
 export interface GetAuthenticatedUserInput {
   /** Id do usuário da sessão. */
   userId: string;
+  /** Handle da sessão da requisição. */
+  sessionHandle: string;
 }
 
 /** Usuário da requisição, disponível nos controllers pelo `@CurrentUser()`. */
@@ -15,6 +17,8 @@ export interface AuthenticatedUser {
   id: string;
   /** Papel lido do MySQL, que é a fonte da verdade (e não do token). */
   role: Role;
+  /** Sessão da requisição, que a troca de senha mantém ao revogar as outras (RN13). */
+  sessionHandle: string;
 }
 
 /**
@@ -36,6 +40,6 @@ export class GetAuthenticatedUserUseCase implements UseCase<
       return null;
     }
 
-    return { id: user.id, role: user.role };
+    return { id: user.id, role: user.role, sessionHandle: input.sessionHandle };
   }
 }

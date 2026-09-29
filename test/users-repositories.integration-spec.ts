@@ -360,6 +360,50 @@ describe('Repositórios de usuários (integração)', () => {
         ).rejects.toThrow(EmailAlreadyInUseError);
       });
     });
+
+    describe('updateClient', () => {
+      it('deve gravar as alterações do usuário e do perfil', async () => {
+        const user = buildClient();
+        const profile = buildProfile(user.id);
+        await users.saveClient(user, profile);
+
+        user.rename('Maria Souza');
+        profile.changePhone(Phone.create('4332221111'));
+        profile.changeBirthDate(BirthDate.create('1991-06-21'));
+        await users.updateClient(user, profile);
+
+        await expect(users.findById(user.id)).resolves.toMatchObject({ name: 'Maria Souza' });
+        const found = await profiles.findByUserId(user.id);
+        expect(found?.phone.value).toBe('4332221111');
+        expect(found?.birthDate.value).toBe('1991-06-21');
+        expect(found?.cpf.value).toBe('52998224725');
+      });
+    });
+
+    describe('deleteClient', () => {
+      it('deve gravar a exclusão lógica e remover o perfil, liberando o e-mail e o CPF (RN11)', async () => {
+        const user = buildClient();
+        await users.saveClient(user, buildProfile(user.id));
+        const originalEmail = user.email;
+
+        user.delete();
+        await users.deleteClient(user);
+
+        await expect(users.findById(user.id)).resolves.toBeNull();
+        await expect(profiles.findByUserId(user.id)).resolves.toBeNull();
+        await expect(profiles.existsByCpf(Cpf.create('52998224725'))).resolves.toBe(false);
+        await expect(users.existsByEmail(originalEmail)).resolves.toBe(false);
+        const row = await queryRunner.manager.findOne(UserOrmEntity, {
+          where: { id: user.id },
+          withDeleted: true,
+        });
+        expect(row).toMatchObject({
+          name: 'Usuário excluído',
+          email: `deleted+${user.id}@reportaai.invalid`,
+          deletedAt: user.deletedAt,
+        });
+      });
+    });
   });
 
   describe('TypeOrmUserTokenRepository', () => {

@@ -65,6 +65,14 @@ class InMemoryUserRepository extends UserRepository {
     this.database.profiles.push(profile);
   }
 
+  async updateClient(): Promise<void> {
+    throw new Error('Não usado neste teste.');
+  }
+
+  async deleteClient(): Promise<void> {
+    throw new Error('Não usado neste teste.');
+  }
+
   async saveWithToken(user: User): Promise<void> {
     this.database.users.push(user);
   }
@@ -121,6 +129,8 @@ class FakeIdentityProvider extends IdentityProvider {
   }
 
   async revokeAllSessions(): Promise<void> {}
+
+  async revokeOtherSessions(): Promise<void> {}
 
   async createRoles(): Promise<void> {}
 
