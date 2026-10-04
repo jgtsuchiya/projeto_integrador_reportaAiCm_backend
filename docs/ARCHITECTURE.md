@@ -115,6 +115,17 @@ findOne(@Param('id', { schema: z.uuid() }) id: string) {}
 
 Parâmetros sem schema passam sem validação. As mensagens padrão do Zod saem em português, e o schema pode definir mensagens próprias.
 
+Quando a regra de um campo já existe num value object, use o [`domainString`](../src/shared/presentation/validation/domain-string.schema.ts) em vez de repeti-la no schema. Ele valida o campo com a fábrica do value object e usa a mensagem do erro de domínio, então o request inválido recebe 400 com todos os campos de uma vez:
+
+```ts
+const registerClientBodySchema = z.object({
+  cpf: domainString((value) => Cpf.create(value)),
+  phone: domainString((value) => Phone.create(value)),
+});
+```
+
+O valor segue sem transformação: o caso de uso cria o value object de novo e continua sendo quem garante a regra (se ele for chamado sem passar pelo schema, o erro de domínio vira 422).
+
 ### Erros
 
 O domínio lança erros de uma das categorias de [`shared/domain/errors`](../src/shared/domain/errors), e o [`GlobalExceptionFilter`](../src/shared/presentation/filters/global-exception.filter.ts) os converte em HTTP:

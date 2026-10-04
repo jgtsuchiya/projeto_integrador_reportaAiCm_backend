@@ -6,6 +6,8 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { envSchema } from '@config/env.schema';
 import { ClientProfile } from '@modules/users/domain/entities/client-profile.entity';
 import { User } from '@modules/users/domain/entities/user.entity';
+import { CpfAlreadyInUseError } from '@modules/users/domain/errors/cpf-already-in-use.error';
+import { EmailAlreadyInUseError } from '@modules/users/domain/errors/email-already-in-use.error';
 import { BirthDate } from '@modules/users/domain/value-objects/birth-date';
 import { Cpf } from '@modules/users/domain/value-objects/cpf';
 import { Email } from '@modules/users/domain/value-objects/email';
@@ -143,18 +145,44 @@ describe('Repositórios de usuários (integração)', () => {
         deletedAt: user.deletedAt,
       });
     });
+
+    describe('saveClient', () => {
+      it('deve gravar o usuário e o perfil do Client', async () => {
+        const user = buildClient();
+
+        await users.saveClient(user, buildProfile(user.id));
+
+        await expect(users.findById(user.id)).resolves.toMatchObject({ role: Role.CLIENT });
+        await expect(profiles.findByUserId(user.id)).resolves.toMatchObject({
+          cpf: Cpf.create('52998224725'),
+        });
+      });
+
+      it('deve desfazer o usuário quando o perfil falha e converter o CPF repetido em conflito', async () => {
+        const first = buildClient();
+        await users.saveClient(first, buildProfile(first.id));
+        const second = buildClient();
+
+        await expect(users.saveClient(second, buildProfile(second.id))).rejects.toThrow(
+          CpfAlreadyInUseError,
+        );
+
+        await expect(users.findById(second.id)).resolves.toBeNull();
+      });
+
+      it('deve converter o e-mail repetido em conflito', async () => {
+        const first = buildClient();
+        await users.saveClient(first, buildProfile(first.id));
+        const second = buildClient(first.email.value);
+
+        await expect(
+          users.saveClient(second, buildProfile(second.id, '111.444.777-35')),
+        ).rejects.toThrow(EmailAlreadyInUseError);
+      });
+    });
   });
 
   describe('TypeOrmClientProfileRepository', () => {
-    function buildProfile(userId: string): ClientProfile {
-      return ClientProfile.create({
-        userId,
-        cpf: Cpf.create('529.982.247-25'),
-        phone: Phone.create('(43) 99999-8888'),
-        birthDate: BirthDate.create('1990-05-20'),
-      });
-    }
-
     it('deve salvar, buscar e atualizar o perfil do Client', async () => {
       const user = await saved(buildClient());
       const profile = buildProfile(user.id);
@@ -187,6 +215,15 @@ describe('Repositórios de usuários (integração)', () => {
       await expect(profiles.existsByCpf(Cpf.create('52998224725'))).resolves.toBe(false);
     });
   });
+
+  function buildProfile(userId: string, cpf = '529.982.247-25'): ClientProfile {
+    return ClientProfile.create({
+      userId,
+      cpf: Cpf.create(cpf),
+      phone: Phone.create('(43) 99999-8888'),
+      birthDate: BirthDate.create('1990-05-20'),
+    });
+  }
 
   function buildSuperAdminLike(): User {
     return User.createSuperAdmin({
