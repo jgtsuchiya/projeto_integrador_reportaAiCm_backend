@@ -102,7 +102,6 @@ Para verificar se está tudo certo, acesse **http://localhost:3000/api/health**.
 
 O modelo está em [.env.example](.env.example). As variáveis são validadas quando a aplicação sobe: se alguma estiver faltando ou inválida, a API não inicia e mostra qual variável está errada.
 
-
 | Variável           | Obrigatória | Padrão        | Descrição                                         |
 | ------------------ | ----------- | ------------- | ------------------------------------------------- |
 | `NODE_ENV`         | não         | `development` | `development`, `test` ou `production`             |
