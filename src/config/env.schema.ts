@@ -14,6 +14,15 @@ export const envSchema = z.object({
   DB_PASSWORD: z.string(),
   DB_DATABASE: z.string().min(1),
   DB_LOGGING: z.stringbool().default(false),
+
+  SUPERTOKENS_CONNECTION_URI: z.url(),
+  // Mesmas restrições que o Core aplica à variável API_KEYS.
+  SUPERTOKENS_API_KEY: z
+    .string()
+    .min(20)
+    .regex(/^[A-Za-z0-9=-]+$/, 'Use apenas letras, números, "=" e "-".'),
+  API_DOMAIN: z.url(),
+  WEB_APP_URL: z.url(),
 });
 
 export type Env = z.infer<typeof envSchema>;

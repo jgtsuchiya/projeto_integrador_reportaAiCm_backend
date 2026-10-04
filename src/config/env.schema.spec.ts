@@ -6,6 +6,10 @@ describe('envSchema', () => {
     DB_USERNAME: 'reportaai',
     DB_PASSWORD: 'secret',
     DB_DATABASE: 'reportaai_cm',
+    SUPERTOKENS_CONNECTION_URI: 'http://localhost:3567',
+    SUPERTOKENS_API_KEY: 'reportaai-dev-supertokens-api-key',
+    API_DOMAIN: 'http://localhost:3000',
+    WEB_APP_URL: 'http://localhost:5173',
   };
 
   it('deve aplicar os valores padrão quando variáveis opcionais estão ausentes', () => {
@@ -47,4 +51,31 @@ describe('envSchema', () => {
 
     expect(result.success).toBe(false);
   });
+
+  it('deve rejeitar quando a chave de API do SuperTokens está ausente', () => {
+    const { SUPERTOKENS_API_KEY: _omitted, ...withoutApiKey } = validEnv;
+
+    const result = envSchema.safeParse(withoutApiKey);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(['SUPERTOKENS_API_KEY']);
+  });
+
+  it.each([
+    ['com menos de 20 caracteres', 'chave-curta'],
+    ['com caracteres que o Core não aceita', 'chave_com_underscore_invalida'],
+  ])('deve rejeitar a chave de API do SuperTokens %s', (_case, apiKey) => {
+    const result = envSchema.safeParse({ ...validEnv, SUPERTOKENS_API_KEY: apiKey });
+
+    expect(result.success).toBe(false);
+  });
+
+  it.each(['SUPERTOKENS_CONNECTION_URI', 'API_DOMAIN', 'WEB_APP_URL'])(
+    'deve rejeitar %s que não seja uma URL',
+    (variable) => {
+      const result = envSchema.safeParse({ ...validEnv, [variable]: 'localhost' });
+
+      expect(result.success).toBe(false);
+    },
+  );
 });

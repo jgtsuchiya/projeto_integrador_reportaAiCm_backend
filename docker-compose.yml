@@ -23,5 +23,49 @@ services:
       retries: 20
       start_period: 20s
 
+  # Banco exclusivo do SuperTokens Core, que não suporta MySQL. Só o Core acessa, pela rede interna.
+  supertokens-db:
+    image: postgres:18.6-alpine
+    container_name: reportaai-cm-supertokens-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: supertokens
+      POSTGRES_PASSWORD: ${SUPERTOKENS_DB_PASSWORD:?defina SUPERTOKENS_DB_PASSWORD no .env}
+      POSTGRES_DB: supertokens
+      TZ: UTC
+    volumes:
+      - supertokens-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U supertokens -d supertokens']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # Guarda as credenciais, as sessões e os papéis. As tabelas são criadas pelo próprio Core.
+  supertokens:
+    image: supertokens/supertokens-postgresql:12.2.0
+    container_name: reportaai-cm-supertokens
+    restart: unless-stopped
+    depends_on:
+      supertokens-db:
+        condition: service_healthy
+    environment:
+      POSTGRESQL_CONNECTION_URI: postgresql://supertokens:${SUPERTOKENS_DB_PASSWORD}@supertokens-db:5432/supertokens
+      API_KEYS: ${SUPERTOKENS_API_KEY:?defina SUPERTOKENS_API_KEY no .env}
+      # Access token de 15 min (em segundos) e refresh token de 7 dias (em minutos).
+      ACCESS_TOKEN_VALIDITY: 900
+      REFRESH_TOKEN_VALIDITY: 10080
+      PASSWORD_HASHING_ALG: ARGON2
+    ports:
+      - '3567:3567'
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fs http://localhost:3567/hello | grep -q Hello']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
 volumes:
   mysql-data:
+  supertokens-db-data:
