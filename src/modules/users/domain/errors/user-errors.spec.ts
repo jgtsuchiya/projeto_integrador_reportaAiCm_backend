@@ -4,6 +4,7 @@ import { DomainError } from '@shared/domain/errors/domain.error';
 import { ForbiddenError } from '@shared/domain/errors/forbidden.error';
 import { NotFoundError } from '@shared/domain/errors/not-found.error';
 
+import { AdminNotPendingError } from './admin-not-pending.error';
 import { CpfAlreadyInUseError } from './cpf-already-in-use.error';
 import { EmailAlreadyInUseError } from './email-already-in-use.error';
 import { InvalidBirthDateError } from './invalid-birth-date.error';
@@ -13,6 +14,7 @@ import { InvalidPasswordError } from './invalid-password.error';
 import { InvalidPhoneError } from './invalid-phone.error';
 import { InvalidStatusTransitionError } from './invalid-status-transition.error';
 import { InvalidUserNameError } from './invalid-user-name.error';
+import { InvalidUserTokenError } from './invalid-user-token.error';
 import { SuperAdminProtectedError } from './super-admin-protected.error';
 import { UserAlreadyDeletedError } from './user-already-deleted.error';
 import { UserNotFoundError } from './user-not-found.error';
@@ -27,6 +29,8 @@ describe('Erros do domínio de usuários', () => {
     [new InvalidPasswordError('mensagem'), BusinessRuleError, { field: 'password' }],
     [new InvalidUserNameError('mensagem'), BusinessRuleError, { field: 'name' }],
     [new UserAlreadyDeletedError(), BusinessRuleError, undefined],
+    [new InvalidUserTokenError(), BusinessRuleError, { field: 'token' }],
+    [new AdminNotPendingError(), BusinessRuleError, undefined],
     [
       new InvalidStatusTransitionError('PENDING', 'INACTIVE'),
       BusinessRuleError,

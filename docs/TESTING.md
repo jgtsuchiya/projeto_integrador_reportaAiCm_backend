@@ -81,6 +81,8 @@ const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
 expect(mailSender.messages).toHaveLength(1);
 ```
 
+Os fakes de um único módulo ficam em `src/modules/<feature>/testing`, também fora do build. No módulo `users`, o [`in-memory-users.ts`](../src/modules/users/testing/in-memory-users.ts) traz os repositórios em memória (que compartilham um `InMemoryUsersDatabase`, como as tabelas do MySQL) e o `FakeIdentityProvider`, no lugar do SuperTokens.
+
 ## Comandos
 
 | Comando                    | O que faz                                                                                                                      |

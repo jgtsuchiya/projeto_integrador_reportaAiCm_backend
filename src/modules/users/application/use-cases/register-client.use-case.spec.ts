@@ -54,6 +54,10 @@ class InMemoryUserRepository extends UserRepository {
     this.database.users.push(user);
     this.database.profiles.push(profile);
   }
+
+  async saveWithToken(user: User): Promise<void> {
+    this.database.users.push(user);
+  }
 }
 
 class InMemoryClientProfileRepository extends ClientProfileRepository {

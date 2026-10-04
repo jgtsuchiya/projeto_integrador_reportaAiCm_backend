@@ -35,4 +35,13 @@ describe('Password', () => {
     expect(JSON.stringify({ password: sut })).not.toContain('segredo123');
     expect(inspect(sut)).not.toContain('segredo123');
   });
+
+  it('deve gerar uma senha aleatória que segue a política (RN06)', () => {
+    const first = Password.random();
+    const second = Password.random();
+
+    expect(first).toBeInstanceOf(Password);
+    expect(first.value).toMatch(/^[\w-]{43}a1$/);
+    expect(second.value).not.toBe(first.value);
+  });
 });
