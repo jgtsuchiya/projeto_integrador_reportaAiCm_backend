@@ -1,7 +1,7 @@
 import type { Page } from '@shared/domain/pagination';
 
 import { User } from '../../domain/entities/user.entity';
-import { UserRepository } from '../../domain/repositories/user.repository';
+import { ClientWithProfile, UserRepository } from '../../domain/repositories/user.repository';
 import { Email } from '../../domain/value-objects/email';
 import { Role } from '../../domain/value-objects/role';
 import { AuthorizeSignInUseCase } from './authorize-sign-in.use-case';
@@ -29,6 +29,10 @@ class InMemoryUserRepository extends UserRepository {
   }
 
   async findPage(): Promise<Page<User>> {
+    throw new Error('Não usado neste teste.');
+  }
+
+  async findClientPage(): Promise<Page<ClientWithProfile>> {
     throw new Error('Não usado neste teste.');
   }
 

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, QueryFailedError, Repository } from 'typeorm';
+import { Brackets, FindOptionsWhere, QueryFailedError, Repository } from 'typeorm';
 
 import { Page, PageRequest } from '@shared/domain/pagination';
 
@@ -9,7 +9,12 @@ import { UserToken } from '../../../domain/entities/user-token.entity';
 import { User } from '../../../domain/entities/user.entity';
 import { CpfAlreadyInUseError } from '../../../domain/errors/cpf-already-in-use.error';
 import { EmailAlreadyInUseError } from '../../../domain/errors/email-already-in-use.error';
-import { UserFilter, UserRepository } from '../../../domain/repositories/user.repository';
+import {
+  ClientFilter,
+  ClientWithProfile,
+  UserFilter,
+  UserRepository,
+} from '../../../domain/repositories/user.repository';
 import { Email } from '../../../domain/value-objects/email';
 import { Role } from '../../../domain/value-objects/role';
 import { ClientProfileOrmEntity } from '../entities/client-profile.orm-entity';
@@ -69,6 +74,52 @@ export class TypeOrmUserRepository implements UserRepository {
     return { items: entities.map((entity) => UserMapper.toDomain(entity)), page, pageSize, total };
   }
 
+  async findClientPage(
+    filter: ClientFilter,
+    { page, pageSize }: PageRequest,
+  ): Promise<Page<ClientWithProfile>> {
+    // A consulta parte do perfil, que tem a relação com users. O CLIENT excluído perde o
+    // perfil (RN11), então o INNER JOIN já o deixa de fora; a condição em deleted_at é reforço.
+    const query = this.repository.manager
+      .createQueryBuilder(ClientProfileOrmEntity, 'profile')
+      .innerJoinAndSelect('profile.user', 'user')
+      .where('user.roleId = :roleId', { roleId: ROLE_IDS[Role.CLIENT] })
+      .andWhere('user.deletedAt IS NULL');
+
+    if (filter.status) {
+      query.andWhere('user.status = :status', { status: filter.status });
+    }
+
+    if (filter.cpf) {
+      query.andWhere('profile.cpf = :cpf', { cpf: filter.cpf.value });
+    }
+
+    if (filter.text) {
+      // A collation do banco (utf8mb4_0900_ai_ci) ignora maiúsculas e acentos no LIKE.
+      const text = `%${escapeLike(filter.text)}%`;
+      query.andWhere(
+        new Brackets((where) => {
+          where.where('user.name LIKE :text', { text }).orWhere('user.email LIKE :text', { text });
+        }),
+      );
+    }
+
+    const [profiles, total] = await query
+      // O id desempata os cadastros no mesmo milissegundo, para a paginação ser estável.
+      .orderBy('user.createdAt', 'DESC')
+      .addOrderBy('user.id', 'ASC')
+      .offset((page - 1) * pageSize)
+      .limit(pageSize)
+      .getManyAndCount();
+
+    const items = profiles.map((entity) => ({
+      user: UserMapper.toDomain(entity.user as UserOrmEntity),
+      profile: ClientProfileMapper.toDomain(entity),
+    }));
+
+    return { items, page, pageSize, total };
+  }
+
   async save(user: User): Promise<void> {
     await this.repository.save(UserMapper.toPersistence(user));
   }
@@ -95,6 +146,11 @@ export class TypeOrmUserRepository implements UserRepository {
       throw toUniqueConstraintError(error) ?? error;
     }
   }
+}
+
+/** Escapa os curingas do LIKE (`%` e `_`), para o texto da busca valer literalmente. */
+function escapeLike(text: string): string {
+  return text.replace(/[\\%_]/g, '\\$&');
 }
 
 /**

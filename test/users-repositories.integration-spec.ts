@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import { DataSource, QueryRunner } from 'typeorm';
@@ -210,6 +210,122 @@ describe('Repositórios de usuários (integração)', () => {
       });
     });
 
+    describe('findClientPage', () => {
+      // Datas no futuro: os CLIENTs do teste ficam no topo da lista, antes de outros do banco.
+      async function savedClient(
+        createdAt: string,
+        {
+          name = 'Maria da Silva',
+          cpf = randomCpf(),
+          status = UserStatus.ACTIVE,
+        }: { name?: string; cpf?: string; status?: UserStatus } = {},
+      ): Promise<User> {
+        const date = new Date(createdAt);
+        const user = User.restore(randomUUID(), {
+          role: Role.CLIENT,
+          name,
+          email: Email.create(`client.${randomUUID()}@example.com`),
+          status,
+          emailVerifiedAt: null,
+          mfaEnabled: false,
+          lastLoginAt: null,
+          createdById: null,
+          createdAt: date,
+          updatedAt: date,
+          deletedAt: null,
+        });
+        await users.saveClient(user, buildProfile(user.id, cpf));
+
+        return user;
+      }
+
+      it('deve listar só os CLIENTs com o perfil, dos mais recentes para os mais antigos, paginado', async () => {
+        const cpf = randomCpf();
+        const older = await savedClient('2999-03-01T00:00:00.000Z');
+        const newer = await savedClient('2999-03-02T00:00:00.000Z', { cpf });
+        const newest = await savedClient('2999-03-03T00:00:00.000Z');
+        await savedAdminLike('2999-03-04T00:00:00.000Z');
+
+        const first = await users.findClientPage({}, { page: 1, pageSize: 2 });
+        const second = await users.findClientPage({}, { page: 2, pageSize: 2 });
+
+        expect(first.items.map(({ user }) => user.id)).toEqual([newest.id, newer.id]);
+        expect(second.items[0].user.id).toBe(older.id);
+        expect(first.total).toBeGreaterThanOrEqual(3);
+        expect(first).toMatchObject({ page: 1, pageSize: 2 });
+        expect(first.items.every(({ user }) => user.role === Role.CLIENT)).toBe(true);
+        expect(first.items[1].profile).toMatchObject({
+          userId: newer.id,
+          cpf: Cpf.create(cpf),
+          phone: Phone.create('43999998888'),
+          birthDate: BirthDate.create('1990-05-20'),
+        });
+      });
+
+      it('deve filtrar pelo status e ignorar os excluídos', async () => {
+        const inactive = await savedClient('2999-04-01T00:00:00.000Z', {
+          status: UserStatus.INACTIVE,
+        });
+        const deleted = await savedClient('2999-04-02T00:00:00.000Z', {
+          status: UserStatus.INACTIVE,
+        });
+        deleted.delete();
+        await users.save(deleted);
+
+        const result = await users.findClientPage(
+          { status: UserStatus.INACTIVE },
+          { page: 1, pageSize: 100 },
+        );
+
+        expect(result.items[0].user.id).toBe(inactive.id);
+        expect(result.items.map(({ user }) => user.id)).not.toContain(deleted.id);
+        expect(result.items.every(({ user }) => user.status === UserStatus.INACTIVE)).toBe(true);
+      });
+
+      it('deve buscar um trecho do nome, sem diferenciar maiúsculas e acentos, ou do e-mail', async () => {
+        const tag = randomUUID().slice(0, 8);
+        const client = await savedClient('2999-05-01T00:00:00.000Z', {
+          name: `José Conceição ${tag}`,
+        });
+        await savedClient('2999-05-02T00:00:00.000Z', { name: 'Outra Pessoa' });
+
+        const byName = await users.findClientPage(
+          { text: `conceicao ${tag.toUpperCase()}` },
+          { page: 1, pageSize: 100 },
+        );
+        const byEmail = await users.findClientPage(
+          { text: client.email.value.slice(0, 20) },
+          { page: 1, pageSize: 100 },
+        );
+
+        expect(byName.items.map(({ user }) => user.id)).toEqual([client.id]);
+        expect(byName.total).toBe(1);
+        expect(byEmail.items.map(({ user }) => user.id)).toEqual([client.id]);
+      });
+
+      it('deve tratar os curingas do LIKE como texto', async () => {
+        await savedClient('2999-06-01T00:00:00.000Z');
+
+        const result = await users.findClientPage({ text: '%' }, { page: 1, pageSize: 100 });
+
+        expect(result).toMatchObject({ items: [], total: 0 });
+      });
+
+      it('deve buscar pelo CPF exato', async () => {
+        const cpf = randomCpf();
+        const client = await savedClient('2999-07-01T00:00:00.000Z', { cpf });
+        await savedClient('2999-07-02T00:00:00.000Z');
+
+        const result = await users.findClientPage(
+          { cpf: Cpf.create(cpf) },
+          { page: 1, pageSize: 100 },
+        );
+
+        expect(result.items.map(({ user }) => user.id)).toEqual([client.id]);
+        expect(result.total).toBe(1);
+      });
+    });
+
     describe('saveClient', () => {
       it('deve gravar o usuário e o perfil do Client', async () => {
         const user = buildClient();
@@ -304,6 +420,38 @@ describe('Repositórios de usuários (integração)', () => {
       phone: Phone.create('(43) 99999-8888'),
       birthDate: BirthDate.create('1990-05-20'),
     });
+  }
+
+  /** Gera um CPF válido, para cada CLIENT do teste ter o seu (o CPF é UNIQUE). */
+  function randomCpf(): string {
+    const digits = Array.from({ length: 9 }, () => randomInt(10));
+    for (const length of [9, 10]) {
+      const sum = digits.reduce((total, digit, index) => total + digit * (length + 1 - index), 0);
+      digits.push(((sum * 10) % 11) % 10);
+    }
+
+    return digits.join('');
+  }
+
+  async function savedAdminLike(createdAt: string): Promise<User> {
+    const superAdmin = await saved(buildSuperAdminLike());
+    const date = new Date(createdAt);
+
+    return saved(
+      User.restore(randomUUID(), {
+        role: Role.ADMIN,
+        name: 'Admin Fulano',
+        email: Email.create(`admin.${randomUUID()}@example.com`),
+        status: UserStatus.ACTIVE,
+        emailVerifiedAt: null,
+        mfaEnabled: false,
+        lastLoginAt: null,
+        createdById: superAdmin.id,
+        createdAt: date,
+        updatedAt: date,
+        deletedAt: null,
+      }),
+    );
   }
 
   function buildSuperAdminLike(): User {

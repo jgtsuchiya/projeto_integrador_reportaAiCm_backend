@@ -6,8 +6,15 @@ import { UserToken } from '../domain/entities/user-token.entity';
 import { User } from '../domain/entities/user.entity';
 import { EmailAlreadyInUseError } from '../domain/errors/email-already-in-use.error';
 import { UserNotFoundError } from '../domain/errors/user-not-found.error';
-import { UserFilter, UserRepository } from '../domain/repositories/user.repository';
+import { ClientProfileRepository } from '../domain/repositories/client-profile.repository';
+import {
+  ClientFilter,
+  ClientWithProfile,
+  UserFilter,
+  UserRepository,
+} from '../domain/repositories/user.repository';
 import { UserTokenRepository } from '../domain/repositories/user-token.repository';
+import { Cpf } from '../domain/value-objects/cpf';
 import { Email } from '../domain/value-objects/email';
 import { Password } from '../domain/value-objects/password';
 import { Role } from '../domain/value-objects/role';
@@ -59,6 +66,31 @@ export class InMemoryUserRepository extends UserRepository {
     return { items: users.slice(start, start + pageSize), page, pageSize, total: users.length };
   }
 
+  async findClientPage(
+    filter: ClientFilter,
+    { page, pageSize }: PageRequest,
+  ): Promise<Page<ClientWithProfile>> {
+    const text = filter.text?.toLowerCase();
+    const clients = this.activeUsers()
+      .filter((user) => user.role === Role.CLIENT)
+      .filter((user) => !filter.status || user.status === filter.status)
+      .filter(
+        (user) =>
+          !text || user.name.toLowerCase().includes(text) || user.email.value.includes(text),
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || a.id.localeCompare(b.id))
+      .flatMap((user) => {
+        const profile = this.database.profiles.get(user.id);
+
+        return profile && (!filter.cpf || profile.cpf.equals(filter.cpf))
+          ? [{ user, profile }]
+          : [];
+      });
+    const start = (page - 1) * pageSize;
+
+    return { items: clients.slice(start, start + pageSize), page, pageSize, total: clients.length };
+  }
+
   async save(user: User): Promise<void> {
     this.database.users.set(user.id, user);
   }
@@ -75,6 +107,28 @@ export class InMemoryUserRepository extends UserRepository {
 
   private activeUsers(): User[] {
     return [...this.database.users.values()].filter((user) => !user.isDeleted);
+  }
+}
+
+export class InMemoryClientProfileRepository extends ClientProfileRepository {
+  constructor(private readonly database: InMemoryUsersDatabase) {
+    super();
+  }
+
+  async findByUserId(userId: string): Promise<ClientProfile | null> {
+    return this.database.profiles.get(userId) ?? null;
+  }
+
+  async existsByCpf(cpf: Cpf): Promise<boolean> {
+    return [...this.database.profiles.values()].some((profile) => profile.cpf.equals(cpf));
+  }
+
+  async save(profile: ClientProfile): Promise<void> {
+    this.database.profiles.set(profile.userId, profile);
+  }
+
+  async delete(userId: string): Promise<void> {
+    this.database.profiles.delete(userId);
   }
 }
 
