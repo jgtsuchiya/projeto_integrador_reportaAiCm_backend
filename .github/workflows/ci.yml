@@ -77,6 +77,16 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=30
+      mailpit:
+        image: axllent/mailpit:v1.31.3
+        ports:
+          - 1025:1025
+          - 8025:8025
+        options: >-
+          --health-cmd="/mailpit readyz"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
     env:
       DB_HOST: 127.0.0.1
       DB_PORT: 3306
@@ -87,6 +97,9 @@ jobs:
       SUPERTOKENS_API_KEY: reportaai-ci-supertokens-api-key
       API_DOMAIN: http://localhost:3000
       WEB_APP_URL: http://localhost:5173
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: 1025
+      MAIL_FROM: 'ReportaAi Cm <no-reply@reportaai.local>'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

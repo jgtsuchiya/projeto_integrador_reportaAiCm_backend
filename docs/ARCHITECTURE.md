@@ -13,9 +13,10 @@ src/
 ├── config/                  # configuração e validação de variáveis de ambiente
 ├── shared/                  # código transversal, reutilizado por vários módulos
 │   ├── domain/              # classes base de domínio, erros de domínio genéricos
-│   ├── application/         # contratos genéricos (ex.: UseCase)
-│   ├── infra/               # integrações compartilhadas (ex.: módulo de banco)
-│   └── presentation/        # filters, interceptors, pipes, guards, decorators
+│   ├── application/         # contratos genéricos (ex.: UseCase, porta MailSender)
+│   ├── infra/               # integrações compartilhadas (ex.: banco de dados e e-mail)
+│   ├── presentation/        # filters, interceptors, pipes, guards, decorators
+│   └── testing/             # fakes reutilizados nos testes (fora do build)
 └── modules/
     └── <feature>/
         ├── <feature>.module.ts
@@ -84,7 +85,7 @@ providers: [
 
 Assim, o caso de uso depende apenas de `ReportRepository`. Os testes unitários conseguem trocar a implementação por um fake sem precisar de banco.
 
-Os serviços externos seguem o mesmo padrão, com a porta em `application/ports/`. No módulo `users`, o [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts) (criar credencial, conferir e trocar senha, remover o usuário, revogar sessões, criar e atribuir papéis) é implementado pelo [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts). Só a infra importa o `supertokens-node`.
+Os serviços externos seguem o mesmo padrão, com a porta em `application/ports/`. No módulo `users`, o [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts) (criar credencial, conferir e trocar senha, remover o usuário, revogar sessões, criar e atribuir papéis) é implementado pelo [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts). Só a infra importa o `supertokens-node`. As portas usadas por mais de um módulo, como a de [envio de e-mail](#envio-de-e-mail), ficam em `shared/application/ports/`.
 
 ### Entidades e value objects
 
@@ -169,6 +170,42 @@ list(@CurrentUser() user: AuthenticatedUser) {} // { id, role }
 ```
 
 `@Public()` e `@Roles(...)` valem no método ou no controller inteiro. Quando os dois têm o decorator, vale o do método. Sem sessão, a resposta é 401 no formato do SuperTokens (`{ "message": "unauthorised" }`), que os SDKs de front usam para renovar a sessão.
+
+## Envio de e-mail
+
+O envio de e-mail é compartilhado entre os módulos, e as peças ficam em `shared/`:
+
+| Peça                                                                         | Papel                                                                                                      |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| [`MailSender`](../src/shared/application/ports/mail-sender.ts)               | Porta, com `send({ to, subject, html, text })`                                                             |
+| [`renderMailTemplate`](../src/shared/application/mail/mail-template.ts)      | Layout comum: gera o HTML e o texto puro a partir de título, parágrafos, botão com link e observação       |
+| [`NodemailerMailSender`](../src/shared/infra/mail/nodemailer-mail-sender.ts) | Adapter SMTP com o Nodemailer, ligado à porta pelo [`MailModule`](../src/shared/infra/mail/mail.module.ts) |
+| [`FakeMailSender`](../src/shared/testing/fake-mail-sender.ts)                | Guarda as mensagens em memória, para os testes ([TESTING.md](TESTING.md#fakes-compartilhados))             |
+
+O módulo que envia e-mail importa o `MailModule`, e o caso de uso recebe o `MailSender` pelo construtor:
+
+```ts
+// <feature>.module.ts
+@Module({ imports: [MailModule], providers: [InviteAdminUseCase] })
+
+// no caso de uso
+await this.mailSender.send({
+  to: user.email.value,
+  subject: 'Convite para o painel do ReportaAi Cm',
+  ...renderMailTemplate({
+    title: 'Convite para o painel',
+    paragraphs: [`Olá, ${user.name}!`, 'Defina a sua senha para ativar o acesso.'],
+    action: { label: 'Definir minha senha', url: invitationUrl },
+    note: 'O link vale por 48 horas.',
+  }),
+});
+```
+
+O template escapa o HTML de todo o conteúdo, então dados do usuário (como o nome) podem entrar direto.
+
+Se o servidor SMTP não aceitar a mensagem, o `send` lança um `MailDeliveryError` com mensagem genérica. O motivo (ex.: `Invalid login: 535 ... (EAUTH)`) vai só para o log, sem a configuração do SMTP e com o usuário e a senha mascarados. Se o caso de uso não tratar o erro, a resposta é 500. Cada etapa da conexão SMTP tem timeout de 10 s, porque o envio acontece dentro da requisição.
+
+Em dev, o SMTP é o **Mailpit** do docker-compose: nenhum e-mail sai para a internet, e todos aparecem em http://localhost:8025.
 
 ## Convenções de nomenclatura
 
