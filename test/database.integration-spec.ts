@@ -28,6 +28,20 @@ describe('Banco de dados (integração)', () => {
     await dataSource?.destroy();
   });
 
+  async function countExecutedMigrations(): Promise<number> {
+    const [row] = await dataSource.query<{ total: string }[]>(
+      'SELECT COUNT(*) AS total FROM migrations',
+    );
+    return Number(row?.total ?? 0);
+  }
+
+  async function listTables(): Promise<string[]> {
+    const rows = await dataSource.query<{ name: string }[]>(
+      'SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME',
+    );
+    return rows.map((row) => row.name);
+  }
+
   it('deve conectar ao banco de teste', async () => {
     const [row] = await dataSource.query<{ db: string }[]>('SELECT DATABASE() AS db');
 
@@ -38,6 +52,19 @@ describe('Banco de dados (integração)', () => {
   it('deve executar todas as migrations sem pendências', async () => {
     await dataSource.runMigrations();
 
+    await expect(dataSource.showMigrations()).resolves.toBe(false);
+  });
+
+  it('deve reverter todas as migrations e aplicá-las de novo', async () => {
+    await dataSource.runMigrations();
+
+    for (let executed = await countExecutedMigrations(); executed > 0; executed--) {
+      await dataSource.undoLastMigration();
+    }
+    const tablesAfterRevert = await listTables();
+    await dataSource.runMigrations();
+
+    expect(tablesAfterRevert).toEqual(['migrations']);
     await expect(dataSource.showMigrations()).resolves.toBe(false);
   });
 
