@@ -108,3 +108,5 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:integration
+      # Os e2e usam os mesmos serviços, por isso rodam neste job, que já é um check obrigatório.
+      - run: npm run test:e2e

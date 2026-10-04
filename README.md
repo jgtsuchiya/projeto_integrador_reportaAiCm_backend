@@ -62,7 +62,7 @@ flowchart LR
 | E-mail                | Nodemailer 10 (SMTP), com o Mailpit 1.31 em dev      |
 | ORM e migrations      | TypeORM 1.1                                          |
 | Validação de ambiente | Zod + `@nestjs/config`                               |
-| Testes                | Jest + ts-jest + `@nestjs/testing`                   |
+| Testes                | Jest + ts-jest + `@nestjs/testing` + supertest (e2e) |
 | Qualidade de código   | ESLint + Prettier + Husky + lint-staged + commitlint |
 | Integração contínua   | GitHub Actions                                       |
 
@@ -138,7 +138,7 @@ O modelo está em [.env.example](.env.example). As variáveis são validadas qua
 | `SUPER_ADMIN_EMAIL`           | só seed     | (nenhum)      | E-mail (login) do SuperAdm                                                                                        |
 | `SUPER_ADMIN_PASSWORD`        | só seed     | (nenhum)      | Senha do SuperAdm: de 8 a 128 caracteres, com pelo menos uma letra e um número                                    |
 
-O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md).
+O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração e e2e. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md).
 
 ## Comandos disponíveis
 
@@ -163,12 +163,13 @@ O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes
 
 **Testes**
 
-| Comando                    | O que faz                                                                      |
-| -------------------------- | ------------------------------------------------------------------------------ |
-| `npm test`                 | Roda os testes unitários                                                       |
-| `npm run test:watch`       | Roda os testes unitários em modo watch                                         |
-| `npm run test:cov`         | Gera o relatório de cobertura em `coverage/`                                   |
-| `npm run test:integration` | Roda os testes de integração com MySQL, SuperTokens e Mailpit (requer `db:up`) |
+| Comando                    | O que faz                                                                                    |
+| -------------------------- | -------------------------------------------------------------------------------------------- |
+| `npm test`                 | Roda os testes unitários                                                                     |
+| `npm run test:watch`       | Roda os testes unitários em modo watch                                                       |
+| `npm run test:cov`         | Gera o relatório de cobertura em `coverage/`                                                 |
+| `npm run test:integration` | Roda os testes de integração com MySQL, SuperTokens e Mailpit (requer `db:up`)               |
+| `npm run test:e2e`         | Roda os testes e2e (fluxos de usuário e permissões) com MySQL e SuperTokens (requer `db:up`) |
 
 **Banco de dados e migrations**
 
