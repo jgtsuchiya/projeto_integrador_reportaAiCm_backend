@@ -1,10 +1,16 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { IdentityProvider } from './application/ports/identity-provider';
+import { ClientProfileRepository } from './domain/repositories/client-profile.repository';
+import { UserRepository } from './domain/repositories/user.repository';
 import { ClientProfileOrmEntity } from './infra/database/entities/client-profile.orm-entity';
 import { RoleOrmEntity } from './infra/database/entities/role.orm-entity';
 import { UserTokenOrmEntity } from './infra/database/entities/user-token.orm-entity';
 import { UserOrmEntity } from './infra/database/entities/user.orm-entity';
+import { TypeOrmClientProfileRepository } from './infra/database/repositories/typeorm-client-profile.repository';
+import { TypeOrmUserRepository } from './infra/database/repositories/typeorm-user.repository';
+import { SuperTokensIdentityProvider } from './infra/identity/supertokens-identity-provider';
 
 @Module({
   imports: [
@@ -14,6 +20,11 @@ import { UserOrmEntity } from './infra/database/entities/user.orm-entity';
       ClientProfileOrmEntity,
       UserTokenOrmEntity,
     ]),
+  ],
+  providers: [
+    { provide: UserRepository, useClass: TypeOrmUserRepository },
+    { provide: ClientProfileRepository, useClass: TypeOrmClientProfileRepository },
+    { provide: IdentityProvider, useClass: SuperTokensIdentityProvider },
   ],
 })
 export class UsersModule {}

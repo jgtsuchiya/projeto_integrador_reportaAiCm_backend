@@ -21,16 +21,19 @@ src/
         ├── <feature>.module.ts
         ├── domain/
         │   ├── entities/        # entidades e regras de negócio puras
+        │   ├── value-objects/   # valores validados e imutáveis (ex.: Email, Cpf)
         │   ├── repositories/    # contratos (abstract classes) dos repositórios
         │   └── errors/          # erros de domínio da feature
         ├── application/
         │   ├── use-cases/       # um caso de uso por arquivo
+        │   ├── ports/           # contratos de serviços externos (ex.: IdentityProvider)
         │   └── dtos/            # entrada/saída dos casos de uso
         ├── infra/
-        │   └── database/
-        │       ├── entities/     # entidades de persistência (TypeORM)
-        │       ├── repositories/ # implementações dos contratos do domínio
-        │       └── mappers/      # conversão persistência <-> domínio
+        │   ├── database/
+        │   │   ├── entities/     # entidades de persistência (TypeORM)
+        │   │   ├── repositories/ # implementações dos contratos do domínio
+        │   │   └── mappers/      # conversão persistência <-> domínio
+        │   └── <integração>/     # adapters das portas (ex.: identity/, com o SuperTokens)
         └── presentation/
             ├── controllers/     # rotas HTTP
             └── dtos/            # validação de request/response
@@ -46,12 +49,12 @@ As dependências apontam **para dentro**:
 presentation ──► application ──► domain ◄── infra
 ```
 
-| Camada         | Pode importar                                 | Não pode importar                                       |
-| -------------- | --------------------------------------------- | ------------------------------------------------------- |
-| `domain`       | apenas `shared/domain`                        | NestJS, TypeORM, `application`, `infra`, `presentation` |
-| `application`  | `domain`, `shared/application`                | `infra`, `presentation`                                 |
-| `infra`        | `domain`, `application`, bibliotecas externas | `presentation`                                          |
-| `presentation` | `application` (casos de uso e DTOs)           | `infra` diretamente                                     |
+| Camada         | Pode importar                                 | Não pode importar                                                    |
+| -------------- | --------------------------------------------- | -------------------------------------------------------------------- |
+| `domain`       | apenas `shared/domain`                        | NestJS, TypeORM, SuperTokens, `application`, `infra`, `presentation` |
+| `application`  | `domain`, `shared/application`                | TypeORM, SuperTokens, `infra`, `presentation`                        |
+| `infra`        | `domain`, `application`, bibliotecas externas | `presentation`                                                       |
+| `presentation` | `application` (casos de uso e DTOs)           | `infra` diretamente                                                  |
 
 O decorator `@Injectable()` é permitido em casos de uso, porque é só metadado de DI e não acopla a lógica ao framework. No `domain`, nenhum import de `@nestjs/*` é permitido.
 
@@ -80,6 +83,14 @@ providers: [
 ```
 
 Assim, o caso de uso depende apenas de `ReportRepository`. Os testes unitários conseguem trocar a implementação por um fake sem precisar de banco.
+
+Os serviços externos seguem o mesmo padrão, com a porta em `application/ports/`. No módulo `users`, o [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts) (criar credencial, conferir e trocar senha, remover o usuário, revogar sessões e atribuir papel) é implementado pelo [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts). Só a infra importa o `supertokens-node`.
+
+### Entidades e value objects
+
+- **Entidades** estendem [`Entity`](../src/shared/domain/entity.ts) e protegem as próprias regras: os dados só mudam por métodos com nome de negócio (`user.deactivate()`, `user.delete()`), nunca por setters. Cada entidade tem uma fábrica para os dados novos (`User.createClient(...)`), que valida, e um `restore(...)` para os dados já persistidos, usado pelos mappers.
+- **Value objects** estendem [`ValueObject`](../src/shared/domain/value-object.ts): são criados por `create(raw)`, que normaliza e valida a entrada (ex.: `Cpf.create('123.456.789-09').value === '12345678909'`) e lança um erro de domínio quando ela é inválida. Dois value objects com o mesmo valor são iguais. A exceção é o [`Password`](../src/modules/users/domain/value-objects/password.ts), que guarda a senha num campo privado para ela não aparecer em `JSON.stringify` nem em logs.
+- A cobertura de testes de `modules/users/domain` tem mínimo de 90%, verificado pelo `npm run test:cov` (e no CI).
 
 ### Comunicação entre módulos
 
