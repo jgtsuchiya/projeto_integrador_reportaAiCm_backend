@@ -30,5 +30,9 @@ export abstract class IdentityProvider {
 
   abstract revokeAllSessions(userId: string): Promise<void>;
 
+  /** Cria os papéis no provedor. Idempotente: os que já existem são mantidos. */
+  abstract createRoles(roles: readonly Role[]): Promise<void>;
+
+  /** O papel precisa existir no provedor (`createRoles`, chamado pelo seed). */
   abstract assignRole(userId: string, role: Role): Promise<void>;
 }
