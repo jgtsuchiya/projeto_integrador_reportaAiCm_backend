@@ -3,12 +3,11 @@ import { Injectable } from '@nestjs/common';
 import { UseCase } from '@shared/application/use-case.interface';
 
 import { AdminNotPendingError } from '../../domain/errors/admin-not-pending.error';
-import { UserNotFoundError } from '../../domain/errors/user-not-found.error';
 import { UserRepository } from '../../domain/repositories/user.repository';
 import { UserTokenRepository } from '../../domain/repositories/user-token.repository';
-import { Role } from '../../domain/value-objects/role';
 import { UserStatus } from '../../domain/value-objects/user-status';
 import { AdminInvitationService, InvitationOutput } from '../services/admin-invitation.service';
+import { findAdminOrFail } from '../services/find-admin';
 
 export interface ResendAdminInvitationInput {
   adminId: string;
@@ -30,12 +29,7 @@ export class ResendAdminInvitationUseCase implements UseCase<
   ) {}
 
   async execute(input: ResendAdminInvitationInput): Promise<InvitationOutput> {
-    const admin = await this.userRepository.findById(input.adminId);
-
-    // Um id de SUPER_ADMIN ou CLIENT é tratado como inexistente nas rotas de ADMIN.
-    if (!admin || admin.role !== Role.ADMIN) {
-      throw new UserNotFoundError();
-    }
+    const admin = await findAdminOrFail(this.userRepository, input.adminId);
 
     if (admin.status !== UserStatus.PENDING) {
       throw new AdminNotPendingError();

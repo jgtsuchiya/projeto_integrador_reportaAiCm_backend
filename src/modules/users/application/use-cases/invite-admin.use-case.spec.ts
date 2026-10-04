@@ -106,8 +106,11 @@ describe('InviteAdminUseCase', () => {
       name: 'Ana Souza',
       email: 'ana@example.com',
       status: UserStatus.PENDING,
+      emailVerifiedAt: null,
+      lastLoginAt: null,
       createdById: 'super-admin-1',
       createdAt: expect.any(Date) as Date,
+      updatedAt: expect.any(Date) as Date,
       invitation: { sent: true, expiresAt: token.expiresAt },
     });
   });

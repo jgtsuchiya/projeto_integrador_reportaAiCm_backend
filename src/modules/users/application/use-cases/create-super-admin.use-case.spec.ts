@@ -1,3 +1,5 @@
+import type { Page } from '@shared/domain/pagination';
+
 import { User } from '../../domain/entities/user.entity';
 import { EmailAlreadyInUseError } from '../../domain/errors/email-already-in-use.error';
 import { InvalidEmailError } from '../../domain/errors/invalid-email.error';
@@ -27,6 +29,10 @@ class InMemoryUserRepository extends UserRepository {
 
   async existsByRole(role: Role): Promise<boolean> {
     return this.items.some((user) => user.role === role);
+  }
+
+  async findPage(): Promise<Page<User>> {
+    throw new Error('Não usado neste teste.');
   }
 
   async save(user: User): Promise<void> {
