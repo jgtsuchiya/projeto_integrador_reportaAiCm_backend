@@ -78,7 +78,7 @@ describe('AdminsController', () => {
 
     const result = await sut.invite(
       { name: 'Ana Souza', email: 'ana@example.com' },
-      { id: 'super-admin-1', role: 'SUPER_ADMIN' },
+      { id: 'super-admin-1', role: 'SUPER_ADMIN', sessionHandle: 'session-1' },
     );
 
     expect(inviteAdminUseCase.execute).toHaveBeenCalledWith({

@@ -3,8 +3,8 @@
  * categoria em status é o filtro global de exceções (camada de apresentação).
  *
  * Os erros de cada feature devem estender uma das categorias
- * (`NotFoundError`, `ConflictError`, `BusinessRuleError` ou `ForbiddenError`),
- * e não esta classe diretamente.
+ * (`NotFoundError`, `ConflictError`, `BusinessRuleError`, `ForbiddenError` ou
+ * `UnauthorizedError`), e não esta classe diretamente.
  */
 export abstract class DomainError extends Error {
   protected constructor(

@@ -43,6 +43,14 @@ class InMemoryUserRepository extends UserRepository {
     await this.save(user);
   }
 
+  async updateClient(): Promise<void> {
+    throw new Error('Não usado neste teste.');
+  }
+
+  async deleteClient(): Promise<void> {
+    throw new Error('Não usado neste teste.');
+  }
+
   async saveWithToken(user: User): Promise<void> {
     await this.save(user);
   }

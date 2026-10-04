@@ -46,6 +46,14 @@ class InMemoryUserRepository extends UserRepository {
     await this.save(user);
   }
 
+  async updateClient(): Promise<void> {
+    throw new Error('Não usado neste teste.');
+  }
+
+  async deleteClient(): Promise<void> {
+    throw new Error('Não usado neste teste.');
+  }
+
   async saveWithToken(user: User): Promise<void> {
     await this.save(user);
   }
@@ -80,6 +88,8 @@ class FakeIdentityProvider extends IdentityProvider {
   }
 
   async revokeAllSessions(): Promise<void> {}
+
+  async revokeOtherSessions(): Promise<void> {}
 
   async createRoles(roles: readonly Role[]): Promise<void> {
     roles.forEach((role) => this.roles.add(role));

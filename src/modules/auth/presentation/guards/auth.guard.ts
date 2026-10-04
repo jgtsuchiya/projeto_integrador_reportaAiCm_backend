@@ -48,7 +48,10 @@ export class AuthGuard implements CanActivate {
     const http = context.switchToHttp();
     const request = http.getRequest<AuthenticatedRequest>();
     const session = await Session.getSession(request, http.getResponse<Response>());
-    const user = await this.getAuthenticatedUser.execute({ userId: session.getUserId() });
+    const user = await this.getAuthenticatedUser.execute({
+      userId: session.getUserId(),
+      sessionHandle: session.getHandle(),
+    });
 
     if (!user) {
       // Encerra a sessão (e limpa os tokens do front), para o SDK não ficar renovando o

@@ -21,7 +21,11 @@ jest.mock('supertokens-node/recipe/emailpassword', () => ({
 }));
 jest.mock('supertokens-node/recipe/session', () => ({
   __esModule: true,
-  default: { revokeAllSessionsForUser: jest.fn() },
+  default: {
+    revokeAllSessionsForUser: jest.fn(),
+    getAllSessionHandlesForUser: jest.fn(),
+    revokeMultipleSessions: jest.fn(),
+  },
 }));
 jest.mock('supertokens-node/recipe/userroles', () => ({
   __esModule: true,
@@ -143,6 +147,29 @@ describe('SuperTokensIdentityProvider', () => {
     await sut.revokeAllSessions(USER_ID);
 
     expect(Session.revokeAllSessionsForUser).toHaveBeenCalledWith(USER_ID);
+  });
+
+  describe('revokeOtherSessions', () => {
+    it('deve revogar as sessões do usuário, menos a atual', async () => {
+      jest
+        .mocked(Session.getAllSessionHandlesForUser)
+        .mockResolvedValue(['atual', 'celular', 'notebook']);
+      jest.mocked(Session.revokeMultipleSessions).mockResolvedValue(['celular', 'notebook']);
+
+      await sut.revokeOtherSessions(USER_ID, 'atual');
+
+      expect(Session.getAllSessionHandlesForUser).toHaveBeenCalledWith(USER_ID);
+      expect(Session.revokeMultipleSessions).toHaveBeenCalledWith(['celular', 'notebook']);
+    });
+
+    it('não deve chamar o SuperTokens quando só existe a sessão atual', async () => {
+      jest.mocked(Session.getAllSessionHandlesForUser).mockResolvedValue(['atual']);
+      jest.mocked(Session.revokeMultipleSessions).mockClear();
+
+      await sut.revokeOtherSessions(USER_ID, 'atual');
+
+      expect(Session.revokeMultipleSessions).not.toHaveBeenCalled();
+    });
   });
 
   it('deve criar os papéis sem permissões', async () => {

@@ -277,7 +277,11 @@ describe('Autenticação e controle de acesso (integração)', () => {
       const response = await get('/test-auth', accessToken);
 
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ id: user.id, role: Role.CLIENT });
+      await expect(response.json()).resolves.toEqual({
+        id: user.id,
+        role: Role.CLIENT,
+        sessionHandle: expect.any(String) as string,
+      });
     });
 
     it('deve aceitar o access token por cookie (painel web)', async () => {
@@ -293,7 +297,11 @@ describe('Autenticação e controle de acesso (integração)', () => {
       expect(signInResponse.headers.get('st-access-token')).toBeNull();
       expect(cookies).toContain('sAccessToken=');
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ id: user.id, role: Role.ADMIN });
+      await expect(response.json()).resolves.toEqual({
+        id: user.id,
+        role: Role.ADMIN,
+        sessionHandle: expect.any(String) as string,
+      });
     });
 
     it.each([

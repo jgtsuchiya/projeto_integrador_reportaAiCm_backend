@@ -100,6 +100,15 @@ export class InMemoryUserRepository extends UserRepository {
     this.database.profiles.set(profile.userId, profile);
   }
 
+  async updateClient(user: User, profile: ClientProfile): Promise<void> {
+    await this.saveClient(user, profile);
+  }
+
+  async deleteClient(user: User): Promise<void> {
+    this.database.users.set(user.id, user);
+    this.database.profiles.delete(user.id);
+  }
+
   async saveWithToken(user: User, token: UserToken): Promise<void> {
     this.database.users.set(user.id, user);
     this.database.tokens.set(token.id, token);
@@ -162,10 +171,14 @@ export class InMemoryUserTokenRepository extends UserTokenRepository {
   }
 }
 
-/** SuperTokens em memória: guarda a senha em texto puro só para os testes conferirem. */
+/**
+ * SuperTokens em memória: guarda a senha em texto puro só para os testes conferirem. As
+ * sessões são só os handles de cada usuário, que os testes criam direto em `sessions`.
+ */
 export class FakeIdentityProvider extends IdentityProvider {
   readonly credentials = new Map<string, { email: string; password: string }>();
   readonly userRoles = new Map<string, Role>();
+  readonly sessions = new Map<string, string[]>();
   private nextId = 1;
 
   async createCredentials(email: Email, password: Password): Promise<string> {
@@ -198,9 +211,20 @@ export class FakeIdentityProvider extends IdentityProvider {
   async deleteCredentials(userId: string): Promise<void> {
     this.credentials.delete(userId);
     this.userRoles.delete(userId);
+    this.sessions.delete(userId);
   }
 
-  async revokeAllSessions(): Promise<void> {}
+  async revokeAllSessions(userId: string): Promise<void> {
+    this.sessions.delete(userId);
+  }
+
+  async revokeOtherSessions(userId: string, currentSessionHandle: string): Promise<void> {
+    const handles = this.sessions.get(userId) ?? [];
+    this.sessions.set(
+      userId,
+      handles.filter((handle) => handle === currentSessionHandle),
+    );
+  }
 
   async createRoles(): Promise<void> {}
 

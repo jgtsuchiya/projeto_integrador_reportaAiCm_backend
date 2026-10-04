@@ -3,6 +3,7 @@ import { ConflictError } from './conflict.error';
 import { DomainError } from './domain.error';
 import { ForbiddenError } from './forbidden.error';
 import { NotFoundError } from './not-found.error';
+import { UnauthorizedError } from './unauthorized.error';
 
 class EmailAlreadyInUseError extends ConflictError {
   constructor() {
@@ -11,7 +12,7 @@ class EmailAlreadyInUseError extends ConflictError {
 }
 
 describe('DomainError', () => {
-  it.each([NotFoundError, ConflictError, BusinessRuleError, ForbiddenError])(
+  it.each([NotFoundError, ConflictError, BusinessRuleError, ForbiddenError, UnauthorizedError])(
     'deve criar %p como erro de domínio com a mensagem informada',
     (errorClass) => {
       const sut = new errorClass('mensagem');

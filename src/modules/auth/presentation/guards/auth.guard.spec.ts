@@ -24,6 +24,7 @@ jest.mock('supertokens-node/recipe/session', () => ({
 }));
 
 const USER_ID = '5d1c1f0e-8a3b-4f6e-9c2d-7b8a9e0f1a2b';
+const SESSION_HANDLE = 'b3f6a1e2-7c4d-4e8f-9a0b-1c2d3e4f5a6b';
 
 @Controller('probe')
 class ProbeController {
@@ -74,13 +75,17 @@ function createContext(
 describe('AuthGuard', () => {
   const probe = new ProbeController();
   let request: AuthenticatedRequest;
-  let session: { getUserId: jest.Mock; revokeSession: jest.Mock };
+  let session: { getUserId: jest.Mock; getHandle: jest.Mock; revokeSession: jest.Mock };
   let getAuthenticatedUser: jest.Mocked<Pick<GetAuthenticatedUserUseCase, 'execute'>>;
   let sut: AuthGuard;
 
   beforeEach(() => {
     request = {} as AuthenticatedRequest;
-    session = { getUserId: jest.fn().mockReturnValue(USER_ID), revokeSession: jest.fn() };
+    session = {
+      getUserId: jest.fn().mockReturnValue(USER_ID),
+      getHandle: jest.fn().mockReturnValue(SESSION_HANDLE),
+      revokeSession: jest.fn(),
+    };
     jest
       .mocked(Session.getSession)
       .mockResolvedValue(session as unknown as Awaited<ReturnType<typeof Session.getSession>>);
@@ -92,7 +97,7 @@ describe('AuthGuard', () => {
   });
 
   function authenticateAs(role: AuthenticatedUser['role']): AuthenticatedUser {
-    const user = { id: USER_ID, role };
+    const user = { id: USER_ID, role, sessionHandle: SESSION_HANDLE };
     getAuthenticatedUser.execute.mockResolvedValue(user);
 
     return user;
@@ -122,7 +127,10 @@ describe('AuthGuard', () => {
     await expect(sut.canActivate(createContext(probe, 'authenticated', request))).resolves.toBe(
       true,
     );
-    expect(getAuthenticatedUser.execute).toHaveBeenCalledWith({ userId: USER_ID });
+    expect(getAuthenticatedUser.execute).toHaveBeenCalledWith({
+      userId: USER_ID,
+      sessionHandle: SESSION_HANDLE,
+    });
     expect(request.user).toEqual(user);
   });
 

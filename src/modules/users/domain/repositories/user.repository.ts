@@ -50,6 +50,13 @@ export abstract class UserRepository {
    * grava o mesmo e-mail ou CPF antes (RN02, RN07).
    */
   abstract saveClient(user: User, profile: ClientProfile): Promise<void>;
+  /** Atualiza um CLIENT existente e o perfil dele na mesma transação (edição do perfil). */
+  abstract updateClient(user: User, profile: ClientProfile): Promise<void>;
+  /**
+   * Grava a exclusão lógica feita por `User.delete()` e remove o perfil do CLIENT na mesma
+   * transação (RN11, LGPD). Assim, o CPF só fica livre junto com a anonimização.
+   */
+  abstract deleteClient(user: User): Promise<void>;
   /**
    * Grava o usuário e o token na mesma transação: se um falhar, nenhum é gravado. Usado no
    * convite do ADMIN (insere os dois) e no aceite (atualiza os dois). Lança

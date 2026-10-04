@@ -30,6 +30,9 @@ export abstract class IdentityProvider {
 
   abstract revokeAllSessions(userId: string): Promise<void>;
 
+  /** Revoga as sessões do usuário, menos a informada (a da requisição atual). */
+  abstract revokeOtherSessions(userId: string, currentSessionHandle: string): Promise<void>;
+
   /** Cria os papéis no provedor. Idempotente: os que já existem são mantidos. */
   abstract createRoles(roles: readonly Role[]): Promise<void>;
 
