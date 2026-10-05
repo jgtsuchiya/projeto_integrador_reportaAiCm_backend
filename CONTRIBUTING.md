@@ -142,12 +142,12 @@ Regras:
 
 ## Verificações automáticas
 
-| Quando                        | O que roda                                                                            | Onde                       |
-| ----------------------------- | ------------------------------------------------------------------------------------- | -------------------------- |
-| `git commit`                  | ESLint, Prettier e testes relacionados aos arquivos staged                            | `.husky/pre-commit`        |
-| `git commit`                  | Validação da mensagem (commitlint)                                                    | `.husky/commit-msg`        |
-| `git push`                    | Validação do nome da branch e bloqueio de push direto em `main` e `develop`           | `.husky/pre-push`          |
-| PR e push em `develop`/`main` | Lint, formatação, typecheck, testes unitários, build e testes de integração com MySQL | `.github/workflows/ci.yml` |
+| Quando                        | O que roda                                                                                  | Onde                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------- | -------------------------- |
+| `git commit`                  | ESLint, Prettier e testes relacionados aos arquivos staged                                  | `.husky/pre-commit`        |
+| `git commit`                  | Validação da mensagem (commitlint)                                                          | `.husky/commit-msg`        |
+| `git push`                    | Validação do nome da branch e bloqueio de push direto em `main` e `develop`                 | `.husky/pre-push`          |
+| PR e push em `develop`/`main` | Lint, formatação, typecheck, testes unitários, build e testes de integração e e2e com MySQL | `.github/workflows/ci.yml` |
 
 Numa emergência real, os hooks locais podem ser ignorados com `--no-verify`. A proteção do GitHub continua valendo.
 

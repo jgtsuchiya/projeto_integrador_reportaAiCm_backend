@@ -1,0 +1,355 @@
+# Coleção de requisições da API do ReportaAi Cm: usuários e autenticação (sprint 2).
+#
+# Como usar
+#   1. Instale a extensão "REST Client" do VS Code (humao.rest-client, já recomendada em
+#      .vscode/extensions.json) e clique em "Send Request" acima de cada requisição.
+#   2. Suba o ambiente antes: npm run db:up, npm run migration:run, npm run seed e
+#      npm run start:dev (ver o README).
+#   3. Siga a ordem do arquivo: cada seção usa o que as anteriores criaram. Os ids e os tokens
+#      de sessão são lidos das respostas (as requisições com "# @name").
+#
+# O login é feito no modo header (st-auth-mode: header), como o app mobile: os tokens voltam
+# nos headers da resposta e o access token vai no Authorization das chamadas seguintes.
+# O painel web usa cookies, que o SDK dele controla (ver docs/AUTH.md e docs/FRONTEND.md).
+#
+# O único passo manual é o token do convite do ADM, que só existe no e-mail (seção 3).
+
+@baseUrl = http://localhost:3000/api
+
+# SuperAdm criado pelo npm run seed (variáveis SUPER_ADMIN_* do .env).
+@superAdminEmail = superadmin@reportaai.local
+@superAdminPassword = SuperAdmin123
+
+# ADM convidado na seção 3.
+@adminEmail = ana.souza@reportaai.local
+@adminPassword = SenhaDoAdm123
+
+# Client cadastrado na seção 4. O CPF precisa ter os dígitos verificadores válidos.
+@clientEmail = maria.silva@reportaai.local
+@clientCpf = 529.982.247-25
+@clientPassword = SenhaForte123
+@clientNewPassword = OutraSenha456
+
+# Token do link de convite (.../convite?token=<token>), copiado do e-mail (seção 3).
+@invitationToken = cole-aqui-o-token-do-convite
+
+###
+# ==============================================================================================
+# 1. Saúde (público)
+# ==============================================================================================
+
+### Verifica se a API está no ar
+# Resposta: 200, com { "status": "ok", "timestamp": "..." }.
+GET {{baseUrl}}/health
+
+###
+# ==============================================================================================
+# 2. Login do SuperAdm (rota nativa do SuperTokens, pública)
+# ==============================================================================================
+
+### Login
+# Resposta: 200, com { "status": "OK", "user": {...} } e os tokens nos headers st-access-token e
+# st-refresh-token. Senha errada, e-mail sem conta e usuário bloqueado também respondem 200,
+# com { "status": "WRONG_CREDENTIALS_ERROR" }.
+# @name loginSuperAdmin
+POST {{baseUrl}}/auth/signin
+Content-Type: application/json
+st-auth-mode: header
+
+{
+  "formFields": [
+    { "id": "email", "value": "{{superAdminEmail}}" },
+    { "id": "password", "value": "{{superAdminPassword}}" }
+  ]
+}
+
+###
+
+@superAdminToken = {{loginSuperAdmin.response.headers.st-access-token}}
+
+###
+# ==============================================================================================
+# 3. Convite de ADM (SUPER_ADMIN convida, o ADM aceita sem sessão)
+# ==============================================================================================
+
+### Convida o ADM: cria o usuário PENDING e envia o e-mail com o link
+# Resposta: 201, com o ADM e "invitation": { "sent": true, "expiresAt": "..." }.
+# E-mail já cadastrado: 409.
+# @name inviteAdmin
+POST {{baseUrl}}/admins
+Content-Type: application/json
+Authorization: Bearer {{superAdminToken}}
+
+{
+  "name": "Ana Souza",
+  "email": "{{adminEmail}}"
+}
+
+###
+
+@adminId = {{inviteAdmin.response.body.$.id}}
+
+### (Opcional) Reenvia o convite: os links anteriores deixam de valer
+# Resposta: 200, com { "sent": true, "expiresAt": "..." }. ADM que não está PENDING: 422.
+POST {{baseUrl}}/admins/{{adminId}}/invitation
+Authorization: Bearer {{superAdminToken}}
+
+### Lê o último e-mail capturado pelo Mailpit (não é rota da API)
+# Copie o token do link (.../convite?token=<token>) para a variável @invitationToken, no topo
+# do arquivo. A caixa de entrada também abre no navegador: http://localhost:8025
+GET http://localhost:8025/view/latest.txt
+
+### Aceita o convite: define a senha e ativa o ADM (público)
+# Resposta: 204. Token inválido, expirado, já usado ou substituído por um reenvio: 422.
+POST {{baseUrl}}/invitations/accept
+Content-Type: application/json
+
+{
+  "token": "{{invitationToken}}",
+  "password": "{{adminPassword}}"
+}
+
+### Login do ADM
+# Resposta: 200, com { "status": "OK", ... }. Antes do aceite, o ADM PENDING recebe
+# { "status": "WRONG_CREDENTIALS_ERROR" }.
+# @name loginAdmin
+POST {{baseUrl}}/auth/signin
+Content-Type: application/json
+st-auth-mode: header
+
+{
+  "formFields": [
+    { "id": "email", "value": "{{adminEmail}}" },
+    { "id": "password", "value": "{{adminPassword}}" }
+  ]
+}
+
+###
+
+@adminToken = {{loginAdmin.response.headers.st-access-token}}
+
+###
+# ==============================================================================================
+# 4. Autocadastro do Client (público)
+# ==============================================================================================
+
+### Cadastra o Client: CPF e telefone aceitam máscara e são salvos só com dígitos
+# Resposta: 201, com o perfil (sem a senha). Dados inválidos: 400, com a lista de campos.
+# E-mail ou CPF já cadastrado: 409.
+# @name registerClient
+POST {{baseUrl}}/clients
+Content-Type: application/json
+
+{
+  "name": "Maria da Silva",
+  "email": "{{clientEmail}}",
+  "password": "{{clientPassword}}",
+  "cpf": "{{clientCpf}}",
+  "phone": "(44) 99999-8888",
+  "birthDate": "1990-05-20"
+}
+
+###
+
+@clientId = {{registerClient.response.body.$.id}}
+
+###
+# ==============================================================================================
+# 5. Gestão de Clients pelo painel (ADMIN e SUPER_ADMIN)
+# ==============================================================================================
+
+### Lista os Clients: paginação, filtro por status e busca
+# search procura um trecho do nome ou do e-mail, ou o CPF completo (com ou sem máscara).
+# Resposta: 200, com { "items": [...], "page": 1, "pageSize": 20, "total": 1 }. O CPF sai
+# mascarado (***.982.247-**). Com o token de um Client: 403.
+GET {{baseUrl}}/clients?page=1&pageSize=20&status=ACTIVE&search=maria
+Authorization: Bearer {{adminToken}}
+
+### Consulta um Client
+# Resposta: 200. Id que não é de Client (ou de Client excluído): 404.
+GET {{baseUrl}}/clients/{{clientId}}
+Authorization: Bearer {{adminToken}}
+
+### Inativa o Client: ele perde o acesso na hora e as sessões dele são revogadas
+# Resposta: 200, com "status": "INACTIVE". Client que já está INACTIVE: 422.
+PATCH {{baseUrl}}/clients/{{clientId}}/status
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{
+  "status": "INACTIVE"
+}
+
+### Reativa o Client
+# Resposta: 200, com "status": "ACTIVE".
+PATCH {{baseUrl}}/clients/{{clientId}}/status
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{
+  "status": "ACTIVE"
+}
+
+###
+# ==============================================================================================
+# 6. Perfil do usuário logado (qualquer papel; aqui, o Client)
+# ==============================================================================================
+
+### Login do Client
+# Resposta: 200, com { "status": "OK", ... }.
+# @name loginClient
+POST {{baseUrl}}/auth/signin
+Content-Type: application/json
+st-auth-mode: header
+
+{
+  "formFields": [
+    { "id": "email", "value": "{{clientEmail}}" },
+    { "id": "password", "value": "{{clientPassword}}" }
+  ]
+}
+
+###
+
+@clientToken = {{loginClient.response.headers.st-access-token}}
+
+### Perfil e papel de quem está logado
+# Resposta: 200. O Client recebe também cpf (completo), phone e birthDate.
+GET {{baseUrl}}/users/me
+Authorization: Bearer {{clientToken}}
+
+### Edita o próprio perfil: nome (todos), telefone e data de nascimento (só o Client)
+# Os campos são opcionais, mas pelo menos um é obrigatório. E-mail e CPF não mudam.
+# Resposta: 200, com o perfil atualizado. ADM ou SuperAdm que envia phone ou birthDate: 422.
+PATCH {{baseUrl}}/users/me
+Content-Type: application/json
+Authorization: Bearer {{clientToken}}
+
+{
+  "name": "Maria da Silva Santos",
+  "phone": "(44) 3523-1234",
+  "birthDate": "1990-05-21"
+}
+
+### Troca a própria senha: encerra as outras sessões e mantém a atual
+# Resposta: 204. Senha atual incorreta: 401.
+PATCH {{baseUrl}}/users/me/password
+Content-Type: application/json
+Authorization: Bearer {{clientToken}}
+
+{
+  "currentPassword": "{{clientPassword}}",
+  "newPassword": "{{clientNewPassword}}"
+}
+
+### Exclui a própria conta (só o Client), confirmando com a senha
+# Os dados são anonimizados, e o e-mail e o CPF ficam livres para um novo cadastro.
+# Resposta: 204. Senha incorreta: 401. ADM ou SuperAdm: 403.
+DELETE {{baseUrl}}/users/me
+Content-Type: application/json
+Authorization: Bearer {{clientToken}}
+
+{
+  "password": "{{clientNewPassword}}"
+}
+
+###
+# ==============================================================================================
+# 7. Gestão de ADMs (só o SUPER_ADMIN)
+# ==============================================================================================
+
+### Lista os ADMs: paginação e filtro por status (PENDING, ACTIVE ou INACTIVE)
+# Resposta: 200, com { "items": [...], "page": 1, "pageSize": 20, "total": 1 }.
+# Com o token de um ADM ou de um Client: 403.
+GET {{baseUrl}}/admins?page=1&pageSize=20&status=ACTIVE
+Authorization: Bearer {{superAdminToken}}
+
+### Consulta um ADM
+# Resposta: 200. Id que não é de ADM (SuperAdm, Client ou ADM excluído): 404.
+GET {{baseUrl}}/admins/{{adminId}}
+Authorization: Bearer {{superAdminToken}}
+
+### Edita o nome do ADM
+# Resposta: 200, com o ADM atualizado.
+PATCH {{baseUrl}}/admins/{{adminId}}
+Content-Type: application/json
+Authorization: Bearer {{superAdminToken}}
+
+{
+  "name": "Ana Souza Lima"
+}
+
+### Inativa o ADM: ele perde o acesso na hora e as sessões dele são revogadas
+# Resposta: 200, com "status": "INACTIVE". ADM PENDING: 422 (o convite é cancelado pela exclusão).
+PATCH {{baseUrl}}/admins/{{adminId}}/status
+Content-Type: application/json
+Authorization: Bearer {{superAdminToken}}
+
+{
+  "status": "INACTIVE"
+}
+
+### Reativa o ADM
+# Resposta: 200, com "status": "ACTIVE".
+PATCH {{baseUrl}}/admins/{{adminId}}/status
+Content-Type: application/json
+Authorization: Bearer {{superAdminToken}}
+
+{
+  "status": "ACTIVE"
+}
+
+### Exclui o ADM: exclusão lógica, que também cancela um convite pendente
+# O e-mail fica livre para um novo convite.
+# Resposta: 204.
+DELETE {{baseUrl}}/admins/{{adminId}}
+Authorization: Bearer {{superAdminToken}}
+
+###
+# ==============================================================================================
+# 8. Renovar e encerrar a sessão (rotas nativas do SuperTokens)
+# ==============================================================================================
+
+### Renova a sessão: o refresh token vai no lugar do access token
+# Os SDKs de front fazem esta chamada sozinhos quando o access token expira (15 min).
+# Resposta: 200, com um novo par de tokens nos headers. O refresh token é rotativo: reusar um
+# token antigo depois que o novo já foi usado encerra a sessão (401).
+# @name refreshSuperAdmin
+POST {{baseUrl}}/auth/session/refresh
+st-auth-mode: header
+Authorization: Bearer {{loginSuperAdmin.response.headers.st-refresh-token}}
+
+### Encerra a sessão atual
+# Resposta: 200, com { "status": "OK" }. Para continuar usando a coleção, faça o login de novo.
+POST {{baseUrl}}/auth/signout
+Authorization: Bearer {{refreshSuperAdmin.response.headers.st-access-token}}
+
+###
+# ==============================================================================================
+# 9. Rotas nativas desativadas (RN16)
+# ==============================================================================================
+
+### Sign-up nativo: desativado, o cadastro é pelo POST /clients
+# Resposta: 404.
+POST {{baseUrl}}/auth/signup
+Content-Type: application/json
+
+{
+  "formFields": [
+    { "id": "email", "value": "{{clientEmail}}" },
+    { "id": "password", "value": "{{clientPassword}}" }
+  ]
+}
+
+### Verificação de e-mail existente: desativada, para não revelar quais e-mails têm conta
+# Resposta: 404.
+GET {{baseUrl}}/auth/emailpassword/email/exists?email={{clientEmail}}
+
+### Reset de senha: desativado (a recuperação de senha está fora do escopo da sprint)
+# Resposta: 404.
+POST {{baseUrl}}/auth/user/password/reset/token
+Content-Type: application/json
+
+{
+  "formFields": [{ "id": "email", "value": "{{clientEmail}}" }]
+}

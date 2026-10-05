@@ -24,13 +24,15 @@
     "test:cov": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --coverage",
     "test:debug": "node --inspect-brk --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --runInBand",
     "test:integration": "node --env-file-if-exists=.env --env-file-if-exists=.env.test --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --config test/jest-integration.json --runInBand",
+    "test:e2e": "node --env-file-if-exists=.env --env-file-if-exists=.env.test --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --config test/jest-e2e.json --runInBand",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "typeorm": "node --env-file-if-exists=.env node_modules/typeorm/cli.js -d dist/shared/infra/database/data-source.js",
     "migration:generate": "npm run build && npm run typeorm -- migration:generate",
     "migration:run": "npm run build && npm run typeorm -- migration:run",
     "migration:revert": "npm run build && npm run typeorm -- migration:revert",
-    "migration:show": "npm run build && npm run typeorm -- migration:show"
+    "migration:show": "npm run build && npm run typeorm -- migration:show",
+    "seed": "npm run build && node --env-file-if-exists=.env dist/seed.js"
   },
   "dependencies": {
     "@nestjs/common": "12.0.4",
@@ -39,8 +41,10 @@
     "@nestjs/platform-express": "12.0.4",
     "@nestjs/typeorm": "12.0.1",
     "mysql2": "3.24.4",
+    "nodemailer": "10.0.11",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
+    "supertokens-node": "24.0.3",
     "typeorm": "1.1.1",
     "zod": "4.6.5"
   },
@@ -54,6 +58,7 @@
     "@types/express": "5.0.6",
     "@types/jest": "30.0.0",
     "@types/node": "24.13.6",
+    "@types/supertest": "7.2.1",
     "eslint": "10.11.0",
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-jest": "29.16.6",
@@ -63,6 +68,7 @@
     "jest": "30.5.2",
     "lint-staged": "17.5.1",
     "prettier": "3.9.8",
+    "supertest": "7.3.1",
     "ts-jest": "29.4.12",
     "tsconfig-paths": "4.2.0",
     "typescript": "6.0.3",
@@ -99,6 +105,14 @@
     "coverageReporters": [
       "text",
       "lcov"
-    ]
+    ],
+    "coverageThreshold": {
+      "./src/modules/users/domain/": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    }
   }
 }
