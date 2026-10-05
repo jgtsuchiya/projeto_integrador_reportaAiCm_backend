@@ -5,7 +5,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 
 import { envSchema } from '@config/env.schema';
 import { ClientProfile } from '@modules/users/domain/entities/client-profile.entity';
-import { UserToken } from '@modules/users/domain/entities/user-token.entity';
+import { UserToken, UserTokenProps } from '@modules/users/domain/entities/user-token.entity';
 import { User } from '@modules/users/domain/entities/user.entity';
 import { CpfAlreadyInUseError } from '@modules/users/domain/errors/cpf-already-in-use.error';
 import { EmailAlreadyInUseError } from '@modules/users/domain/errors/email-already-in-use.error';
@@ -410,7 +410,7 @@ describe('Repositórios de usuários (integração)', () => {
     it('deve remover todos os tokens do usuário e manter os dos outros', async () => {
       const superAdmin = await saved(buildSuperAdminLike());
       const issue = (userId: string): UserToken =>
-        UserToken.issue({ userId, type: UserTokenType.INVITATION, validForHours: 48 }).token;
+        UserToken.issue({ userId, type: UserTokenType.INVITATION, validForMinutes: 48 * 60 }).token;
       const token = issue(superAdmin.id);
       const other = issue((await saved(buildClient())).id);
       await tokens.replace(token);
@@ -420,6 +420,145 @@ describe('Repositórios de usuários (integração)', () => {
 
       await expect(tokens.findByHash(token.tokenHash)).resolves.toBeNull();
       await expect(tokens.findByHash(other.tokenHash)).resolves.not.toBeNull();
+    });
+
+    it.each([UserTokenType.PASSWORD_RESET, UserTokenType.EMAIL_VERIFICATION] as const)(
+      'deve gravar e buscar pelo hash um token de link do tipo %s',
+      async (type) => {
+        const user = await saved(buildClient());
+        const { token, secret } = UserToken.issue({ userId: user.id, type, validForMinutes: 60 });
+
+        await tokens.replace(token);
+
+        const found = await tokens.findByHash(UserToken.hash(secret));
+        expect(found?.equals(token)).toBe(true);
+        expect(found).toMatchObject({
+          userId: user.id,
+          type,
+          attempts: 0,
+          expiresAt: token.expiresAt,
+          usedAt: null,
+          createdAt: token.createdAt,
+        });
+      },
+    );
+
+    describe('findLatest', () => {
+      it('deve buscar o token do usuário e do tipo, ignorando os outros', async () => {
+        const user = await saved(buildClient());
+        const other = await saved(buildClient());
+        const { token, secret } = UserToken.issueCode({ userId: user.id, validForMinutes: 10 });
+        await tokens.replace(token);
+        await tokens.replace(UserToken.issueCode({ userId: other.id, validForMinutes: 10 }).token);
+        await tokens.replace(
+          UserToken.issue({
+            userId: user.id,
+            type: UserTokenType.PASSWORD_RESET,
+            validForMinutes: 60,
+          }).token,
+        );
+
+        const found = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+
+        expect(found?.equals(token)).toBe(true);
+        expect(found).toMatchObject({ type: UserTokenType.LOGIN_CODE, attempts: 0 });
+        expect(found?.matchesCode(secret)).toBe(true);
+        await expect(tokens.findLatest(other.id, UserTokenType.PASSWORD_RESET)).resolves.toBeNull();
+        await expect(tokens.findLatest(randomUUID(), UserTokenType.LOGIN_CODE)).resolves.toBeNull();
+      });
+
+      it('deve devolver o mais recente quando há mais de um, mesmo usado ou expirado', async () => {
+        const user = await saved(buildClient());
+        const older = buildCode(user.id, '111111', { createdAt: new Date('2026-10-05T12:00:00Z') });
+        const newer = buildCode(user.id, '222222', {
+          createdAt: new Date('2026-10-05T12:01:00Z'),
+          expiresAt: new Date('2026-10-05T12:11:00Z'),
+          usedAt: new Date('2026-10-05T12:02:00Z'),
+        });
+        await users.saveWithToken(user, newer);
+        await users.saveWithToken(user, older);
+
+        const found = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+
+        expect(found?.equals(newer)).toBe(true);
+        expect(found?.isUsable()).toBe(false);
+      });
+
+      it('deve devolver só o código novo depois de um reenvio', async () => {
+        const user = await saved(buildClient());
+        const first = UserToken.issueCode({ userId: user.id, validForMinutes: 10 });
+        const second = UserToken.issueCode({ userId: user.id, validForMinutes: 10 });
+        await tokens.replace(first.token);
+
+        await tokens.replace(second.token);
+
+        const found = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+        expect(found?.equals(second.token)).toBe(true);
+        await expect(
+          queryRunner.manager.countBy(UserTokenOrmEntity, { userId: user.id }),
+        ).resolves.toBe(1);
+      });
+    });
+
+    it('deve aceitar o mesmo código para dois usuários ao mesmo tempo', async () => {
+      const first = await saved(buildClient());
+      const second = await saved(buildClient());
+
+      await tokens.replace(buildCode(first.id, '123456'));
+      await tokens.replace(buildCode(second.id, '123456'));
+
+      for (const user of [first, second]) {
+        const found = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+        expect(found?.userId).toBe(user.id);
+        expect(found?.matchesCode('123456')).toBe(true);
+      }
+    });
+
+    describe('saveAttempts', () => {
+      it('deve gravar só o contador de erros do token', async () => {
+        const user = await saved(buildClient());
+        const other = await saved(buildClient());
+        const { token } = UserToken.issueCode({ userId: user.id, validForMinutes: 10 });
+        const untouched = UserToken.issueCode({ userId: other.id, validForMinutes: 10 }).token;
+        await tokens.replace(token);
+        await tokens.replace(untouched);
+
+        token.registerFailedAttempt();
+        token.registerFailedAttempt();
+        await tokens.saveAttempts(token);
+
+        await expect(tokens.findLatest(user.id, UserTokenType.LOGIN_CODE)).resolves.toMatchObject({
+          attempts: 2,
+          tokenHash: token.tokenHash,
+          expiresAt: token.expiresAt,
+          usedAt: null,
+          createdAt: token.createdAt,
+        });
+        await expect(tokens.findLatest(other.id, UserTokenType.LOGIN_CODE)).resolves.toMatchObject({
+          attempts: 0,
+        });
+      });
+
+      it('deve recusar o código certo depois de 5 erros gravados (RN25)', async () => {
+        const user = await saved(buildClient());
+        const { token, secret } = UserToken.issueCode({ userId: user.id, validForMinutes: 10 });
+        await tokens.replace(token);
+
+        for (let attempt = 1; attempt <= 5; attempt++) {
+          const current = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+          if (!current?.isUsable()) {
+            throw new Error(`O código deixou de valer antes do 5º erro (tentativa ${attempt}).`);
+          }
+
+          current.registerFailedAttempt();
+          await tokens.saveAttempts(current);
+        }
+
+        const found = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+        expect(found?.attempts).toBe(5);
+        expect(found?.matchesCode(secret)).toBe(true);
+        expect(found?.isUsable()).toBe(false);
+      });
     });
   });
 
@@ -456,6 +595,24 @@ describe('Repositórios de usuários (integração)', () => {
       await expect(profiles.existsByCpf(Cpf.create('52998224725'))).resolves.toBe(false);
     });
   });
+
+  /** Código da segunda etapa com o valor escolhido pelo teste (o `issueCode` sorteia). */
+  function buildCode(
+    userId: string,
+    code: string,
+    overrides: Partial<UserTokenProps> = {},
+  ): UserToken {
+    return UserToken.restore(randomUUID(), {
+      userId,
+      type: UserTokenType.LOGIN_CODE,
+      tokenHash: UserToken.hashCode(userId, code),
+      attempts: 0,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      usedAt: null,
+      createdAt: new Date(),
+      ...overrides,
+    });
+  }
 
   function buildProfile(userId: string, cpf = '529.982.247-25'): ClientProfile {
     return ClientProfile.create({

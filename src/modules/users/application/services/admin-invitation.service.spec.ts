@@ -10,14 +10,12 @@ import {
   AdminInvitationService,
   INVITATION_MAIL_SUBJECT,
 } from './admin-invitation.service';
+import { UserMailService } from './user-mail.service';
 
 const HOUR_IN_MS = 60 * 60 * 1000;
 
 describe('AdminInvitationService', () => {
-  const config: AdminInvitationConfig = {
-    webAppUrl: 'http://localhost:5173',
-    expiresInHours: 48,
-  };
+  const config: AdminInvitationConfig = { expiresInHours: 48 };
   const admin = User.createAdmin({
     id: 'admin-1',
     name: 'Ana <Souza>',
@@ -29,7 +27,10 @@ describe('AdminInvitationService', () => {
 
   beforeEach(() => {
     mailSender = new FakeMailSender();
-    sut = new AdminInvitationService(mailSender, config);
+    sut = new AdminInvitationService(
+      new UserMailService(mailSender, { webAppUrl: 'http://localhost:5173' }),
+      config,
+    );
   });
 
   describe('issue', () => {
@@ -63,10 +64,10 @@ describe('AdminInvitationService', () => {
     });
 
     it('deve manter o caminho do WEB_APP_URL no link', async () => {
-      sut = new AdminInvitationService(mailSender, {
-        webAppUrl: 'https://reportaai.example.com/painel/',
-        expiresInHours: 1,
-      });
+      sut = new AdminInvitationService(
+        new UserMailService(mailSender, { webAppUrl: 'https://reportaai.example.com/painel/' }),
+        { expiresInHours: 1 },
+      );
       const invitation = sut.issue(admin.id);
 
       await sut.send(admin, invitation);

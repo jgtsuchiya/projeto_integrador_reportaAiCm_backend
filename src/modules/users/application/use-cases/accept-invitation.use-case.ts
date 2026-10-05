@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 
 import { UseCase } from '@shared/application/use-case.interface';
 
-import { UserToken } from '../../domain/entities/user-token.entity';
 import { InvalidUserTokenError } from '../../domain/errors/invalid-user-token.error';
 import { UserRepository } from '../../domain/repositories/user.repository';
 import { UserTokenRepository } from '../../domain/repositories/user-token.repository';
@@ -10,6 +9,7 @@ import { Password } from '../../domain/value-objects/password';
 import { UserStatus } from '../../domain/value-objects/user-status';
 import { UserTokenType } from '../../domain/value-objects/user-token-type';
 import { IdentityProvider } from '../ports/identity-provider';
+import { findUsableTokenOrFail } from '../services/find-user-token';
 
 export interface AcceptInvitationInput {
   /** Segredo recebido no link do e-mail. */
@@ -22,8 +22,8 @@ export interface AcceptInvitationInput {
  * preenche o `email_verified_at` e marca o token como usado. Depois disso, o ADMIN faz login
  * normalmente pelo `/api/auth/signin`.
  *
- * Um token inexistente, expirado, usado ou substituído por reenvio gera sempre o mesmo
- * `InvalidUserTokenError` (422).
+ * Um token inexistente, de outro tipo, expirado, usado ou substituído por reenvio gera sempre
+ * o mesmo `InvalidUserTokenError` (422).
  */
 @Injectable()
 export class AcceptInvitationUseCase implements UseCase<AcceptInvitationInput, void> {
@@ -35,11 +35,11 @@ export class AcceptInvitationUseCase implements UseCase<AcceptInvitationInput, v
 
   async execute(input: AcceptInvitationInput): Promise<void> {
     const password = Password.create(input.password);
-    const token = await this.userTokenRepository.findByHash(UserToken.hash(input.token));
-
-    if (!token || token.type !== UserTokenType.INVITATION || !token.isUsable()) {
-      throw new InvalidUserTokenError();
-    }
+    const token = await findUsableTokenOrFail(
+      this.userTokenRepository,
+      input.token,
+      UserTokenType.INVITATION,
+    );
 
     // O convite de um ADMIN excluído (ou que já saiu de PENDING) não vale mais.
     const admin = await this.userRepository.findById(token.userId);

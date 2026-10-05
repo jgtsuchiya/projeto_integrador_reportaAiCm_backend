@@ -10,3 +10,9 @@ export const UserTokenType = {
 } as const;
 
 export type UserTokenType = (typeof UserTokenType)[keyof typeof UserTokenType];
+
+/**
+ * Tipos enviados como link, com um segredo de 256 bits. O `LOGIN_CODE` fica de fora: é um
+ * código de 6 dígitos, emitido por `UserToken.issueCode`.
+ */
+export type UserLinkTokenType = Exclude<UserTokenType, typeof UserTokenType.LOGIN_CODE>;
