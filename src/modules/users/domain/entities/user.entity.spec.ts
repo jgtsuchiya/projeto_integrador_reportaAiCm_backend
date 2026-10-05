@@ -1,3 +1,4 @@
+import { EmailNotVerifiedError } from '../errors/email-not-verified.error';
 import { InvalidStatusTransitionError } from '../errors/invalid-status-transition.error';
 import { InvalidUserNameError } from '../errors/invalid-user-name.error';
 import { SuperAdminProtectedError } from '../errors/super-admin-protected.error';
@@ -237,6 +238,100 @@ describe('User', () => {
       sut.recordLogin();
 
       expect(sut.lastLoginAt).toEqual(LATER);
+    });
+  });
+
+  describe('verifyEmail (RN21, RN22)', () => {
+    it('deve preencher o emailVerifiedAt e atualizar o updatedAt', () => {
+      const sut = restore();
+      jest.setSystemTime(LATER);
+
+      sut.verifyEmail();
+
+      expect(sut).toMatchObject({ emailVerifiedAt: LATER, updatedAt: LATER });
+    });
+
+    it('deve manter a data da primeira verificação', () => {
+      const sut = restore({ emailVerifiedAt: NOW });
+      jest.setSystemTime(LATER);
+
+      sut.verifyEmail();
+
+      expect(sut).toMatchObject({ emailVerifiedAt: NOW, updatedAt: NOW });
+    });
+
+    it('não deve verificar o e-mail de um usuário excluído', () => {
+      const sut = restore({ deletedAt: NOW });
+
+      expect(() => sut.verifyEmail()).toThrow(UserAlreadyDeletedError);
+      expect(sut.emailVerifiedAt).toBeNull();
+    });
+  });
+
+  describe('enableMfa e disableMfa (RN24)', () => {
+    it.each([Role.SUPER_ADMIN, Role.ADMIN, Role.CLIENT])(
+      'deve ligar e desligar a verificação em duas etapas de um %p',
+      (role) => {
+        const sut = restore({ role, emailVerifiedAt: NOW });
+        jest.setSystemTime(LATER);
+
+        sut.enableMfa();
+        expect(sut).toMatchObject({ mfaEnabled: true, updatedAt: LATER });
+
+        sut.disableMfa();
+        expect(sut.mfaEnabled).toBe(false);
+      },
+    );
+
+    it('não deve ligar sem o e-mail verificado', () => {
+      const sut = restore();
+
+      expect(() => sut.enableMfa()).toThrow(EmailNotVerifiedError);
+      expect(sut.mfaEnabled).toBe(false);
+    });
+
+    it('deve ligar depois de o e-mail ser verificado', () => {
+      const sut = restore();
+
+      sut.verifyEmail();
+      sut.enableMfa();
+
+      expect(sut.mfaEnabled).toBe(true);
+    });
+
+    it('não deve ter efeito ao ligar o que já está ligado', () => {
+      const sut = restore({ mfaEnabled: true, emailVerifiedAt: NOW });
+      jest.setSystemTime(LATER);
+
+      sut.enableMfa();
+
+      expect(sut).toMatchObject({ mfaEnabled: true, updatedAt: NOW });
+    });
+
+    it('não deve ter efeito ao desligar o que já está desligado', () => {
+      const sut = restore();
+      jest.setSystemTime(LATER);
+
+      sut.disableMfa();
+
+      expect(sut).toMatchObject({ mfaEnabled: false, updatedAt: NOW });
+    });
+
+    it('deve atualizar o updatedAt ao desligar', () => {
+      const sut = restore({ mfaEnabled: true, emailVerifiedAt: NOW });
+      jest.setSystemTime(LATER);
+
+      sut.disableMfa();
+
+      expect(sut).toMatchObject({ mfaEnabled: false, updatedAt: LATER });
+    });
+
+    it('não deve ligar nem desligar a de um usuário excluído', () => {
+      const sut = restore({ mfaEnabled: true, emailVerifiedAt: NOW, deletedAt: NOW });
+
+      expect(() => sut.enableMfa()).toThrow(UserAlreadyDeletedError);
+      expect(() => sut.disableMfa()).toThrow(UserAlreadyDeletedError);
+      expect(sut.mfaEnabled).toBe(true);
     });
   });
 

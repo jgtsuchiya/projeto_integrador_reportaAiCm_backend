@@ -44,7 +44,7 @@ describe('AcceptInvitationUseCase', () => {
     ({ token, secret } = UserToken.issue({
       userId: adminId,
       type: UserTokenType.INVITATION,
-      validForHours: 48,
+      validForMinutes: 48 * 60,
     }));
     database.users.set(admin.id, admin);
     database.tokens.set(token.id, token);
@@ -90,6 +90,7 @@ describe('AcceptInvitationUseCase', () => {
       userId: admin.id,
       type: UserTokenType.INVITATION,
       tokenHash: UserToken.hash('segredo-expirado'),
+      attempts: 0,
       expiresAt: new Date(Date.now() - 1),
       usedAt: null,
       createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000),
@@ -105,14 +106,32 @@ describe('AcceptInvitationUseCase', () => {
 
   it('deve recusar um token substituído por reenvio', async () => {
     await tokenRepository.replace(
-      UserToken.issue({ userId: admin.id, type: UserTokenType.INVITATION, validForHours: 48 })
-        .token,
+      UserToken.issue({
+        userId: admin.id,
+        type: UserTokenType.INVITATION,
+        validForMinutes: 48 * 60,
+      }).token,
     );
 
     await expect(sut.execute({ token: secret, password: PASSWORD })).rejects.toThrow(
       InvalidUserTokenError,
     );
   });
+
+  it.each([UserTokenType.PASSWORD_RESET, UserTokenType.EMAIL_VERIFICATION] as const)(
+    'deve recusar um token do tipo %s, sem trocar a senha',
+    async (type) => {
+      const other = UserToken.issue({ userId: admin.id, type, validForMinutes: 60 });
+      database.tokens.set(other.token.id, other.token);
+
+      await expect(sut.execute({ token: other.secret, password: PASSWORD })).rejects.toThrow(
+        InvalidUserTokenError,
+      );
+      expect(identityProvider.credentials.get(admin.id)?.password).toBe(discardedPassword);
+      expect(admin.status).toBe(UserStatus.PENDING);
+      expect(other.token.usedAt).toBeNull();
+    },
+  );
 
   it('deve recusar o convite de um ADMIN excluído', async () => {
     admin.delete();
