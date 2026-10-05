@@ -170,3 +170,5 @@ npm run test:integration
 ```
 
 O script carrega o `.env` e, em seguida, o [.env.test](../.env.test), que troca o banco para `reportaai_cm_test`. Como proteção, o teste **aborta se o nome do banco não terminar em `_test`**, para nunca rodar migrations no banco de desenvolvimento.
+
+Os testes e2e (`npm run test:e2e`) usam o mesmo banco e a mesma proteção. Eles apagam todos os usuários do banco de teste ao começar e ao terminar ([TESTING.md](TESTING.md#testes-e2e)).

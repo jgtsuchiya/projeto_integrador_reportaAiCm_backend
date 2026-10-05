@@ -83,6 +83,55 @@ expect(mailSender.messages).toHaveLength(1);
 
 Os fakes de um único módulo ficam em `src/modules/<feature>/testing`, também fora do build. No módulo `users`, o [`in-memory-users.ts`](../src/modules/users/testing/in-memory-users.ts) traz os repositórios em memória (que compartilham um `InMemoryUsersDatabase`, como as tabelas do MySQL) e o `FakeIdentityProvider`, no lugar do SuperTokens.
 
+## Testes e2e
+
+Os e2e sobem a API inteira e a chamam por HTTP com o **supertest**, contra o MySQL de teste e o SuperTokens Core. O único fake é o `FakeMailSender`, no lugar do SMTP. Eles cobrem os fluxos de ponta a ponta e as permissões. Os detalhes de cada rota (validação, erros e casos de borda) ficam nos testes de integração.
+
+| Arquivo                         | O que cobre                                                                                  |
+| ------------------------------- | -------------------------------------------------------------------------------------------- |
+| `test/client-flow.e2e-spec.ts`  | Fluxo do Client: cadastro → login → `/users/me` → refresh → signout                          |
+| `test/admin-flow.e2e-spec.ts`   | Fluxo do ADM: seed do SuperAdm → convite → aceite → login                                    |
+| `test/inactivation.e2e-spec.ts` | O usuário inativado perde o acesso na requisição seguinte                                    |
+| `test/permissions.e2e-spec.ts`  | Matriz de permissões: cada rota protegida sem sessão (401) e com cada papel (sucesso ou 403) |
+
+```bash
+npm run db:up
+npm run test:e2e
+```
+
+O [`E2eApp`](../test/support/e2e-app.ts) sobe a aplicação e traz os helpers que preparam o cenário:
+
+```ts
+describe('Perfil (e2e)', () => {
+  let e2e: E2eApp;
+
+  beforeAll(async () => {
+    e2e = await E2eApp.start();
+    await e2e.seedSuperAdmin();
+  });
+
+  afterAll(async () => {
+    await e2e?.close();
+  });
+
+  it('deve retornar o perfil do Client', async () => {
+    const client = await e2e.registerClient();
+
+    const response = await e2e
+      .api()
+      .get('/api/users/me')
+      .auth(client.accessToken, { type: 'bearer' });
+
+    expect(response.status).toBe(200);
+  });
+});
+```
+
+- **Banco de teste:** o script carrega o `.env.test` e usa a mesma proteção dos testes de integração (aborta se o banco não terminar em `_test`). Cada arquivo começa e termina **apagando todos os usuários** do banco de teste e as credenciais deles no SuperTokens.
+- **Contas:** são criadas pelos mesmos caminhos da aplicação: `seedSuperAdmin()` (o caso de uso do `npm run seed`), `createAdmin()` (convite e aceite) e `registerClient()` (autocadastro). É o seed que cria os papéis no SuperTokens, então ele vem antes de qualquer cadastro, como em produção.
+- **Login:** no modo header (`st-auth-mode: header`), como o app mobile. O access token vai no `Authorization: Bearer`.
+- **Rota nova:** toda rota protegida entra na matriz do `permissions.e2e-spec.ts`, com os papéis permitidos e o status de sucesso.
+
 ## Comandos
 
 | Comando                    | O que faz                                                                                                                      |
@@ -92,6 +141,7 @@ Os fakes de um único módulo ficam em `src/modules/<feature>/testing`, também 
 | `npm run test:cov`         | Gera o relatório de cobertura em `coverage/`                                                                                   |
 | `npm run test:debug`       | Roda com o inspector do Node (`--inspect-brk`)                                                                                 |
 | `npm run test:integration` | Roda os testes de integração contra o MySQL de teste, o SuperTokens e o Mailpit ([detalhes](DATABASE.md#testes-de-integração)) |
+| `npm run test:e2e`         | Roda os testes e2e contra o MySQL de teste e o SuperTokens ([detalhes](#testes-e2e))                                           |
 
 No pre-commit, o `lint-staged` roda apenas os testes relacionados aos arquivos `.ts` alterados (`--findRelatedTests`). Se algum falhar, o commit é bloqueado.
 
