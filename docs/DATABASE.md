@@ -4,12 +4,13 @@
 
 ## Ambiente local
 
-O MySQL roda em Docker, pelo [docker-compose.yml](../docker-compose.yml):
+O MySQL roda em Docker, pelo [docker-compose.yml](../docker-compose.yml), junto com o SuperTokens (Core e PostgreSQL) e o Mailpit:
 
 ```bash
 cp .env.example .env   # ajuste se necessário
-npm run db:up          # sobe o MySQL e aguarda ficar saudável
+npm run db:up          # sobe os containers e aguarda ficarem saudáveis
 npm run migration:run  # aplica as migrations
+npm run seed           # cadastra o SuperAdm e cria os papéis no SuperTokens
 npm run start:dev
 ```
 
@@ -23,7 +24,17 @@ As credenciais, as sessões e os papéis dos usuários ficam no **SuperTokens Co
 
 - As tabelas do SuperTokens são criadas e migradas pelo próprio Core. Elas **não** entram nas migrations do TypeORM.
 - O PostgreSQL não expõe porta no host: só o Core o acessa, pela rede interna do Docker. A API fala apenas com o Core, em `SUPERTOKENS_CONNECTION_URI`.
+- A senha do banco vem da variável `SUPERTOKENS_DB_PASSWORD`, usada só pelo docker-compose.
 - O `docker compose down -v` também apaga esse volume, e com ele todas as credenciais e sessões.
+- **Os dois bancos andam juntos:** cada linha de `users` tem uma credencial com o mesmo id no SuperTokens. Zerar só um deles deixa usuários órfãos no outro: sem o MySQL, os e-mails ficam presos no Core ("E-mail já cadastrado"), e sem o Core, as contas do MySQL não conseguem mais entrar. Para recomeçar, apague os dois (`docker compose down -v`).
+
+Para inspecionar o banco do Core (somente leitura, as tabelas são dele):
+
+```bash
+docker compose exec supertokens-db psql -U supertokens -d supertokens -c '\dt'
+```
+
+Como a API usa o Core está no [AUTH.md](AUTH.md).
 
 ## Variáveis de ambiente
 
@@ -40,6 +51,8 @@ As variáveis são validadas na inicialização pelo schema Zod em [src/config/e
 | `DB_DATABASE`      | (obrigatória)           | Nome do banco                                                |
 | `DB_LOGGING`       | `false`                 | Loga as queries SQL (`true`/`false`)                         |
 | `DB_ROOT_PASSWORD` | (obrigatória no Docker) | Senha de root, usada apenas pelo docker-compose              |
+
+Esta tabela traz só as variáveis do banco. A lista completa, com as do SuperTokens, do e-mail e do seed, está no [README](../README.md#variáveis-de-ambiente).
 
 Para adicionar uma variável, declare-a no `envSchema` e no `.env.example`. No código, leia os valores pelo `ConfigService<Env, true>` com `{ infer: true }`, para ter tipagem, e não pelo `process.env` direto.
 
@@ -125,6 +138,26 @@ erDiagram
 As FKs de `client_profiles` e `user_tokens` usam `ON DELETE CASCADE`, porque esses registros não existem sem o usuário. As de `users` (`role_id` e `created_by_id`) usam `RESTRICT`. Na prática, os usuários não são apagados fisicamente: a exclusão é lógica.
 
 As credenciais e as sessões ficam no PostgreSQL do SuperTokens, criado e mantido pelo próprio Core, fora das nossas migrations. O modelo completo e as regras de negócio estão em [sprints/sprint-2-usuarios.md](sprints/sprint-2-usuarios.md).
+
+### Status do usuário
+
+`users.status` é um `ENUM` com três valores. As transições e o que cada uma faz no SuperTokens estão no [AUTH.md](AUTH.md#ciclo-de-vida-das-contas).
+
+| Status     | Significado                                                               |
+| ---------- | ------------------------------------------------------------------------- |
+| `PENDING`  | ADM convidado que ainda não definiu a senha. Só existe para o papel ADMIN |
+| `ACTIVE`   | Pode fazer login e acessar a API                                          |
+| `INACTIVE` | Bloqueado por um ADM ou pelo SuperAdm. Pode ser reativado                 |
+
+### Exclusão lógica e anonimização
+
+A linha de `users` nunca é apagada. Na exclusão (RN11):
+
+- `deleted_at` é preenchido. A coluna é um `@DeleteDateColumn`, então as consultas do TypeORM já ignoram o usuário excluído.
+- `email` vira `deleted+<id>@reportaai.invalid`. Como a coluna é `UNIQUE`, é isso que libera o endereço original para um novo cadastro.
+- No **ADMIN**, o nome é mantido, para auditoria, e os convites dele em `user_tokens` são apagados.
+- No **CLIENT**, o nome vira `Usuário excluído` e a linha de `client_profiles` é apagada, com o CPF, o telefone e a data de nascimento (LGPD). O CPF também fica livre para um novo cadastro.
+- No SuperTokens, o usuário é removido, com as credenciais e as sessões.
 
 ## Migrations
 
