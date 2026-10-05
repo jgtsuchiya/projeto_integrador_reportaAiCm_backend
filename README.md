@@ -201,6 +201,9 @@ O modelo está em [.env.example](.env.example). As variáveis são validadas qua
 | `API_DOMAIN`                  | sim         | (nenhum)      | URL pública da API, usada pelo SuperTokens                                                                        |
 | `WEB_APP_URL`                 | sim         | (nenhum)      | URL do painel web, usada pelo SuperTokens, pelo CORS e no link do convite de ADM                                  |
 | `INVITATION_EXPIRES_IN_HOURS` | não         | `48`          | Validade, em horas, do link de convite de ADM                                                                     |
+| `RATE_LIMIT_MAX_REQUESTS`     | não         | `20`          | Requisições por IP em cada rota limitada, por janela ([detalhes](docs/AUTH.md#limite-de-requisições-por-ip))      |
+| `RATE_LIMIT_WINDOW_SECONDS`   | não         | `60`          | Duração, em segundos, da janela do limite por IP                                                                  |
+| `TRUST_PROXY`                 | não         | `0`           | Quantidade de proxies reversos na frente da API. Define de onde o IP do cliente é lido                            |
 | `SUPERTOKENS_DB_PASSWORD`     | só Docker   | (nenhum)      | Senha do PostgreSQL do SuperTokens, usada pelo docker-compose                                                     |
 | `SMTP_HOST`                   | sim         | (nenhum)      | Servidor SMTP (`localhost` com o Mailpit do Docker)                                                               |
 | `SMTP_PORT`                   | não         | `587`         | Porta do SMTP (`1025` no Mailpit)                                                                                 |
@@ -212,7 +215,7 @@ O modelo está em [.env.example](.env.example). As variáveis são validadas qua
 | `SUPER_ADMIN_EMAIL`           | só seed     | (nenhum)      | E-mail (login) do SuperAdm                                                                                        |
 | `SUPER_ADMIN_PASSWORD`        | só seed     | (nenhum)      | Senha do SuperAdm: de 8 a 128 caracteres, com pelo menos uma letra e um número                                    |
 
-O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração e e2e. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md).
+O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração e e2e, e deixa o limite por IP alto, para ele não interferir nos testes. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md).
 
 ## Comandos disponíveis
 

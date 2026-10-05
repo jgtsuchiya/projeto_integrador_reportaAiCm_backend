@@ -265,8 +265,11 @@ As rotas da aplicação respondem os erros sempre no mesmo formato, com a `messa
 | 404    | Recurso não encontrado                      | (ausente)                                                     |
 | 409    | E-mail ou CPF já cadastrado                 | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
 | 422    | Regra de negócio (ex.: convite expirado)    | Depende da regra                                              |
+| 429    | Muitas requisições do mesmo IP (ver abaixo) | (ausente)                                                     |
 
-As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 com o resultado em `status`, e a falta de sessão responde 401 com `{ "message": "unauthorised" }`.
+O 429 vem do limite por IP do login, do cadastro do Client e do aceite do convite: cada uma dessas rotas aceita 20 requisições por minuto por IP. A resposta traz o header `Retry-After`, com os segundos que faltam para a próxima tentativa.
+
+As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 com o resultado em `status`, e a falta de sessão responde 401 com `{ "message": "unauthorised" }`. A exceção é o 429, que tem o formato acima também no login.
 
 > **Atenção à senha de confirmação incorreta.** O `PATCH /api/users/me/password` e o `DELETE /api/users/me` respondem 401 quando a senha informada está errada. Os dois SDKs tratam qualquer 401 da API como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes (`maxRetryAttemptsForSessionRefresh`), e depois lançam um erro em vez de devolver a resposta. Nessas duas chamadas, capture o erro e trate-o como senha incorreta.
 
