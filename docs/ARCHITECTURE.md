@@ -183,6 +183,8 @@ list(@CurrentUser() user: AuthenticatedUser) {} // { id, role }
 
 `@Public()` e `@Roles(...)` valem no método ou no controller inteiro. Quando os dois têm o decorator, vale o do método. Sem sessão, a resposta é 401 no formato do SuperTokens (`{ "message": "unauthorised" }`), que os SDKs de front usam para renovar a sessão.
 
+A integração com o SuperTokens, a matriz de permissões e o passo a passo para proteger uma rota nova estão no [AUTH.md](AUTH.md).
+
 ## Envio de e-mail
 
 O envio de e-mail é compartilhado entre os módulos, e as peças ficam em `shared/`:
