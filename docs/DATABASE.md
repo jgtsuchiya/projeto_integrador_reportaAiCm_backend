@@ -122,22 +122,34 @@ erDiagram
         char user_id FK
         enum type
         char token_hash UK
+        tinyint attempts
         datetime expires_at
         datetime used_at
         datetime created_at
     }
+    login_attempts {
+        char id PK
+        varchar email
+        varchar ip_address
+        varchar user_agent
+        boolean succeeded
+        datetime created_at
+    }
 ```
 
-| Tabela            | Conteúdo                                                                                                                                                 |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `roles`           | Papéis de acesso, carregados pela própria migration: `1` = `SUPER_ADMIN`, `2` = `ADMIN`, `3` = `CLIENT`. O `code` é o mesmo nome do papel no SuperTokens |
-| `users`           | Dados comuns a todos os papéis. O `id` é o mesmo do usuário no SuperTokens, e não há coluna de senha. `deleted_at` marca a exclusão lógica               |
-| `client_profiles` | Dados exclusivos do Client (1:1 com `users`, com a PK igual à FK): CPF e telefone só com dígitos, e a data de nascimento                                 |
-| `user_tokens`     | Tokens de uso único enviados por e-mail (convite de ADM). Guarda só o SHA-256 do token                                                                   |
+| Tabela            | Conteúdo                                                                                                                                                                                                                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `roles`           | Papéis de acesso, carregados pela própria migration: `1` = `SUPER_ADMIN`, `2` = `ADMIN`, `3` = `CLIENT`. O `code` é o mesmo nome do papel no SuperTokens                                                                                                                                                          |
+| `users`           | Dados comuns a todos os papéis. O `id` é o mesmo do usuário no SuperTokens, e não há coluna de senha. `deleted_at` marca a exclusão lógica                                                                                                                                                                        |
+| `client_profiles` | Dados exclusivos do Client (1:1 com `users`, com a PK igual à FK): CPF e telefone só com dígitos, e a data de nascimento                                                                                                                                                                                          |
+| `user_tokens`     | Tokens de uso único enviados por e-mail. O `type` diz o uso: `INVITATION` (convite de ADM), `PASSWORD_RESET` (redefinição de senha), `EMAIL_VERIFICATION` (verificação de e-mail) e `LOGIN_CODE` (código da segunda etapa do login, o único que usa o contador de erros `attempts`). Guarda só o SHA-256 do token |
+| `login_attempts`  | Uma linha por tentativa de login: o e-mail informado (com conta ou não), o IP, o user agent e o resultado. Tem índices em (`email`, `created_at`), para contar as falhas recentes de um e-mail, e em `created_at`, para apagar as linhas antigas                                                                  |
 
 As FKs de `client_profiles` e `user_tokens` usam `ON DELETE CASCADE`, porque esses registros não existem sem o usuário. As de `users` (`role_id` e `created_by_id`) usam `RESTRICT`. Na prática, os usuários não são apagados fisicamente: a exclusão é lógica.
 
-As credenciais e as sessões ficam no PostgreSQL do SuperTokens, criado e mantido pelo próprio Core, fora das nossas migrations. O modelo completo e as regras de negócio estão em [sprints/sprint-2-usuarios.md](sprints/sprint-2-usuarios.md).
+`login_attempts` não tem FK para `users` de propósito: o bloqueio do login conta as tentativas de qualquer e-mail informado, com conta ou não.
+
+As credenciais e as sessões ficam no PostgreSQL do SuperTokens, criado e mantido pelo próprio Core, fora das nossas migrations. O modelo completo e as regras de negócio estão em [sprints/sprint-2-usuarios.md](sprints/sprint-2-usuarios.md). Os tipos de token e a tabela `login_attempts` vêm do plano de login, em [sprints/sprint-3-login.md](sprints/sprint-3-login.md#3-modelagem-mysql).
 
 ### Status do usuário
 
