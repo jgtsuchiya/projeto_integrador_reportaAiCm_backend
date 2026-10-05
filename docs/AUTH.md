@@ -11,6 +11,7 @@ A autenticação é feita pelo **SuperTokens** self-hosted, integrado pelo SDK `
 - [Integração com o NestJS](#integração-com-o-nestjs)
 - [Rotas nativas do SuperTokens](#rotas-nativas-do-supertokens)
 - [O que foi customizado](#o-que-foi-customizado)
+- [Limite de requisições por IP](#limite-de-requisições-por-ip)
 - [Sessão: cookie ou header](#sessão-cookie-ou-header)
 - [O que o AuthGuard faz a cada requisição](#o-que-o-authguard-faz-a-cada-requisição)
 - [Matriz de permissões](#matriz-de-permissões)
@@ -88,9 +89,10 @@ Tudo o que toca o SDK fica no módulo [`auth`](../src/modules/auth) e no adapter
 | [`supertokens.config.ts`](../src/modules/auth/infra/supertokens/supertokens.config.ts)                   | Configuração do `init`: `apiBasePath: '/api/auth'` e as receitas EmailPassword, Session e UserRoles                             |
 | [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts)       | As regras do projeto aplicadas ao SuperTokens ([o que foi customizado](#o-que-foi-customizado))                                 |
 | [`SuperTokensMiddleware`](../src/modules/auth/presentation/middlewares/supertokens.middleware.ts)        | Atende as rotas nativas em `/api/auth`. As outras requisições seguem para os controllers                                        |
+| [`rate-limit.middleware.ts`](../src/modules/auth/presentation/middlewares/rate-limit.middleware.ts)      | Limita as requisições por IP no login, no cadastro e no convite ([limite por IP](#limite-de-requisições-por-ip))                |
 | [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts)                                     | Guard global: exige a sessão, carrega o usuário no MySQL e confere o papel                                                      |
 | [`SuperTokensExceptionFilter`](../src/modules/auth/presentation/filters/supertokens-exception.filter.ts) | Responde os erros do SDK (sessão ausente ou expirada) no formato que os SDKs de front esperam                                   |
-| [`configureApp`](../src/configure-app.ts)                                                                | Prefixo `/api` e CORS. É usado pelo `main.ts` e pelos testes que sobem a API, para os dois terem a mesma configuração           |
+| [`configureApp`](../src/configure-app.ts)                                                                | Prefixo `/api`, CORS, `trust proxy` e limite por IP. O `main.ts` e os testes que sobem a API usam a mesma configuração          |
 | [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts)                        | Porta do módulo `users`: criar credencial, conferir e trocar senha, remover o usuário, revogar sessões, criar e atribuir papéis |
 | [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts)    | Implementação da porta com o SDK                                                                                                |
 
@@ -130,7 +132,7 @@ Content-Type: application/json
 }
 ```
 
-A resposta é **sempre 200**, e o resultado vem no campo `status`:
+A resposta é **sempre 200**, e o resultado vem no campo `status`. A única exceção é o 429 do [limite por IP](#limite-de-requisições-por-ip):
 
 | `status`                  | Quando acontece                                                                                      |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -151,6 +153,33 @@ As regras do projeto entram no SuperTokens por três pontos, todos em [`email-pa
 3. **Rotas desativadas (RN16).** As APIs de sign-up, de e-mail existente e de reset de senha são definidas como `undefined`. O middleware deixa de atendê-las, e a requisição cai no 404 do Nest.
 
 O MFA fica fora desta sprint. O ponto de entrada da segunda etapa já existe: é o resultado do `AuthorizeSignInUseCase`, que hoje só diz se o login é permitido.
+
+## Limite de requisições por IP
+
+As rotas públicas que recebem credenciais ou disparam e-mail aceitam `RATE_LIMIT_MAX_REQUESTS` requisições por IP a cada `RATE_LIMIT_WINDOW_SECONDS` segundos, em cada rota (RN18). Por padrão, são 20 por minuto:
+
+| Método | Rota                      |
+| ------ | ------------------------- |
+| `POST` | `/api/auth/signin`        |
+| `POST` | `/api/clients`            |
+| `POST` | `/api/invitations/accept` |
+
+Acima do limite, a resposta é 429 no formato de erro da aplicação, inclusive no login, com o header `Retry-After` (os segundos que faltam para a janela acabar):
+
+```json
+{
+  "statusCode": 429,
+  "error": "Too Many Requests",
+  "message": "Muitas requisições. Tente novamente em instantes."
+}
+```
+
+- **Onde fica.** O [`rate-limit.middleware.ts`](../src/modules/auth/presentation/middlewares/rate-limit.middleware.ts) usa o `express-rate-limit` e é registrado no `configureApp`, depois do CORS e antes do middleware do SuperTokens. Um guard do Nest não serviria: as rotas de `/api/auth` são respondidas pelo middleware, antes dos guards.
+- **Rota nova.** A lista é a `RATE_LIMITED_ROUTES`, no mesmo arquivo. Uma rota pública nova que receba credenciais ou dispare e-mail entra nela, e o `test/rate-limit.integration-spec.ts` passa a testá-la.
+- **Contagem.** É por IP e por rota: o limite de uma rota não consome o de outra. Toda requisição conta, com sucesso ou não. No IPv6, a contagem é pela sub-rede /56. As variações do caminho que chegam à mesma rota entram na mesma contagem: barra final, maiúsculas, segmentos `.` e `..` e o tenant do SuperTokens (`/api/auth/public/signin`).
+- **Em memória.** A contagem vale para uma instância da API e zera quando ela reinicia. Com mais de uma instância, a contagem precisa de um armazenamento compartilhado (ex.: Redis).
+- **IP do cliente.** Atrás de um proxy reverso, o `TRUST_PROXY` recebe a quantidade de proxies na frente da API. Com 0 (padrão), o IP é o da conexão, e o `X-Forwarded-For` é ignorado. Com um valor menor que o real, todos os clientes chegam com o IP do proxy e dividem o mesmo limite. Com um maior, o cliente consegue forjar o próprio IP pelo header.
+- **CORS.** O 429 sai com os headers de CORS, e o `Retry-After` é exposto ao painel (`Access-Control-Expose-Headers`).
 
 ## Sessão: cookie ou header
 
@@ -368,6 +397,7 @@ O convite não usa o reset de senha do SuperTokens: lá, a validade do token é 
 | ------------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------- |
 | Rotas da aplicação                                | 400, 401, 403, 404, 409, 422 | `{ "statusCode", "error", "message", "details" }` ([ARCHITECTURE.md](ARCHITECTURE.md#erros))    |
 | Login (`/api/auth/signin`)                        | 200                          | `{ "status": "WRONG_CREDENTIALS_ERROR" }` ou `{ "status": "FIELD_ERROR", "formFields": [...] }` |
+| Limite por IP, inclusive no login                 | 429                          | `{ "statusCode", "error", "message" }`, com o header `Retry-After`                              |
 | Sessão ausente, expirada ou roubada (SuperTokens) | 401                          | `{ "message": "unauthorised" }`, `"try refresh token"` ou `"token theft detected"`              |
 
 Nas rotas da aplicação: 400 para validação (com a lista de campos em `details`), 401 para senha incorreta, 403 para papel sem permissão, 404 para recurso inexistente, 409 para e-mail ou CPF já cadastrado e 422 para regra de negócio violada.
