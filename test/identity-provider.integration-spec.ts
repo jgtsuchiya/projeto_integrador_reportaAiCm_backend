@@ -23,6 +23,8 @@ describe('SuperTokensIdentityProvider (integração)', () => {
     // Os hooks só são usados pelas rotas nativas do SuperTokens, que este teste não chama.
     supertokens.init(
       buildSuperTokensConfig(env, {
+        isLoginLocked: async () => false,
+        recordLoginAttempt: async () => {},
         authorizeSignIn: async () => true,
         checkPasswordPolicy: async () => null,
       }),

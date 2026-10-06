@@ -49,7 +49,7 @@ export function buildSuperTokensConfig(
         signUpFeature: { formFields: [buildPasswordField(hooks)] },
         override: {
           functions: overrideEmailPasswordFunctions(hooks),
-          apis: overrideEmailPasswordApis,
+          apis: overrideEmailPasswordApis(hooks),
         },
       }),
       Session.init(),

@@ -8,6 +8,8 @@ describe('buildSuperTokensConfig', () => {
     WEB_APP_URL: 'http://localhost:5173',
   };
   const hooks = {
+    isLoginLocked: jest.fn(),
+    recordLoginAttempt: jest.fn(),
     authorizeSignIn: jest.fn(),
     checkPasswordPolicy: jest.fn(),
   };

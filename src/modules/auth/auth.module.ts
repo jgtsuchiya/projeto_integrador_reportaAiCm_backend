@@ -6,7 +6,7 @@ import { SuperTokensService } from './infra/supertokens/supertokens.service';
 import { SuperTokensMiddleware } from './presentation/middlewares/supertokens.middleware';
 
 @Module({
-  // O override do sign-in e o validador de senha usam as regras do módulo users.
+  // Os overrides do sign-in e o validador de senha usam as regras do módulo users.
   imports: [UsersModule],
   providers: [SuperTokensService],
 })

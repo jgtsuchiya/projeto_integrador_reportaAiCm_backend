@@ -48,23 +48,33 @@ SuperTokens.init({
 ```ts
 import { signIn } from 'supertokens-web-js/recipe/emailpassword';
 
-const response = await signIn({
-  formFields: [
-    { id: 'email', value: email },
-    { id: 'password', value: password },
-  ],
-});
+try {
+  const response = await signIn({
+    formFields: [
+      { id: 'email', value: email },
+      { id: 'password', value: password },
+    ],
+  });
 
-if (response.status === 'OK') {
-  // Sessão criada: os cookies já estão no navegador.
-} else if (response.status === 'FIELD_ERROR') {
-  // E-mail fora do formato: response.formFields traz o erro de cada campo.
-} else {
-  // WRONG_CREDENTIALS_ERROR: mostre "E-mail ou senha incorretos".
+  if (response.status === 'OK') {
+    // Sessão criada: os cookies já estão no navegador.
+  } else if (response.status === 'FIELD_ERROR') {
+    // E-mail fora do formato: response.formFields traz o erro de cada campo.
+  } else {
+    // WRONG_CREDENTIALS_ERROR: mostre "E-mail ou senha incorretos".
+  }
+} catch (error) {
+  if (error.isSuperTokensGeneralError === true) {
+    // GENERAL_ERROR: e-mail bloqueado por tentativas. Mostre o error.message.
+  } else {
+    throw error;
+  }
 }
 ```
 
 O `WRONG_CREDENTIALS_ERROR` também é a resposta para um usuário inativado, excluído ou com o convite pendente. A API não diferencia os casos, para não revelar se o e-mail tem conta.
+
+**Bloqueio por tentativas.** Depois de 5 falhas de login para o mesmo e-mail em 15 minutos, a API responde `{ "status": "GENERAL_ERROR", "message": "Muitas tentativas. Tente novamente em alguns minutos." }` até uma das falhas sair da janela, mesmo com a senha correta. O `supertokens-web-js` não devolve esse status no `response`: ele lança um erro com `isSuperTokensGeneralError` e a `message` da API, como no `catch` acima. A resposta é a mesma para um e-mail sem conta.
 
 **Chamadas à API.** Depois do `init`, o SDK intercepta o `fetch` e o `XMLHttpRequest` (o axios funciona sem configuração extra). Nas requisições para o `apiDomain`, ele envia os cookies, renova a sessão quando recebe 401 e repete a chamada:
 
@@ -150,10 +160,14 @@ const result = await response.json();
 
 if (result.status === 'OK') {
   // Sessão criada: o SDK já guardou os tokens.
+} else if (result.status === 'GENERAL_ERROR') {
+  // E-mail bloqueado por tentativas: mostre o result.message.
 } else {
-  // WRONG_CREDENTIALS_ERROR ou FIELD_ERROR (o status HTTP é 200 nos dois casos).
+  // WRONG_CREDENTIALS_ERROR ou FIELD_ERROR (o status HTTP é 200 em todos os casos).
 }
 ```
+
+O `GENERAL_ERROR` aparece depois de 5 falhas de login para o mesmo e-mail em 15 minutos e dura até uma delas sair da janela, mesmo com a senha correta.
 
 O SDK intercepta o `fetch` das requisições para o `apiDomain`: pede os tokens por header (`st-auth-mode: header`), guarda os que voltam na resposta, envia o access token no `Authorization` das chamadas seguintes e renova a sessão quando recebe 401. Com o axios, registre o interceptor uma vez: `SuperTokens.addAxiosInterceptors(axios)`.
 
