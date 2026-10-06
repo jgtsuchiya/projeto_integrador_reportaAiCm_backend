@@ -27,6 +27,7 @@ import { FakeMailSender } from '@shared/testing/fake-mail-sender';
 
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
+import { deleteLoginAttempts } from './support/login-attempts';
 
 const TENANT_ID = 'public';
 const PASSWORD = 'senha-forte-1';
@@ -101,6 +102,7 @@ describe('Convite de ADM por e-mail (integração)', () => {
     await repository?.delete({ email: In(emails), roleId: ROLE_IDS[Role.ADMIN] });
     await repository?.delete({ email: In(emails) });
     await Promise.all(ids.map((id) => supertokens.deleteUser(id)));
+    await deleteLoginAttempts(dataSource, emails);
     await dataSource?.destroy();
     await app?.close();
   });

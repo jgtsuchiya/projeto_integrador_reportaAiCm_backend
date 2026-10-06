@@ -50,7 +50,9 @@ GET {{baseUrl}}/health
 ### Login
 # Resposta: 200, com { "status": "OK", "user": {...} } e os tokens nos headers st-access-token e
 # st-refresh-token. Senha errada, e-mail sem conta e usuário bloqueado também respondem 200,
-# com { "status": "WRONG_CREDENTIALS_ERROR" }.
+# com { "status": "WRONG_CREDENTIALS_ERROR" }. Depois de 5 falhas para o mesmo e-mail em 15
+# minutos, a resposta passa a ser { "status": "GENERAL_ERROR", "message": "Muitas tentativas..." },
+# até uma das falhas sair da janela.
 # @name loginSuperAdmin
 POST {{baseUrl}}/auth/signin
 Content-Type: application/json

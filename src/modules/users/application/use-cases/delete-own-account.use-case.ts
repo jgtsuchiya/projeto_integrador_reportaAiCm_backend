@@ -5,6 +5,7 @@ import { UseCase } from '@shared/application/use-case.interface';
 import { IncorrectPasswordError } from '../../domain/errors/incorrect-password.error';
 import { SelfDeletionNotAllowedError } from '../../domain/errors/self-deletion-not-allowed.error';
 import { UserNotFoundError } from '../../domain/errors/user-not-found.error';
+import { LoginAttemptRepository } from '../../domain/repositories/login-attempt.repository';
 import { UserRepository } from '../../domain/repositories/user.repository';
 import { Role } from '../../domain/value-objects/role';
 import { IdentityProvider } from '../ports/identity-provider';
@@ -22,15 +23,19 @@ export interface DeleteOwnAccountInput {
  * O usuário também é removido do SuperTokens, com as credenciais e as sessões. Depois disso,
  * o e-mail e o CPF podem ser cadastrados de novo.
  *
- * O MySQL é o primeiro: se a remoção no SuperTokens falhar, os dados pessoais já foram
- * anonimizados e o acesso já está bloqueado (o login e o guard conferem o MySQL), ficando só a
- * credencial órfã. Na ordem inversa, o CLIENT perderia a credencial com os dados ainda
- * gravados, sem conseguir entrar para repetir a exclusão.
+ * As tentativas de login do e-mail são apagadas primeiro (RN19): se um passo seguinte falhar,
+ * só o registro delas se perde, e a exclusão pode ser repetida.
+ *
+ * Depois, o MySQL vem antes do SuperTokens: se a remoção no SuperTokens falhar, os dados
+ * pessoais já foram anonimizados e o acesso já está bloqueado (o login e o guard conferem o
+ * MySQL), ficando só a credencial órfã. Na ordem inversa, o CLIENT perderia a credencial com
+ * os dados ainda gravados, sem conseguir entrar para repetir a exclusão.
  */
 @Injectable()
 export class DeleteOwnAccountUseCase implements UseCase<DeleteOwnAccountInput, void> {
   constructor(
     private readonly userRepository: UserRepository,
+    private readonly loginAttemptRepository: LoginAttemptRepository,
     private readonly identityProvider: IdentityProvider,
   ) {}
 
@@ -49,6 +54,7 @@ export class DeleteOwnAccountUseCase implements UseCase<DeleteOwnAccountInput, v
       throw new IncorrectPasswordError('password');
     }
 
+    await this.loginAttemptRepository.deleteByEmail(user.email);
     user.delete();
     await this.userRepository.deleteClient(user);
     await this.identityProvider.deleteCredentials(user.id);

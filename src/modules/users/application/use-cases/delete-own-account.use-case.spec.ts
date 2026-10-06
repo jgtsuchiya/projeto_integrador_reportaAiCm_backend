@@ -1,4 +1,5 @@
 import { ClientProfile } from '../../domain/entities/client-profile.entity';
+import { LoginAttempt } from '../../domain/entities/login-attempt.entity';
 import { User } from '../../domain/entities/user.entity';
 import { IncorrectPasswordError } from '../../domain/errors/incorrect-password.error';
 import { SelfDeletionNotAllowedError } from '../../domain/errors/self-deletion-not-allowed.error';
@@ -11,6 +12,7 @@ import { Phone } from '../../domain/value-objects/phone';
 import {
   FakeIdentityProvider,
   InMemoryClientProfileRepository,
+  InMemoryLoginAttemptRepository,
   InMemoryUserRepository,
   InMemoryUsersDatabase,
 } from '../../testing/in-memory-users';
@@ -29,7 +31,11 @@ describe('DeleteOwnAccountUseCase', () => {
     database = new InMemoryUsersDatabase();
     userRepository = new InMemoryUserRepository(database);
     identityProvider = new FakeIdentityProvider();
-    sut = new DeleteOwnAccountUseCase(userRepository, identityProvider);
+    sut = new DeleteOwnAccountUseCase(
+      userRepository,
+      new InMemoryLoginAttemptRepository(database),
+      identityProvider,
+    );
 
     client = await createUser('maria@example.com', (id, email) =>
       User.createClient({ id, name: 'Maria da Silva', email }),
@@ -77,6 +83,28 @@ describe('DeleteOwnAccountUseCase', () => {
     expect(identityProvider.sessions.has(client.id)).toBe(false);
   });
 
+  function recordLoginAttempt(address: string, succeeded: boolean): LoginAttempt {
+    const attempt = LoginAttempt.record({
+      email: Email.create(address),
+      ipAddress: '203.0.113.10',
+      userAgent: null,
+      succeeded,
+    });
+    database.loginAttempts.set(attempt.id, attempt);
+
+    return attempt;
+  }
+
+  it('deve apagar as tentativas de login do e-mail do CLIENT e manter as dos outros (RN19)', async () => {
+    recordLoginAttempt('maria@example.com', false);
+    recordLoginAttempt('maria@example.com', true);
+    const other = recordLoginAttempt('joao@example.com', false);
+
+    await sut.execute({ userId: client.id, password: PASSWORD });
+
+    expect([...database.loginAttempts.values()]).toEqual([other]);
+  });
+
   it('deve liberar o e-mail e o CPF para um novo cadastro', async () => {
     const profiles = new InMemoryClientProfileRepository(database);
 
@@ -99,6 +127,16 @@ describe('DeleteOwnAccountUseCase', () => {
     expect(client.isDeleted).toBe(false);
     expect(database.profiles.has(client.id)).toBe(true);
     expect(identityProvider.credentials.has(client.id)).toBe(true);
+  });
+
+  it('não deve apagar as tentativas de login quando a senha não confere', async () => {
+    recordLoginAttempt('maria@example.com', false);
+
+    await expect(sut.execute({ userId: client.id, password: 'senha-errada-1' })).rejects.toThrow(
+      IncorrectPasswordError,
+    );
+
+    expect(database.loginAttempts.size).toBe(1);
   });
 
   it('deve gravar no MySQL antes de remover do SuperTokens', async () => {

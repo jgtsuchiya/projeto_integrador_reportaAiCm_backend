@@ -4,7 +4,9 @@ import supertokens from 'supertokens-node';
 
 import { Env } from '@config/env.schema';
 import { AuthorizeSignInUseCase } from '@modules/users/application/use-cases/authorize-sign-in.use-case';
+import { CheckLoginLockUseCase } from '@modules/users/application/use-cases/check-login-lock.use-case';
 import { CheckPasswordPolicyUseCase } from '@modules/users/application/use-cases/check-password-policy.use-case';
+import { RecordLoginAttemptUseCase } from '@modules/users/application/use-cases/record-login-attempt.use-case';
 
 import { buildSuperTokensConfig } from './supertokens.config';
 
@@ -20,6 +22,8 @@ import { buildSuperTokensConfig } from './supertokens.config';
 export class SuperTokensService {
   constructor(
     config: ConfigService<Env, true>,
+    checkLoginLock: CheckLoginLockUseCase,
+    recordLoginAttempt: RecordLoginAttemptUseCase,
     authorizeSignIn: AuthorizeSignInUseCase,
     checkPasswordPolicy: CheckPasswordPolicyUseCase,
   ) {
@@ -32,6 +36,8 @@ export class SuperTokensService {
           WEB_APP_URL: config.get('WEB_APP_URL', { infer: true }),
         },
         {
+          isLoginLocked: async (email) => (await checkLoginLock.execute({ email })).locked,
+          recordLoginAttempt: (attempt) => recordLoginAttempt.execute(attempt),
           authorizeSignIn: async (userId) => (await authorizeSignIn.execute({ userId })).allowed,
           checkPasswordPolicy: (password) => checkPasswordPolicy.execute(password),
         },

@@ -1,5 +1,6 @@
 import { FakeMailSender } from '@shared/testing/fake-mail-sender';
 
+import { LoginAttempt } from '../../domain/entities/login-attempt.entity';
 import { User } from '../../domain/entities/user.entity';
 import { UserNotFoundError } from '../../domain/errors/user-not-found.error';
 import { Email } from '../../domain/value-objects/email';
@@ -7,6 +8,7 @@ import { Password } from '../../domain/value-objects/password';
 import { Role } from '../../domain/value-objects/role';
 import {
   FakeIdentityProvider,
+  InMemoryLoginAttemptRepository,
   InMemoryUserRepository,
   InMemoryUsersDatabase,
   InMemoryUserTokenRepository,
@@ -34,6 +36,7 @@ describe('DeleteAdminUseCase', () => {
     sut = new DeleteAdminUseCase(
       userRepository,
       new InMemoryUserTokenRepository(database),
+      new InMemoryLoginAttemptRepository(database),
       identityProvider,
     );
 
@@ -80,6 +83,28 @@ describe('DeleteAdminUseCase', () => {
     await sut.execute({ adminId: admin.id });
 
     expect([...database.tokens.keys()]).toEqual([other.id]);
+  });
+
+  it('deve apagar as tentativas de login do e-mail do ADMIN e manter as dos outros (RN19)', async () => {
+    const attempt = (address: string, succeeded: boolean): LoginAttempt =>
+      LoginAttempt.record({
+        email: Email.create(address),
+        ipAddress: '203.0.113.10',
+        userAgent: null,
+        succeeded,
+      });
+    const other = attempt('joao@example.com', false);
+    for (const item of [
+      attempt('ana@example.com', false),
+      attempt('ana@example.com', true),
+      other,
+    ]) {
+      database.loginAttempts.set(item.id, item);
+    }
+
+    await sut.execute({ adminId: admin.id });
+
+    expect([...database.loginAttempts.values()]).toEqual([other]);
   });
 
   it('deve liberar o e-mail para um novo cadastro', async () => {
