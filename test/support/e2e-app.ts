@@ -14,7 +14,9 @@ import {
   CreateSuperAdminOutput,
   CreateSuperAdminUseCase,
 } from '@modules/users/application/use-cases/create-super-admin.use-case';
+import { USER_TOKEN_RESEND_INTERVAL_MINUTES } from '@modules/users/domain/entities/user-token.entity';
 import { LoginAttemptOrmEntity } from '@modules/users/infra/database/entities/login-attempt.orm-entity';
+import { UserTokenOrmEntity } from '@modules/users/infra/database/entities/user-token.orm-entity';
 import { UserOrmEntity } from '@modules/users/infra/database/entities/user.orm-entity';
 import { BackgroundTasks } from '@shared/application/ports/background-tasks';
 import { MailSender } from '@shared/application/ports/mail-sender';
@@ -252,6 +254,18 @@ export class E2eApp {
       email: payload.email,
       password: payload.password,
     });
+  }
+
+  /**
+   * Recua a emissão dos tokens do usuário, como se o intervalo mínimo entre dois e-mails do
+   * mesmo tipo já tivesse passado. Sem isso, o reenvio logo depois do cadastro responde 422.
+   */
+  async passResendInterval(userId: string): Promise<void> {
+    const elapsedMs = (USER_TOKEN_RESEND_INTERVAL_MINUTES * 60 + 1) * 1000;
+
+    await this.dataSource
+      .getRepository(UserTokenOrmEntity)
+      .update({ userId }, { createdAt: new Date(Date.now() - elapsedMs) });
   }
 
   /**

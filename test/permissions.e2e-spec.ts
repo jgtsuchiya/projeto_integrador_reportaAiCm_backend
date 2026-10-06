@@ -30,12 +30,18 @@ interface RouteCase {
   allowed: readonly Role[];
   /** Status da resposta para quem tem permissão. */
   success: number;
+  /**
+   * Papéis com permissão que param numa regra da própria rota, e o status dela. A resposta
+   * mostra que eles passaram pela autorização: quem não tem permissão recebe 403.
+   */
+  refused?: Partial<Record<Role, number>>;
   send: (call: Call) => PromiseLike<request.Response>;
 }
 
 /**
- * Matriz de permissões (docs/sprints/sprint-2-usuarios.md, seção 4): cada rota protegida é
- * chamada sem sessão (401) e com cada papel (o status de sucesso ou 403).
+ * Matriz de permissões (docs/sprints/sprint-2-usuarios.md e docs/sprints/sprint-3-login.md,
+ * seção 4): cada rota protegida é chamada sem sessão (401) e com cada papel (o status de
+ * sucesso ou 403).
  */
 describe('Matriz de permissões (e2e)', () => {
   let e2e: E2eApp;
@@ -109,6 +115,26 @@ describe('Matriz de permissões (e2e)', () => {
               currentPassword: PASSWORD,
               newPassword: PASSWORD,
             }),
+        },
+      ],
+    },
+    {
+      line: 'Reenviar a verificação do próprio e-mail (autenticado)',
+      routes: [
+        {
+          route: 'POST /api/users/me/email-verification',
+          allowed: ROLES,
+          success: 204,
+          // O SUPER_ADMIN e o ADMIN já nascem com o e-mail verificado (RN22).
+          refused: { [Role.SUPER_ADMIN]: 422, [Role.ADMIN]: 422 },
+          send: async ({ actor }) => {
+            // O Client recebeu o link no cadastro: o reenvio espera o intervalo de 1 minuto.
+            if (actor?.id === actors.CLIENT.id) {
+              await e2e.passResendInterval(actor.id);
+            }
+
+            return call(actor, 'post', '/users/me/email-verification');
+          },
         },
       ],
     },
@@ -215,7 +241,7 @@ describe('Matriz de permissões (e2e)', () => {
     },
   ];
 
-  describe('Autocadastro de Client, login, refresh, aceite de convite e redefinição de senha (público)', () => {
+  describe('Autocadastro de Client, login, refresh, aceite de convite, redefinição de senha e confirmação do e-mail (público)', () => {
     it('deve cadastrar um Client sem sessão', async () => {
       const response = await call(undefined, 'post', '/clients', buildClientPayload());
 
@@ -267,6 +293,15 @@ describe('Matriz de permissões (e2e)', () => {
       expect(response.status).toBe(422);
     });
 
+    it('deve chegar à confirmação do e-mail sem sessão', async () => {
+      const response = await call(undefined, 'post', '/email-verifications/confirm', {
+        token: 'token-que-nao-existe',
+      });
+
+      // 422 do token inválido, e não o 401 de uma rota protegida.
+      expect(response.status).toBe(422);
+    });
+
     it('deve manter o /api/health público', async () => {
       const response = await call(undefined, 'get', '/health');
 
@@ -275,21 +310,24 @@ describe('Matriz de permissões (e2e)', () => {
   });
 
   describe.each(matrix)('$line', ({ routes }) => {
-    describe.each(routes)('$route', ({ allowed, success, send }) => {
+    describe.each(routes)('$route', ({ allowed, success, refused = {}, send }) => {
       it('deve responder 401 sem sessão', async () => {
         const response = await send({ allowed: false });
 
         expect(response.status).toBe(401);
       });
 
-      it.each(ROLES.map((role) => [role, allowed.includes(role) ? success : 403] as const))(
-        'deve responder ao %s com %i',
-        async (role, status) => {
-          const response = await send({ actor: actors[role], allowed: status !== 403 });
+      it.each(
+        ROLES.map((role) => {
+          const permitted = allowed.includes(role);
 
-          expect(response.status).toBe(status);
-        },
-      );
+          return [role, permitted ? (refused[role] ?? success) : 403, permitted] as const;
+        }),
+      )('deve responder ao %s com %i', async (role, status, permitted) => {
+        const response = await send({ actor: actors[role], allowed: permitted });
+
+        expect(response.status).toBe(status);
+      });
     });
   });
 });

@@ -106,6 +106,17 @@ expect(mailSender.messages).toHaveLength(1);
 
 O `test/password-reset.integration-spec.ts` segue esse padrão. Para simular a passagem do intervalo de 1 minuto entre dois e-mails, ele recua o `created_at` do token. O `E2eApp` espera as tarefas no `close()`, antes de apagar os dados.
 
+## Testes de rotas que enviam link por e-mail
+
+O token de um link só existe no e-mail: o banco guarda o hash. O teste lê o token da mensagem que o `FakeMailSender` guardou, pelo caminho da página (`/verificar-email?token=...`), e segue o fluxo com ele.
+
+A mesma conta recebe no máximo um e-mail do mesmo tipo por minuto, e o cadastro do Client já envia o link de verificação. Por isso, o reenvio logo depois do cadastro responde 422. Para simular a passagem do intervalo, o teste recua o `created_at` do token:
+
+- nos testes de integração, direto no banco, como o `passResendInterval` do `test/email-verification.integration-spec.ts`;
+- nos e2e, com o `e2e.passResendInterval(userId)` do `E2eApp`.
+
+O teste que cadastra um Client pela API sobe a aplicação com o `FakeMailSender`, mesmo sem conferir o e-mail: sem ele, cada cadastro enviaria uma mensagem de verdade ao SMTP.
+
 Para conferir que um segredo (a senha ou o token de um link) não vai para o log, suba a aplicação com o [`MemoryLogger`](../test/support/memory-logger.ts), que guarda as linhas em memória: `createNestApplication({ logger })`.
 
 ## Testes e2e
@@ -155,7 +166,7 @@ describe('Perfil (e2e)', () => {
 - **Banco de teste:** o script carrega o `.env.test` e usa a mesma proteção dos testes de integração (aborta se o banco não terminar em `_test`). Cada arquivo começa e termina **apagando todos os usuários** do banco de teste, as credenciais deles no SuperTokens e as tentativas de login.
 - **Contas:** são criadas pelos mesmos caminhos da aplicação: `seedSuperAdmin()` (o caso de uso do `npm run seed`), `createAdmin()` (convite e aceite) e `registerClient()` (autocadastro). É o seed que cria os papéis no SuperTokens, então ele vem antes de qualquer cadastro, como em produção.
 - **Login:** no modo header (`st-auth-mode: header`), como o app mobile. O access token vai no `Authorization: Bearer`.
-- **Rota nova:** toda rota protegida entra na matriz do `permissions.e2e-spec.ts`, com os papéis permitidos e o status de sucesso.
+- **Rota nova:** toda rota protegida entra na matriz do `permissions.e2e-spec.ts`, com os papéis permitidos e o status de sucesso. Quando um papel permitido para numa regra da própria rota, o status dela vai em `refused`: é o caso do reenvio da verificação de e-mail, que responde 422 ao ADM e ao SuperAdm, já verificados.
 
 ## Comandos
 

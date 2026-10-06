@@ -11,6 +11,10 @@ import {
   AdminInvitationConfig,
   AdminInvitationService,
 } from './application/services/admin-invitation.service';
+import {
+  EmailVerificationConfig,
+  EmailVerificationService,
+} from './application/services/email-verification.service';
 import { LoginLockConfig, LoginLockService } from './application/services/login-lock.service';
 import {
   PasswordResetConfig,
@@ -39,9 +43,11 @@ import { RecordLoginAttemptUseCase } from './application/use-cases/record-login-
 import { RegisterClientUseCase } from './application/use-cases/register-client.use-case';
 import { RequestPasswordResetUseCase } from './application/use-cases/request-password-reset.use-case';
 import { ResendAdminInvitationUseCase } from './application/use-cases/resend-admin-invitation.use-case';
+import { ResendEmailVerificationUseCase } from './application/use-cases/resend-email-verification.use-case';
 import { ResetPasswordUseCase } from './application/use-cases/reset-password.use-case';
 import { UpdateAdminUseCase } from './application/use-cases/update-admin.use-case';
 import { UpdateProfileUseCase } from './application/use-cases/update-profile.use-case';
+import { VerifyEmailUseCase } from './application/use-cases/verify-email.use-case';
 import { ClientProfileRepository } from './domain/repositories/client-profile.repository';
 import { LoginAttemptRepository } from './domain/repositories/login-attempt.repository';
 import { UserRepository } from './domain/repositories/user.repository';
@@ -59,6 +65,7 @@ import { SuperTokensIdentityProvider } from './infra/identity/supertokens-identi
 import { LoginAttemptRetentionScheduler } from './infra/scheduling/login-attempt-retention.scheduler';
 import { AdminsController } from './presentation/controllers/admins.controller';
 import { ClientsController } from './presentation/controllers/clients.controller';
+import { EmailVerificationsController } from './presentation/controllers/email-verifications.controller';
 import { InvitationsController } from './presentation/controllers/invitations.controller';
 import { PasswordResetsController } from './presentation/controllers/password-resets.controller';
 import { ProfileController } from './presentation/controllers/profile.controller';
@@ -72,7 +79,8 @@ import { ProfileController } from './presentation/controllers/profile.controller
       UserTokenOrmEntity,
       LoginAttemptOrmEntity,
     ]),
-    // E-mails da conta: convite do ADMIN, redefinição de senha e aviso de troca de senha.
+    // E-mails da conta: convite do ADMIN, redefinição de senha, aviso de troca de senha e
+    // verificação de e-mail.
     MailModule,
     // O pedido de redefinição de senha responde antes de buscar a conta e enviar o e-mail.
     BackgroundTasksModule,
@@ -82,6 +90,7 @@ import { ProfileController } from './presentation/controllers/profile.controller
     AdminsController,
     InvitationsController,
     PasswordResetsController,
+    EmailVerificationsController,
     ProfileController,
   ],
   providers: [
@@ -95,6 +104,9 @@ import { ProfileController } from './presentation/controllers/profile.controller
     RequestPasswordResetUseCase,
     ResetPasswordUseCase,
     PasswordResetService,
+    VerifyEmailUseCase,
+    ResendEmailVerificationUseCase,
+    EmailVerificationService,
     ListAdminsUseCase,
     GetAdminUseCase,
     UpdateAdminUseCase,
@@ -139,6 +151,13 @@ import { ProfileController } from './presentation/controllers/profile.controller
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>): PasswordResetConfig => ({
         expiresInMinutes: config.get('PASSWORD_RESET_EXPIRES_IN_MINUTES', { infer: true }),
+      }),
+    },
+    {
+      provide: EmailVerificationConfig,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>): EmailVerificationConfig => ({
+        expiresInHours: config.get('EMAIL_VERIFICATION_EXPIRES_IN_HOURS', { infer: true }),
       }),
     },
     {

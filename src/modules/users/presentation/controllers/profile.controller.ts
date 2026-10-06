@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Patch } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Patch, Post } from '@nestjs/common';
 
 import { CurrentUser } from '@modules/auth/presentation/decorators/current-user.decorator';
 import { Roles } from '@modules/auth/presentation/decorators/roles.decorator';
@@ -8,6 +8,7 @@ import { ChangePasswordUseCase } from '../../application/use-cases/change-passwo
 import { DeleteOwnAccountUseCase } from '../../application/use-cases/delete-own-account.use-case';
 import type { AuthenticatedUser } from '../../application/use-cases/get-authenticated-user.use-case';
 import { GetProfileUseCase } from '../../application/use-cases/get-profile.use-case';
+import { ResendEmailVerificationUseCase } from '../../application/use-cases/resend-email-verification.use-case';
 import { UpdateProfileUseCase } from '../../application/use-cases/update-profile.use-case';
 import { Role } from '../../domain/value-objects/role';
 import {
@@ -27,6 +28,7 @@ export class ProfileController {
     private readonly updateProfileUseCase: UpdateProfileUseCase,
     private readonly changePasswordUseCase: ChangePasswordUseCase,
     private readonly deleteOwnAccountUseCase: DeleteOwnAccountUseCase,
+    private readonly resendEmailVerificationUseCase: ResendEmailVerificationUseCase,
   ) {}
 
   /** Perfil e papel. É por aqui que os fronts descobrem o papel depois do login. */
@@ -56,6 +58,16 @@ export class ProfileController {
       sessionHandle: user.sessionHandle,
       ...body,
     });
+  }
+
+  /**
+   * Reenvia o link de verificação de e-mail e invalida os anteriores (RN22). Responde 422 para
+   * quem já verificou o e-mail e para o pedido feito menos de um minuto depois do último envio.
+   */
+  @Post('email-verification')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  resendEmailVerification(@CurrentUser() user: AuthenticatedUser): Promise<void> {
+    return this.resendEmailVerificationUseCase.execute({ userId: user.id });
   }
 
   /** Autoexclusão com anonimização, só para o CLIENT (RN11, RN15). */

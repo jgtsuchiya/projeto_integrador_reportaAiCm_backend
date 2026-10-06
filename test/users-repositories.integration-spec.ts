@@ -247,7 +247,7 @@ describe('Repositórios de usuários (integração)', () => {
           updatedAt: date,
           deletedAt: null,
         });
-        await users.saveClient(user, buildProfile(user.id, cpf));
+        await users.saveClient(user, buildProfile(user.id, cpf), buildVerification(user.id));
 
         return user;
       }
@@ -340,36 +340,72 @@ describe('Repositórios de usuários (integração)', () => {
     });
 
     describe('saveClient', () => {
-      it('deve gravar o usuário e o perfil do Client', async () => {
+      it('deve gravar o usuário, o perfil e o token de verificação do Client (RN22)', async () => {
         const user = buildClient();
+        const verification = buildVerification(user.id);
 
-        await users.saveClient(user, buildProfile(user.id));
+        await users.saveClient(user, buildProfile(user.id), verification);
 
         await expect(users.findById(user.id)).resolves.toMatchObject({ role: Role.CLIENT });
         await expect(profiles.findByUserId(user.id)).resolves.toMatchObject({
           cpf: Cpf.create('52998224725'),
         });
+        const token = await tokens.findByHash(verification.tokenHash);
+        expect(token?.equals(verification)).toBe(true);
+        expect(token).toMatchObject({
+          userId: user.id,
+          type: UserTokenType.EMAIL_VERIFICATION,
+          usedAt: null,
+        });
+      });
+
+      it('deve desfazer o usuário e o perfil quando o token falha', async () => {
+        const first = buildClient();
+        const verification = buildVerification(first.id);
+        await users.saveClient(first, buildProfile(first.id), verification);
+        const second = buildClient();
+        // O mesmo id do token já gravado: a chave primária barra a última gravação da transação.
+        const repeated = UserToken.restore(verification.id, {
+          userId: second.id,
+          type: UserTokenType.EMAIL_VERIFICATION,
+          tokenHash: UserToken.hash(randomUUID()),
+          attempts: 0,
+          expiresAt: verification.expiresAt,
+          usedAt: null,
+          createdAt: verification.createdAt,
+        });
+
+        await expect(
+          users.saveClient(second, buildProfile(second.id, randomCpf()), repeated),
+        ).rejects.toThrow();
+
+        await expect(users.findById(second.id)).resolves.toBeNull();
+        await expect(profiles.findByUserId(second.id)).resolves.toBeNull();
       });
 
       it('deve desfazer o usuário quando o perfil falha e converter o CPF repetido em conflito', async () => {
         const first = buildClient();
-        await users.saveClient(first, buildProfile(first.id));
+        await users.saveClient(first, buildProfile(first.id), buildVerification(first.id));
         const second = buildClient();
 
-        await expect(users.saveClient(second, buildProfile(second.id))).rejects.toThrow(
-          CpfAlreadyInUseError,
-        );
+        await expect(
+          users.saveClient(second, buildProfile(second.id), buildVerification(second.id)),
+        ).rejects.toThrow(CpfAlreadyInUseError);
 
         await expect(users.findById(second.id)).resolves.toBeNull();
       });
 
       it('deve converter o e-mail repetido em conflito', async () => {
         const first = buildClient();
-        await users.saveClient(first, buildProfile(first.id));
+        await users.saveClient(first, buildProfile(first.id), buildVerification(first.id));
         const second = buildClient(first.email.value);
 
         await expect(
-          users.saveClient(second, buildProfile(second.id, '111.444.777-35')),
+          users.saveClient(
+            second,
+            buildProfile(second.id, '111.444.777-35'),
+            buildVerification(second.id),
+          ),
         ).rejects.toThrow(EmailAlreadyInUseError);
       });
     });
@@ -378,7 +414,7 @@ describe('Repositórios de usuários (integração)', () => {
       it('deve gravar as alterações do usuário e do perfil', async () => {
         const user = buildClient();
         const profile = buildProfile(user.id);
-        await users.saveClient(user, profile);
+        await users.saveClient(user, profile, buildVerification(user.id));
 
         user.rename('Maria Souza');
         profile.changePhone(Phone.create('4332221111'));
@@ -396,7 +432,7 @@ describe('Repositórios de usuários (integração)', () => {
     describe('deleteClient', () => {
       it('deve gravar a exclusão lógica e remover o perfil, liberando o e-mail e o CPF (RN11)', async () => {
         const user = buildClient();
-        await users.saveClient(user, buildProfile(user.id));
+        await users.saveClient(user, buildProfile(user.id), buildVerification(user.id));
         const originalEmail = user.email;
 
         user.delete();
@@ -773,6 +809,15 @@ describe('Repositórios de usuários (integração)', () => {
       phone: Phone.create('(43) 99999-8888'),
       birthDate: BirthDate.create('1990-05-20'),
     });
+  }
+
+  /** Token do link de verificação de e-mail, gravado junto com o CLIENT no cadastro. */
+  function buildVerification(userId: string): UserToken {
+    return UserToken.issue({
+      userId,
+      type: UserTokenType.EMAIL_VERIFICATION,
+      validForMinutes: 24 * 60,
+    }).token;
   }
 
   /** Gera um CPF válido, para cada CLIENT do teste ter o seu (o CPF é UNIQUE). */
