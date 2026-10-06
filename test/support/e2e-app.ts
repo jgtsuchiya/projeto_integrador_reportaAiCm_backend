@@ -192,6 +192,23 @@ export class E2eApp {
     return { ...account, ...tokens };
   }
 
+  /** Id da sessão dos tokens, como o `GET /api/users/me/sessions` a identifica. */
+  async currentSessionId(tokens: Tokens): Promise<string> {
+    const response = await this.api()
+      .get('/api/users/me/sessions')
+      .auth(tokens.accessToken, { type: 'bearer' });
+    assertStatus(response, 200, 'Listagem das sessões');
+
+    const sessions = response.body as Array<{ id: string; current: boolean }>;
+    const current = sessions.find((session) => session.current);
+
+    if (!current) {
+      throw new Error('A sessão dos tokens não está entre as sessões abertas.');
+    }
+
+    return current.id;
+  }
+
   /** Roda o caso de uso do seed (`npm run seed`), que também cria os papéis no SuperTokens. */
   runSeed(input: CreateSuperAdminInput): Promise<CreateSuperAdminOutput> {
     return this.app.get(CreateSuperAdminUseCase).execute(input);

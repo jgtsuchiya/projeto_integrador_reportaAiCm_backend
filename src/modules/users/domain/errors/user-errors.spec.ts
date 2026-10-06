@@ -22,6 +22,7 @@ import { InvalidStatusTransitionError } from './invalid-status-transition.error'
 import { InvalidUserNameError } from './invalid-user-name.error';
 import { InvalidUserTokenError } from './invalid-user-token.error';
 import { SelfDeletionNotAllowedError } from './self-deletion-not-allowed.error';
+import { SessionNotFoundError } from './session-not-found.error';
 import { SuperAdminProtectedError } from './super-admin-protected.error';
 import { UserAlreadyDeletedError } from './user-already-deleted.error';
 import { UserNotFoundError } from './user-not-found.error';
@@ -57,6 +58,7 @@ describe('Erros do domínio de usuários', () => {
       { field: 'currentPassword' },
     ],
     [new UserNotFoundError(), NotFoundError, undefined],
+    [new SessionNotFoundError(), NotFoundError, undefined],
   ])('%p deve ser da categoria certa e ter os detalhes esperados', (error, category, details) => {
     expect(error).toBeInstanceOf(category);
     expect(error.message).not.toHaveLength(0);

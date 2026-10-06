@@ -22,7 +22,7 @@ import { Phone } from '../../domain/value-objects/phone';
 import { Role } from '../../domain/value-objects/role';
 import { UserStatus } from '../../domain/value-objects/user-status';
 import { UserTokenType } from '../../domain/value-objects/user-token-type';
-import { IdentityProvider } from '../ports/identity-provider';
+import { IdentityProvider, IdentitySession } from '../ports/identity-provider';
 import {
   EMAIL_VERIFICATION_MAIL_SUBJECT,
   EmailVerificationService,
@@ -144,6 +144,12 @@ class FakeIdentityProvider extends IdentityProvider {
   async revokeAllSessions(): Promise<void> {}
 
   async revokeOtherSessions(): Promise<void> {}
+
+  async listSessions(): Promise<IdentitySession[]> {
+    return [];
+  }
+
+  async revokeSession(): Promise<void> {}
 
   async createRoles(): Promise<void> {}
 

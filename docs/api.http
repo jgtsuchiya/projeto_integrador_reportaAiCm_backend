@@ -285,7 +285,7 @@ Authorization: Bearer {{adminToken}}
 
 ###
 # ==============================================================================================
-# 8. Perfil do usuário logado (qualquer papel; aqui, o Client)
+# 8. Perfil e sessões do usuário logado (qualquer papel; aqui, o Client)
 # ==============================================================================================
 
 ### Login do Client
@@ -323,6 +323,44 @@ Authorization: Bearer {{clientToken}}
   "phone": "(44) 3523-1234",
   "birthDate": "1990-05-21"
 }
+
+### Abre uma segunda sessão do Client, como se fosse outro aparelho
+# O IP e o user agent do login ficam guardados na sessão e aparecem na listagem abaixo.
+# Resposta: 200, com { "status": "OK", ... }.
+POST {{baseUrl}}/auth/signin
+Content-Type: application/json
+st-auth-mode: header
+User-Agent: ReportaAiApp/1.0 (Android 16)
+
+{
+  "formFields": [
+    { "id": "email", "value": "{{clientEmail}}" },
+    { "id": "password", "value": "{{clientPassword}}" }
+  ]
+}
+
+### Lista as sessões abertas do usuário logado, da mais recente para a mais antiga
+# Resposta: 200, com uma lista de { "id", "createdAt", "expiresAt", "ipAddress", "userAgent",
+# "current" }. Só a sessão desta requisição vem com "current": true.
+# @name listSessions
+GET {{baseUrl}}/users/me/sessions
+Authorization: Bearer {{clientToken}}
+
+###
+
+# A primeira da lista é a mais recente: a sessão do outro aparelho, aberta acima.
+@otherSessionId = {{listSessions.response.body.$[0].id}}
+
+### Encerra uma sessão do próprio usuário: aqui, a do outro aparelho
+# A sessão encerrada não renova mais o token. O access token dela ainda vale até expirar (15 min).
+# Resposta: 204. Id de uma sessão de outro usuário, já encerrada ou que não existe: 404.
+DELETE {{baseUrl}}/users/me/sessions/{{otherSessionId}}
+Authorization: Bearer {{clientToken}}
+
+### Encerra todas as outras sessões e mantém a atual
+# Resposta: 204, mesmo quando só existe a sessão atual.
+DELETE {{baseUrl}}/users/me/sessions
+Authorization: Bearer {{clientToken}}
 
 ### Troca a própria senha: encerra as outras sessões e mantém a atual
 # O usuário recebe o e-mail de aviso "Sua senha foi alterada".

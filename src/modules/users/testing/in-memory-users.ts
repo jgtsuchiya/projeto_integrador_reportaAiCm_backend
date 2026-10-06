@@ -1,6 +1,6 @@
 import { Page, PageRequest } from '@shared/domain/pagination';
 
-import { IdentityProvider } from '../application/ports/identity-provider';
+import { IdentityProvider, IdentitySession } from '../application/ports/identity-provider';
 import { ClientProfile } from '../domain/entities/client-profile.entity';
 import { LoginAttempt } from '../domain/entities/login-attempt.entity';
 import { UserToken } from '../domain/entities/user-token.entity';
@@ -245,13 +245,21 @@ export class InMemoryLoginAttemptRepository extends LoginAttemptRepository {
 
 /**
  * SuperTokens em memória: guarda a senha em texto puro só para os testes conferirem. As
- * sessões são só os handles de cada usuário, que os testes criam direto em `sessions`.
+ * sessões são só os handles de cada usuário, que os testes criam direto em `sessions`. O teste
+ * que confere os dados de uma sessão (datas e origem do login) a abre com o `openSession`.
  */
 export class FakeIdentityProvider extends IdentityProvider {
   readonly credentials = new Map<string, { email: string; password: string }>();
   readonly userRoles = new Map<string, Role>();
   readonly sessions = new Map<string, string[]>();
+  private readonly sessionDetails = new Map<string, IdentitySession>();
   private nextId = 1;
+
+  /** Abre uma sessão com os dados que o `listSessions` devolve. */
+  openSession(userId: string, session: IdentitySession): void {
+    this.sessions.set(userId, [...(this.sessions.get(userId) ?? []), session.handle]);
+    this.sessionDetails.set(session.handle, session);
+  }
 
   async createCredentials(email: Email, password: Password): Promise<string> {
     if ([...this.credentials.values()].some((credential) => credential.email === email.value)) {
@@ -296,6 +304,29 @@ export class FakeIdentityProvider extends IdentityProvider {
       userId,
       handles.filter((handle) => handle === currentSessionHandle),
     );
+  }
+
+  async listSessions(userId: string): Promise<IdentitySession[]> {
+    // A sessão criada direto em `sessions` sai sem a origem do login, como as antigas.
+    return (this.sessions.get(userId) ?? []).map(
+      (handle) =>
+        this.sessionDetails.get(handle) ?? {
+          handle,
+          createdAt: new Date(0),
+          expiresAt: new Date(0),
+          ipAddress: null,
+          userAgent: null,
+        },
+    );
+  }
+
+  async revokeSession(sessionHandle: string): Promise<void> {
+    for (const [userId, handles] of this.sessions) {
+      this.sessions.set(
+        userId,
+        handles.filter((handle) => handle !== sessionHandle),
+      );
+    }
   }
 
   async createRoles(): Promise<void> {}
