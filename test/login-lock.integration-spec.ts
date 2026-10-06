@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
-import { INestApplication, LoggerService } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import supertokens from 'supertokens-node';
 import Session from 'supertokens-node/recipe/session';
@@ -29,6 +29,7 @@ import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
 import { deleteLoginAttempts } from './support/login-attempts';
+import { MemoryLogger } from './support/memory-logger';
 
 const PASSWORD = 'senha-forte-1';
 const WRONG_PASSWORD = 'senha-errada-1';
@@ -47,24 +48,6 @@ const LOCKED = { status: 'GENERAL_ERROR', message: LOGIN_LOCKED_MESSAGE };
 /** Respostas de `times` tentativas seguidas com a credencial inválida. */
 function wrongCredentials(times: number): unknown[] {
   return Array.from({ length: times }, () => WRONG_CREDENTIALS);
-}
-
-/** Guarda tudo o que a API escreveria no log, para conferir que a senha não aparece. */
-class MemoryLogger implements LoggerService {
-  readonly lines: string[] = [];
-
-  log = (...args: unknown[]): void => this.write(args);
-  error = (...args: unknown[]): void => this.write(args);
-  warn = (...args: unknown[]): void => this.write(args);
-  debug = (...args: unknown[]): void => this.write(args);
-  verbose = (...args: unknown[]): void => this.write(args);
-  fatal = (...args: unknown[]): void => this.write(args);
-
-  private write(args: unknown[]): void {
-    this.lines.push(
-      args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '),
-    );
-  }
 }
 
 describe('Bloqueio do login por tentativas (integração)', () => {
