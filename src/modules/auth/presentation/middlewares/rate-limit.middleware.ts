@@ -20,6 +20,7 @@ export const RATE_LIMITED_ROUTES: readonly RateLimitedRoute[] = [
   { method: 'POST', path: '/api/invitations/accept' },
   { method: 'POST', path: '/api/password-resets' },
   { method: 'POST', path: '/api/password-resets/confirm' },
+  { method: 'POST', path: '/api/email-verifications/confirm' },
 ];
 
 export const RATE_LIMIT_MESSAGE = 'Muitas requisições. Tente novamente em instantes.';

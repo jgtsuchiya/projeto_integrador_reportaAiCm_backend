@@ -61,6 +61,11 @@ describe('findRateLimitedRoute', () => {
       '/api/password-resets/confirm?origem=email',
       '/api/password-resets/confirm',
     ],
+    [
+      'da confirmação do e-mail, com maiúsculas e query string',
+      '/api/Email-Verifications/Confirm?origem=email',
+      '/api/email-verifications/confirm',
+    ],
   ])('deve encontrar a rota no caminho %s', (_case, url, path) => {
     const result = findRateLimitedRoute('POST', url);
 
@@ -80,6 +85,8 @@ describe('findRateLimitedRoute', () => {
     ['POST', '/api/public/clients'],
     ['GET', '/api/password-resets'],
     ['POST', '/api/password-resets/confirm/outro'],
+    ['POST', '/api/email-verifications'],
+    ['POST', '/api/users/me/email-verification'],
     ['POST', 'http://['],
   ])('não deve encontrar rota limitada em %s %s', (method, url) => {
     const result = findRateLimitedRoute(method, url);

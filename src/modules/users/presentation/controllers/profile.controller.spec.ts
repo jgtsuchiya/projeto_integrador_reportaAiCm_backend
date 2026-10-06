@@ -5,6 +5,7 @@ import { ChangePasswordUseCase } from '../../application/use-cases/change-passwo
 import { DeleteOwnAccountUseCase } from '../../application/use-cases/delete-own-account.use-case';
 import type { AuthenticatedUser } from '../../application/use-cases/get-authenticated-user.use-case';
 import { GetProfileUseCase } from '../../application/use-cases/get-profile.use-case';
+import { ResendEmailVerificationUseCase } from '../../application/use-cases/resend-email-verification.use-case';
 import { UpdateProfileUseCase } from '../../application/use-cases/update-profile.use-case';
 import { ProfileController } from './profile.controller';
 
@@ -14,6 +15,7 @@ describe('ProfileController', () => {
   let updateProfileUseCase: jest.Mocked<UpdateProfileUseCase>;
   let changePasswordUseCase: jest.Mocked<ChangePasswordUseCase>;
   let deleteOwnAccountUseCase: jest.Mocked<DeleteOwnAccountUseCase>;
+  let resendEmailVerificationUseCase: jest.Mocked<ResendEmailVerificationUseCase>;
 
   const user: AuthenticatedUser = { id: 'client-1', role: 'CLIENT', sessionHandle: 'session-1' };
   const profile: ProfileOutput = {
@@ -39,6 +41,7 @@ describe('ProfileController', () => {
         { provide: UpdateProfileUseCase, useValue: { execute: jest.fn() } },
         { provide: ChangePasswordUseCase, useValue: { execute: jest.fn() } },
         { provide: DeleteOwnAccountUseCase, useValue: { execute: jest.fn() } },
+        { provide: ResendEmailVerificationUseCase, useValue: { execute: jest.fn() } },
       ],
     }).compile();
 
@@ -47,6 +50,7 @@ describe('ProfileController', () => {
     updateProfileUseCase = moduleRef.get(UpdateProfileUseCase);
     changePasswordUseCase = moduleRef.get(ChangePasswordUseCase);
     deleteOwnAccountUseCase = moduleRef.get(DeleteOwnAccountUseCase);
+    resendEmailVerificationUseCase = moduleRef.get(ResendEmailVerificationUseCase);
   });
 
   it('deve buscar o perfil do usuário da sessão', async () => {
@@ -77,6 +81,14 @@ describe('ProfileController', () => {
       currentPassword: 'antiga-1',
       newPassword: 'nova-senha-2',
     });
+  });
+
+  it('deve reenviar a verificação de e-mail do usuário da sessão', async () => {
+    resendEmailVerificationUseCase.execute.mockResolvedValue();
+
+    await sut.resendEmailVerification(user);
+
+    expect(resendEmailVerificationUseCase.execute).toHaveBeenCalledWith({ userId: 'client-1' });
   });
 
   it('deve excluir a conta do usuário da sessão', async () => {

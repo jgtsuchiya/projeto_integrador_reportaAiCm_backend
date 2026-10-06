@@ -19,6 +19,7 @@ A autenticação é feita pelo **SuperTokens** self-hosted, integrado pelo SDK `
 - [Como proteger uma rota nova](#como-proteger-uma-rota-nova)
 - [Ciclo de vida das contas](#ciclo-de-vida-das-contas)
 - [Recuperação de senha](#recuperação-de-senha)
+- [Verificação de e-mail](#verificação-de-e-mail)
 - [Formato dos erros](#formato-dos-erros)
 - [Fora do escopo](#fora-do-escopo)
 
@@ -193,13 +194,14 @@ Dois limites conhecidos:
 
 As rotas públicas que recebem credenciais ou disparam e-mail aceitam `RATE_LIMIT_MAX_REQUESTS` requisições por IP a cada `RATE_LIMIT_WINDOW_SECONDS` segundos, em cada rota (RN18). Por padrão, são 20 por minuto:
 
-| Método | Rota                           |
-| ------ | ------------------------------ |
-| `POST` | `/api/auth/signin`             |
-| `POST` | `/api/clients`                 |
-| `POST` | `/api/invitations/accept`      |
-| `POST` | `/api/password-resets`         |
-| `POST` | `/api/password-resets/confirm` |
+| Método | Rota                               |
+| ------ | ---------------------------------- |
+| `POST` | `/api/auth/signin`                 |
+| `POST` | `/api/clients`                     |
+| `POST` | `/api/invitations/accept`          |
+| `POST` | `/api/password-resets`             |
+| `POST` | `/api/password-resets/confirm`     |
+| `POST` | `/api/email-verifications/confirm` |
 
 Acima do limite, a resposta é 429 no formato de erro da aplicação, inclusive no login, com o header `Retry-After` (os segundos que faltam para a janela acabar):
 
@@ -285,32 +287,36 @@ O passo 2 custa uma consulta ao MySQL por requisição autenticada. É o preço 
 
 ## Matriz de permissões
 
-| Rota                                | SUPER_ADMIN | ADMIN | CLIENT | Sem sessão |
-| ----------------------------------- | :---------: | :---: | :----: | :--------: |
-| `GET /api/health`                   |      ✔      |   ✔   |   ✔    |     ✔      |
-| `POST /api/auth/signin`             |      ✔      |   ✔   |   ✔    |     ✔      |
-| `POST /api/auth/session/refresh`    |      ✔      |   ✔   |   ✔    |     ✔¹     |
-| `POST /api/clients` (autocadastro)  |      ✔      |   ✔   |   ✔    |     ✔      |
-| `POST /api/invitations/accept`      |      ✔      |   ✔   |   ✔    |     ✔      |
-| `POST /api/password-resets`         |      ✔      |   ✔   |   ✔    |     ✔      |
-| `POST /api/password-resets/confirm` |      ✔      |   ✔   |   ✔    |     ✔      |
-| `POST /api/auth/signout`            |      ✔      |   ✔   |   ✔    |            |
-| `GET /api/users/me`                 |      ✔      |   ✔   |   ✔    |            |
-| `PATCH /api/users/me`               |      ✔      |   ✔   |   ✔    |            |
-| `PATCH /api/users/me/password`      |      ✔      |   ✔   |   ✔    |            |
-| `DELETE /api/users/me`              |             |       |   ✔    |            |
-| `GET /api/clients`                  |      ✔      |   ✔   |        |            |
-| `GET /api/clients/:id`              |      ✔      |   ✔   |        |            |
-| `PATCH /api/clients/:id/status`     |      ✔      |   ✔   |        |            |
-| `POST /api/admins`                  |      ✔      |       |        |            |
-| `GET /api/admins`                   |      ✔      |       |        |            |
-| `GET /api/admins/:id`               |      ✔      |       |        |            |
-| `PATCH /api/admins/:id`             |      ✔      |       |        |            |
-| `PATCH /api/admins/:id/status`      |      ✔      |       |        |            |
-| `POST /api/admins/:id/invitation`   |      ✔      |       |        |            |
-| `DELETE /api/admins/:id`            |      ✔      |       |        |            |
+| Rota                                    | SUPER_ADMIN | ADMIN | CLIENT | Sem sessão |
+| --------------------------------------- | :---------: | :---: | :----: | :--------: |
+| `GET /api/health`                       |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/auth/signin`                 |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/auth/session/refresh`        |      ✔      |   ✔   |   ✔    |     ✔¹     |
+| `POST /api/clients` (autocadastro)      |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/invitations/accept`          |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/password-resets`             |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/password-resets/confirm`     |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/email-verifications/confirm` |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/auth/signout`                |      ✔      |   ✔   |   ✔    |            |
+| `GET /api/users/me`                     |      ✔      |   ✔   |   ✔    |            |
+| `PATCH /api/users/me`                   |      ✔      |   ✔   |   ✔    |            |
+| `PATCH /api/users/me/password`          |      ✔      |   ✔   |   ✔    |            |
+| `POST /api/users/me/email-verification` |     ✔²      |  ✔²   |   ✔    |            |
+| `DELETE /api/users/me`                  |             |       |   ✔    |            |
+| `GET /api/clients`                      |      ✔      |   ✔   |        |            |
+| `GET /api/clients/:id`                  |      ✔      |   ✔   |        |            |
+| `PATCH /api/clients/:id/status`         |      ✔      |   ✔   |        |            |
+| `POST /api/admins`                      |      ✔      |       |        |            |
+| `GET /api/admins`                       |      ✔      |       |        |            |
+| `GET /api/admins/:id`                   |      ✔      |       |        |            |
+| `PATCH /api/admins/:id`                 |      ✔      |       |        |            |
+| `PATCH /api/admins/:id/status`          |      ✔      |       |        |            |
+| `POST /api/admins/:id/invitation`       |      ✔      |       |        |            |
+| `DELETE /api/admins/:id`                |      ✔      |       |        |            |
 
 ¹ Não usa o access token, mas exige um refresh token válido.
+
+² O ADM e o SuperAdm passam pela permissão, mas já nascem com o e-mail verificado: para eles, a resposta é sempre 422 ([verificação de e-mail](#verificação-de-e-mail)).
 
 Sem sessão, as rotas protegidas respondem 401. Com um papel fora da lista, 403. Além do papel, valem estas regras:
 
@@ -388,7 +394,7 @@ Só o usuário ACTIVE e não excluído faz login e acessa a API. Uma transição
 | Operação                                           | MySQL                                                                                                                                                                                                   | SuperTokens                                                    |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | Seed do SuperAdm                                   | `users` ACTIVE, com `email_verified_at`                                                                                                                                                                 | Cria os três papéis, a credencial e atribui o papel            |
-| Autocadastro do Client                             | `users` ACTIVE e `client_profiles`, na mesma transação                                                                                                                                                  | Cria a credencial e atribui o papel                            |
+| Autocadastro do Client                             | `users` ACTIVE, `client_profiles` e o token de verificação de e-mail em `user_tokens`, na mesma transação                                                                                               | Cria a credencial e atribui o papel                            |
 | Convite de ADM                                     | `users` PENDING e o convite em `user_tokens`                                                                                                                                                            | Cria a credencial com uma senha aleatória, que ninguém conhece |
 | Aceite do convite                                  | `users` ACTIVE, com `email_verified_at`, e o convite marcado como usado                                                                                                                                 | Grava a senha escolhida pelo ADM                               |
 | Inativação                                         | `status` INACTIVE                                                                                                                                                                                       | Revoga todas as sessões                                        |
@@ -396,6 +402,8 @@ Só o usuário ACTIVE e não excluído faz login e acessa a API. Uma transição
 | Troca de senha                                     | Nada                                                                                                                                                                                                    | Confere a senha atual, grava a nova e revoga as outras sessões |
 | Pedido de redefinição de senha                     | O token em `user_tokens`, no lugar dos anteriores do mesmo tipo                                                                                                                                         | Nada                                                           |
 | Redefinição de senha                               | O token marcado como usado, o `email_verified_at` preenchido (se estava vazio) e as falhas de login do e-mail apagadas                                                                                  | Grava a senha nova e revoga todas as sessões                   |
+| Reenvio da verificação de e-mail                   | O token em `user_tokens`, no lugar dos anteriores do mesmo tipo                                                                                                                                         | Nada                                                           |
+| Confirmação do e-mail                              | O `email_verified_at` preenchido e o token marcado como usado                                                                                                                                           | Nada                                                           |
 | Exclusão (ADM pelo SuperAdm, Client por ele mesmo) | `deleted_at` e e-mail anonimizado. No Client, também o nome, e o `client_profiles` é apagado. As tentativas de login do e-mail são apagadas ([DATABASE.md](DATABASE.md#exclusão-lógica-e-anonimização)) | Remove o usuário, com as credenciais, as sessões e os papéis   |
 
 Como não existe transação entre os dois bancos, a ordem das gravações é escolhida para uma falha no meio não deixar o usuário num estado ruim:
@@ -480,6 +488,55 @@ Dois limites conhecidos:
 - **O pedido em andamento se perde se a API cair.** As tarefas em segundo plano rodam no próprio processo, sem fila. No encerramento normal, a API espera as que estão em andamento. Se o e-mail não chegar, o usuário pede o link de novo.
 - **Pedidos simultâneos.** Dois pedidos ao mesmo tempo para a mesma conta podem passar juntos pela conferência do intervalo de 1 minuto. Quem segura esse caso é o limite por IP.
 
+## Verificação de e-mail
+
+O Client confirma que o e-mail do cadastro é dele por um link, com o token em `user_tokens`, como o convite (RN22). O estado fica em `users.email_verified_at`: a receita EmailVerification do SuperTokens não é usada. O ADM e o SuperAdm já nascem verificados, pelo aceite do convite e pelo seed.
+
+```mermaid
+sequenceDiagram
+    actor C as Client
+    participant A as App
+    participant API
+    participant E as E-mail
+    participant W as Painel web
+
+    C->>A: cadastro
+    A->>API: POST /api/clients
+    API-->>A: 201, emailVerifiedAt nulo
+    API->>E: link WEB_APP_URL/verificar-email?token=...
+    E->>C: e-mail com o link
+    C->>W: abre o link
+    W->>API: POST /api/email-verifications/confirm { token }
+    API-->>W: 204, e-mail verificado
+    A->>API: GET /api/users/me
+    API-->>A: emailVerifiedAt preenchido
+```
+
+**Cadastro (`POST /api/clients`).**
+
+- O Client nasce com o `email_verified_at` vazio. O token é gravado na mesma transação do usuário e do perfil, e o link é enviado em seguida.
+- **O login não depende da verificação.** O app descobre a situação pelo `emailVerifiedAt` do `GET /api/users/me`.
+- Uma falha no envio do e-mail não desfaz o cadastro: a resposta é 201 do mesmo jeito, e o Client pede o reenvio. O formato da resposta não mudou.
+
+**Confirmação (`POST /api/email-verifications/confirm`).**
+
+- É pública: o link abre no navegador, onde o Client não tem a sessão do app. O token identifica a conta.
+- Preenche o `email_verified_at` e marca o token como usado, na mesma transação. Responde 204.
+- O token é aleatório e de uso único, e o banco guarda só o SHA-256 dele. Vale `EMAIL_VERIFICATION_EXPIRES_IN_HOURS` (24 por padrão).
+- Um token inexistente, expirado, já usado, substituído por um reenvio ou de outro tipo (como o da redefinição de senha) responde sempre o mesmo 422. O token de uma conta excluída também.
+- A conta INACTIVE confirma o e-mail normalmente: o link prova a posse do endereço e não dá acesso a nada. O bloqueio continua valendo pelo status.
+- Quem já verificou o e-mail por outro caminho (a [redefinição de senha](#recuperação-de-senha) também verifica) e abre o link recebe 204, e a data da primeira verificação é mantida.
+- A rota entra no [limite por IP](#limite-de-requisições-por-ip).
+
+**Reenvio (`POST /api/users/me/email-verification`).**
+
+- Exige sessão e vale para o usuário logado. Gera um link novo, que invalida os anteriores, e responde 204.
+- **Só para quem ainda não verificou.** Com o e-mail já verificado, a resposta é 422. É o caso do ADM e do SuperAdm, sempre.
+- **Um e-mail por minuto.** O pedido feito menos de 1 minuto depois do último e-mail responde 422, e o link que já foi continua valendo. O intervalo conta também a partir do link do cadastro. Aqui a resposta pode dizer o motivo, ao contrário do pedido de redefinição de senha: quem chama já está logado na própria conta.
+- Uma falha no envio do e-mail não vira erro: a resposta é 204, o motivo fica no log, e o usuário pede o reenvio de novo depois do intervalo.
+
+O link aponta para a página `/verificar-email` do painel web ([FRONTEND.md](FRONTEND.md#verificação-de-e-mail)). Hoje, nenhuma rota exige o e-mail verificado. A primeira vai ser a ativação da verificação em duas etapas (RN24).
+
 ## Formato dos erros
 
 | Origem                                            | Status HTTP                  | Corpo                                                                                           |
@@ -496,4 +553,4 @@ Nas rotas da aplicação: 400 para validação (com a lista de campos em `detail
 
 ## Fora do escopo
 
-Ainda não existem: MFA, verificação de e-mail do Client e troca de e-mail. Os pontos em aberto (custo do MFA no SuperTokens, validade do refresh token, hospedagem do Core em produção) estão no fim do [plano da sprint 2](sprints/sprint-2-usuarios.md#10-pontos-em-aberto), que também traz as regras de negócio RN01 a RN16 citadas neste documento. As regras RN17 a RN25 estão no [plano da sprint 3](sprints/sprint-3-login.md#4-regras-de-negócio).
+Ainda não existem: MFA e troca de e-mail. Os pontos em aberto (custo do MFA no SuperTokens, validade do refresh token, hospedagem do Core em produção) estão no fim do [plano da sprint 2](sprints/sprint-2-usuarios.md#10-pontos-em-aberto), que também traz as regras de negócio RN01 a RN16 citadas neste documento. As regras RN17 a RN25 estão no [plano da sprint 3](sprints/sprint-3-login.md#4-regras-de-negócio).

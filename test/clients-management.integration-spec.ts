@@ -17,7 +17,9 @@ import { UserTokenOrmEntity } from '@modules/users/infra/database/entities/user-
 import { UserOrmEntity } from '@modules/users/infra/database/entities/user.orm-entity';
 import { ROLE_IDS } from '@modules/users/infra/database/mappers/user.mapper';
 import { SuperTokensIdentityProvider } from '@modules/users/infra/identity/supertokens-identity-provider';
+import { MailSender } from '@shared/application/ports/mail-sender';
 import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
+import { FakeMailSender } from '@shared/testing/fake-mail-sender';
 
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
@@ -101,7 +103,11 @@ describe('Gestão de Clients pelo painel (integração)', () => {
     await dataSource.initialize();
     await dataSource.runMigrations();
 
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    // O cadastro de cada Client envia o link de verificação de e-mail.
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(MailSender)
+      .useValue(new FakeMailSender())
+      .compile();
     app = moduleRef.createNestApplication({ logger: false });
     configureApp(app);
     await app.listen(0, '127.0.0.1');
