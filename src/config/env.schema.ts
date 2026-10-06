@@ -26,6 +26,8 @@ export const envSchema = z.object({
 
   // Validade do link de convite do ADM (RN06).
   INVITATION_EXPIRES_IN_HOURS: z.coerce.number().int().positive().default(48),
+  // Validade do link de redefinição de senha (RN20).
+  PASSWORD_RESET_EXPIRES_IN_MINUTES: z.coerce.number().int().positive().default(60),
 
   // Bloqueio temporário do login: falhas por e-mail, contadas dentro da janela (RN17).
   LOGIN_MAX_FAILED_ATTEMPTS: z.coerce.number().int().positive().default(5),

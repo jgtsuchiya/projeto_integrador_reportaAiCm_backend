@@ -172,6 +172,33 @@ describe('UserToken', () => {
     });
   });
 
+  describe('wasIssuedRecently', () => {
+    it('deve indicar o token emitido há menos de 1 minuto (RN20)', () => {
+      const sut = restore();
+
+      expect(sut.wasIssuedRecently(new Date('2026-09-28T12:00:00.000Z'))).toBe(true);
+      expect(sut.wasIssuedRecently(new Date('2026-09-28T12:00:59.999Z'))).toBe(true);
+    });
+
+    it('não deve indicar o token emitido há 1 minuto ou mais', () => {
+      const sut = restore();
+
+      expect(sut.wasIssuedRecently(new Date('2026-09-28T12:01:00.000Z'))).toBe(false);
+      expect(sut.wasIssuedRecently(new Date('2026-09-28T13:00:00.000Z'))).toBe(false);
+    });
+
+    it('deve indicar o token recém-emitido, mesmo depois de usado', () => {
+      const { token } = UserToken.issue({
+        userId: 'user-1',
+        type: UserTokenType.PASSWORD_RESET,
+        validForMinutes: 60,
+      });
+      token.use();
+
+      expect(token.wasIssuedRecently()).toBe(true);
+    });
+  });
+
   describe('matchesCode', () => {
     it('deve conferir o código emitido', () => {
       const { token, secret } = UserToken.issueCode({ userId: 'user-1', validForMinutes: 10 });

@@ -180,6 +180,42 @@ await SuperTokens.signOut(); // encerra a sessão na API e apaga os tokens
 
 **Em dev**, o `localhost` do aparelho não é o da sua máquina. Use `http://10.0.2.2:3000` no emulador Android, `http://localhost:3000` no simulador do iOS e o IP da máquina na rede num aparelho físico. O app não passa pelo CORS.
 
+## Esqueci minha senha
+
+A recuperação de senha é igual para os três papéis e tem duas etapas: o pedido do link, feito no painel e no app, e a página que define a senha nova, que fica só no painel web.
+
+**1. Pedido do link (painel e app).** Na tela "Esqueci minha senha", envie o e-mail para a rota pública:
+
+```ts
+const response = await fetch(`${API_URL}/api/password-resets`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email }),
+});
+// 204: mostre "Se este e-mail tiver uma conta, você vai receber um link para redefinir a senha".
+```
+
+- A resposta é **sempre 204**, exista ou não a conta. Mostre a mesma mensagem nos dois casos, sem dizer que o e-mail não foi encontrado.
+- A mesma conta recebe **um e-mail por minuto**. Um pedido repetido antes disso também responde 204, mas não envia nada. Deixe o botão de reenviar desativado por 1 minuto.
+- Só recebe o link a conta ativa. O ADM com o convite pendente continua dependendo do convite.
+
+**2. Página `/redefinir-senha` (painel web).** O e-mail leva o usuário para **`<WEB_APP_URL>/redefinir-senha?token=<token>`**. O Client abre o link no navegador do celular:
+
+1. Leia o `token` da URL e mostre um formulário para o usuário escolher a senha.
+2. Envie o `POST /api/password-resets/confirm` com `{ "token": "...", "password": "..." }`. A rota é pública.
+3. Com o 204, leve o ADM ou o SuperAdm para a tela de login. Para o Client, mostre que a senha foi alterada e peça para ele voltar ao app. A página não sabe o papel de quem redefiniu, então uma mensagem só serve aos dois casos.
+
+| Rota                                | Resposta | Significado                                                                                                 |
+| ----------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------- |
+| `POST /api/password-resets`         | 204      | Pedido recebido. Não diz se o e-mail tem conta                                                              |
+| `POST /api/password-resets`         | 400      | E-mail fora do formato                                                                                      |
+| `POST /api/password-resets/confirm` | 204      | Senha redefinida                                                                                            |
+| `POST /api/password-resets/confirm` | 400      | Senha fora da regra (de 8 a 128 caracteres, com pelo menos uma letra e um número). O link continua valendo  |
+| `POST /api/password-resets/confirm` | 422      | Link inválido, expirado (60 minutos), já usado ou substituído por um pedido novo. O usuário pede outro link |
+| As duas                             | 429      | Muitas requisições do mesmo IP ([erros](#erros))                                                            |
+
+Depois da redefinição, **todas as sessões do usuário são encerradas**, em todos os aparelhos, e ele recebe o e-mail "Sua senha foi alterada". O mesmo aviso sai na troca de senha pelo perfil. A redefinição também libera o login de um e-mail [bloqueado por tentativas](AUTH.md#bloqueio-do-login-por-tentativas).
+
 ## Depois do login: perfil e papel
 
 ```http
@@ -214,7 +250,8 @@ A renovação do access token é automática e o usuário não percebe. A sessã
 - o usuário sai (`signOut`);
 - o refresh token expira, depois de 7 dias sem uso;
 - o usuário é inativado ou excluído: o bloqueio vale na requisição seguinte;
-- a senha é trocada em outro aparelho: as outras sessões caem na renovação seguinte, em até 15 minutos, e a de quem trocou continua.
+- a senha é trocada em outro aparelho: as outras sessões caem na renovação seguinte, em até 15 minutos, e a de quem trocou continua;
+- a senha é redefinida pelo link do e-mail: todas as sessões caem na renovação seguinte, em até 15 minutos.
 
 Nesses casos, a API responde 401, o SDK apaga os tokens e avisa pelo `onHandleEvent`, com a ação `UNAUTHORISED`. Use o evento para levar o usuário à tela de login:
 
@@ -234,6 +271,8 @@ function onHandleEvent(event: { action: string }) {
 | `POST /api/auth/signin`, `/session/refresh` e `/signout`                    |     ✔      |  ✔  | Pelo SDK                                                    |
 | `GET` e `PATCH /api/users/me`                                               |     ✔      |  ✔  | O Client também edita `phone` e `birthDate`                 |
 | `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 401 |
+| `POST /api/password-resets`                                                 |     ✔      |  ✔  | "Esqueci minha senha", sem sessão. Responde sempre 204      |
+| `POST /api/password-resets/confirm`                                         |     ✔      |     | Página `/redefinir-senha`, sem sessão                       |
 | `POST /api/clients`                                                         |            |  ✔  | Autocadastro, sem sessão                                    |
 | `DELETE /api/users/me`                                                      |            |  ✔  | `{ password }`. Exclui e anonimiza a conta do Client        |
 | `POST /api/invitations/accept`                                              |     ✔      |     | Página `/convite`, sem sessão                               |
@@ -278,10 +317,10 @@ As rotas da aplicação respondem os erros sempre no mesmo formato, com a `messa
 | 403    | O papel não tem permissão                   | (ausente)                                                     |
 | 404    | Recurso não encontrado                      | (ausente)                                                     |
 | 409    | E-mail ou CPF já cadastrado                 | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
-| 422    | Regra de negócio (ex.: convite expirado)    | Depende da regra                                              |
+| 422    | Regra de negócio (ex.: link expirado)       | Depende da regra                                              |
 | 429    | Muitas requisições do mesmo IP (ver abaixo) | (ausente)                                                     |
 
-O 429 vem do limite por IP do login, do cadastro do Client e do aceite do convite: cada uma dessas rotas aceita 20 requisições por minuto por IP. A resposta traz o header `Retry-After`, com os segundos que faltam para a próxima tentativa.
+O 429 vem do limite por IP do login, do cadastro do Client, do aceite do convite e das duas rotas da redefinição de senha: cada uma dessas rotas aceita 20 requisições por minuto por IP. A resposta traz o header `Retry-After`, com os segundos que faltam para a próxima tentativa.
 
 As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 com o resultado em `status`, e a falta de sessão responde 401 com `{ "message": "unauthorised" }`. A exceção é o 429, que tem o formato acima também no login.
 
@@ -290,5 +329,5 @@ As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 co
 ## Testando sem o front
 
 - [api.http](api.http) tem todas as rotas prontas para executar no VS Code, na ordem de um fluxo completo.
-- Em dev, os e-mails de convite não saem para a internet: eles aparecem no Mailpit, em http://localhost:8025.
+- Em dev, os e-mails (convite, redefinição de senha e aviso de troca de senha) não saem para a internet: eles aparecem no Mailpit, em http://localhost:8025.
 - O SuperAdm de dev é criado pelo `npm run seed`, com o e-mail e a senha das variáveis `SUPER_ADMIN_*` do `.env` ([README](../README.md#primeiro-login)).

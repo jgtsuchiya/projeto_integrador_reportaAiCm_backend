@@ -92,6 +92,22 @@ Todo login pela API grava uma linha em `login_attempts`, e 5 falhas seguidas par
 
 O bloqueio em si é testado no `test/login-lock.integration-spec.ts`. Para simular a passagem do tempo, ele recua o `created_at` da falha mais antiga.
 
+## Testes de rotas que respondem antes de terminar
+
+O `POST /api/password-resets` responde 204 antes de buscar a conta e de enviar o e-mail: o trabalho segue em segundo plano ([ARCHITECTURE.md](ARCHITECTURE.md#tarefas-em-segundo-plano)). Logo depois da resposta, o e-mail pode ainda não ter saído. O teste que sobe a aplicação espera as tarefas terminarem antes de conferir o resultado, inclusive quando o esperado é nenhum e-mail:
+
+```ts
+const response = await post('/password-resets', { email });
+await app.get(BackgroundTasks).drain();
+
+expect(response.status).toBe(204);
+expect(mailSender.messages).toHaveLength(1);
+```
+
+O `test/password-reset.integration-spec.ts` segue esse padrão. Para simular a passagem do intervalo de 1 minuto entre dois e-mails, ele recua o `created_at` do token. O `E2eApp` espera as tarefas no `close()`, antes de apagar os dados.
+
+Para conferir que um segredo (a senha ou o token de um link) não vai para o log, suba a aplicação com o [`MemoryLogger`](../test/support/memory-logger.ts), que guarda as linhas em memória: `createNestApplication({ logger })`.
+
 ## Testes e2e
 
 Os e2e sobem a API inteira e a chamam por HTTP com o **supertest**, contra o MySQL de teste e o SuperTokens Core. O único fake é o `FakeMailSender`, no lugar do SMTP. Eles cobrem os fluxos de ponta a ponta e as permissões. Os detalhes de cada rota (validação, erros e casos de borda) ficam nos testes de integração.

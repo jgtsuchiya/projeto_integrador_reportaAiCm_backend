@@ -14,6 +14,9 @@ export const LOGIN_CODE_LENGTH = 6;
 /** Erros na conferência que invalidam o código da segunda etapa (RN25). */
 export const LOGIN_CODE_MAX_ATTEMPTS = 5;
 
+/** Intervalo mínimo entre dois e-mails do mesmo tipo para a mesma conta (RN20). */
+export const USER_TOKEN_RESEND_INTERVAL_MINUTES = 1;
+
 export interface UserTokenProps {
   userId: string;
   type: UserTokenType;
@@ -157,6 +160,16 @@ export class UserToken extends Entity {
       now < this.props.expiresAt &&
       this.props.attempts < LOGIN_CODE_MAX_ATTEMPTS
     );
+  }
+
+  /**
+   * O token foi emitido há menos de `USER_TOKEN_RESEND_INTERVAL_MINUTES`: ainda é cedo para
+   * emitir outro do mesmo tipo para a mesma conta, que receberia mais de um e-mail por minuto.
+   */
+  wasIssuedRecently(now: Date = new Date()): boolean {
+    const elapsedMs = now.getTime() - this.props.createdAt.getTime();
+
+    return elapsedMs < USER_TOKEN_RESEND_INTERVAL_MINUTES * MINUTE_IN_MS;
   }
 
   /**

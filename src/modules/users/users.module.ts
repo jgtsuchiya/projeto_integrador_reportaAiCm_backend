@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Env } from '@config/env.schema';
+import { BackgroundTasksModule } from '@shared/infra/background/background-tasks.module';
 import { MailModule } from '@shared/infra/mail/mail.module';
 
 import { IdentityProvider } from './application/ports/identity-provider';
@@ -11,6 +12,10 @@ import {
   AdminInvitationService,
 } from './application/services/admin-invitation.service';
 import { LoginLockConfig, LoginLockService } from './application/services/login-lock.service';
+import {
+  PasswordResetConfig,
+  PasswordResetService,
+} from './application/services/password-reset.service';
 import { UserMailConfig, UserMailService } from './application/services/user-mail.service';
 import { AcceptInvitationUseCase } from './application/use-cases/accept-invitation.use-case';
 import { AuthorizeSignInUseCase } from './application/use-cases/authorize-sign-in.use-case';
@@ -32,7 +37,9 @@ import { ListClientsUseCase } from './application/use-cases/list-clients.use-cas
 import { PurgeLoginAttemptsUseCase } from './application/use-cases/purge-login-attempts.use-case';
 import { RecordLoginAttemptUseCase } from './application/use-cases/record-login-attempt.use-case';
 import { RegisterClientUseCase } from './application/use-cases/register-client.use-case';
+import { RequestPasswordResetUseCase } from './application/use-cases/request-password-reset.use-case';
 import { ResendAdminInvitationUseCase } from './application/use-cases/resend-admin-invitation.use-case';
+import { ResetPasswordUseCase } from './application/use-cases/reset-password.use-case';
 import { UpdateAdminUseCase } from './application/use-cases/update-admin.use-case';
 import { UpdateProfileUseCase } from './application/use-cases/update-profile.use-case';
 import { ClientProfileRepository } from './domain/repositories/client-profile.repository';
@@ -53,6 +60,7 @@ import { LoginAttemptRetentionScheduler } from './infra/scheduling/login-attempt
 import { AdminsController } from './presentation/controllers/admins.controller';
 import { ClientsController } from './presentation/controllers/clients.controller';
 import { InvitationsController } from './presentation/controllers/invitations.controller';
+import { PasswordResetsController } from './presentation/controllers/password-resets.controller';
 import { ProfileController } from './presentation/controllers/profile.controller';
 
 @Module({
@@ -64,10 +72,18 @@ import { ProfileController } from './presentation/controllers/profile.controller
       UserTokenOrmEntity,
       LoginAttemptOrmEntity,
     ]),
-    // Envio do convite do ADMIN.
+    // E-mails da conta: convite do ADMIN, redefinição de senha e aviso de troca de senha.
     MailModule,
+    // O pedido de redefinição de senha responde antes de buscar a conta e enviar o e-mail.
+    BackgroundTasksModule,
   ],
-  controllers: [ClientsController, AdminsController, InvitationsController, ProfileController],
+  controllers: [
+    ClientsController,
+    AdminsController,
+    InvitationsController,
+    PasswordResetsController,
+    ProfileController,
+  ],
   providers: [
     CreateSuperAdminUseCase,
     RegisterClientUseCase,
@@ -76,6 +92,9 @@ import { ProfileController } from './presentation/controllers/profile.controller
     AcceptInvitationUseCase,
     AdminInvitationService,
     UserMailService,
+    RequestPasswordResetUseCase,
+    ResetPasswordUseCase,
+    PasswordResetService,
     ListAdminsUseCase,
     GetAdminUseCase,
     UpdateAdminUseCase,
@@ -113,6 +132,13 @@ import { ProfileController } from './presentation/controllers/profile.controller
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>): AdminInvitationConfig => ({
         expiresInHours: config.get('INVITATION_EXPIRES_IN_HOURS', { infer: true }),
+      }),
+    },
+    {
+      provide: PasswordResetConfig,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>): PasswordResetConfig => ({
+        expiresInMinutes: config.get('PASSWORD_RESET_EXPIRES_IN_MINUTES', { infer: true }),
       }),
     },
     {

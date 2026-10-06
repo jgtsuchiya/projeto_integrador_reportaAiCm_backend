@@ -215,7 +215,7 @@ describe('Matriz de permissões (e2e)', () => {
     },
   ];
 
-  describe('Autocadastro de Client, login, refresh e aceite de convite (público)', () => {
+  describe('Autocadastro de Client, login, refresh, aceite de convite e redefinição de senha (público)', () => {
     it('deve cadastrar um Client sem sessão', async () => {
       const response = await call(undefined, 'post', '/clients', buildClientPayload());
 
@@ -246,6 +246,25 @@ describe('Matriz de permissões (e2e)', () => {
       });
 
       expect(response.status).toBe(204);
+    });
+
+    it('deve pedir a redefinição de senha sem sessão', async () => {
+      // E-mail sem conta: a resposta é a mesma, e nenhum e-mail entra na fila dos outros testes.
+      const response = await call(undefined, 'post', '/password-resets', {
+        email: newEmail('sem-conta'),
+      });
+
+      expect(response.status).toBe(204);
+    });
+
+    it('deve chegar à redefinição de senha sem sessão', async () => {
+      const response = await call(undefined, 'post', '/password-resets/confirm', {
+        token: 'token-que-nao-existe',
+        password: PASSWORD,
+      });
+
+      // 422 do token inválido, e não o 401 de uma rota protegida.
+      expect(response.status).toBe(422);
     });
 
     it('deve manter o /api/health público', async () => {
