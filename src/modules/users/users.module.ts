@@ -38,6 +38,7 @@ import { GetProfileUseCase } from './application/use-cases/get-profile.use-case'
 import { InviteAdminUseCase } from './application/use-cases/invite-admin.use-case';
 import { ListAdminsUseCase } from './application/use-cases/list-admins.use-case';
 import { ListClientsUseCase } from './application/use-cases/list-clients.use-case';
+import { ListSessionsUseCase } from './application/use-cases/list-sessions.use-case';
 import { PurgeLoginAttemptsUseCase } from './application/use-cases/purge-login-attempts.use-case';
 import { RecordLoginAttemptUseCase } from './application/use-cases/record-login-attempt.use-case';
 import { RegisterClientUseCase } from './application/use-cases/register-client.use-case';
@@ -45,6 +46,8 @@ import { RequestPasswordResetUseCase } from './application/use-cases/request-pas
 import { ResendAdminInvitationUseCase } from './application/use-cases/resend-admin-invitation.use-case';
 import { ResendEmailVerificationUseCase } from './application/use-cases/resend-email-verification.use-case';
 import { ResetPasswordUseCase } from './application/use-cases/reset-password.use-case';
+import { RevokeOtherSessionsUseCase } from './application/use-cases/revoke-other-sessions.use-case';
+import { RevokeSessionUseCase } from './application/use-cases/revoke-session.use-case';
 import { UpdateAdminUseCase } from './application/use-cases/update-admin.use-case';
 import { UpdateProfileUseCase } from './application/use-cases/update-profile.use-case';
 import { VerifyEmailUseCase } from './application/use-cases/verify-email.use-case';
@@ -69,6 +72,7 @@ import { EmailVerificationsController } from './presentation/controllers/email-v
 import { InvitationsController } from './presentation/controllers/invitations.controller';
 import { PasswordResetsController } from './presentation/controllers/password-resets.controller';
 import { ProfileController } from './presentation/controllers/profile.controller';
+import { SessionsController } from './presentation/controllers/sessions.controller';
 
 @Module({
   imports: [
@@ -92,6 +96,7 @@ import { ProfileController } from './presentation/controllers/profile.controller
     PasswordResetsController,
     EmailVerificationsController,
     ProfileController,
+    SessionsController,
   ],
   providers: [
     CreateSuperAdminUseCase,
@@ -119,6 +124,9 @@ import { ProfileController } from './presentation/controllers/profile.controller
     UpdateProfileUseCase,
     ChangePasswordUseCase,
     DeleteOwnAccountUseCase,
+    ListSessionsUseCase,
+    RevokeSessionUseCase,
+    RevokeOtherSessionsUseCase,
     AuthorizeSignInUseCase,
     GetAuthenticatedUserUseCase,
     CheckPasswordPolicyUseCase,

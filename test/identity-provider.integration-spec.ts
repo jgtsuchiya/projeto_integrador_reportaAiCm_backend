@@ -93,6 +93,74 @@ describe('SuperTokensIdentityProvider (integração)', () => {
     await expect(Session.getAllSessionHandlesForUser(id)).resolves.toEqual([]);
   });
 
+  describe('listSessions', () => {
+    it('deve listar as sessões do usuário, com as datas e a origem do login', async () => {
+      const { id } = await createUser();
+      const session = await Session.createNewSessionWithoutRequestResponse(
+        'public',
+        supertokens.convertToRecipeUserId(id),
+      );
+      // Numa requisição de login, quem grava a origem é o override de createNewSession.
+      await Session.updateSessionDataInDatabase(session.getHandle(), {
+        ipAddress: '203.0.113.10',
+        userAgent: 'Mozilla/5.0',
+      });
+
+      const sessions = await sut.listSessions(id);
+
+      expect(sessions).toEqual([
+        {
+          handle: session.getHandle(),
+          createdAt: expect.any(Date) as Date,
+          expiresAt: expect.any(Date) as Date,
+          ipAddress: '203.0.113.10',
+          userAgent: 'Mozilla/5.0',
+        },
+      ]);
+      expect(sessions[0].expiresAt.getTime()).toBeGreaterThan(sessions[0].createdAt.getTime());
+    });
+
+    it('deve listar sem a origem a sessão criada fora de uma requisição', async () => {
+      const { id } = await createUser();
+      await Session.createNewSessionWithoutRequestResponse(
+        'public',
+        supertokens.convertToRecipeUserId(id),
+      );
+
+      const sessions = await sut.listSessions(id);
+
+      expect(sessions).toEqual([expect.objectContaining({ ipAddress: null, userAgent: null })]);
+    });
+
+    it('deve listar só as sessões do usuário informado', async () => {
+      const { id } = await createUser();
+      const other = await createUser();
+      await Session.createNewSessionWithoutRequestResponse(
+        'public',
+        supertokens.convertToRecipeUserId(other.id),
+      );
+
+      await expect(sut.listSessions(id)).resolves.toEqual([]);
+    });
+  });
+
+  describe('revokeSession', () => {
+    it('deve encerrar só a sessão informada', async () => {
+      const { id } = await createUser();
+      const recipeUserId = supertokens.convertToRecipeUserId(id);
+      const revoked = await Session.createNewSessionWithoutRequestResponse('public', recipeUserId);
+      const kept = await Session.createNewSessionWithoutRequestResponse('public', recipeUserId);
+
+      await sut.revokeSession(revoked.getHandle());
+
+      await expect(Session.getAllSessionHandlesForUser(id)).resolves.toEqual([kept.getHandle()]);
+    });
+
+    it('deve ignorar uma sessão que não existe', async () => {
+      await expect(sut.revokeSession(randomUUID())).resolves.toBeUndefined();
+    });
+  });
+
   it('deve remover o usuário e liberar o e-mail', async () => {
     const { id, email } = await createUser();
 

@@ -20,6 +20,7 @@ A autenticação é feita pelo **SuperTokens** self-hosted, integrado pelo SDK `
 - [Ciclo de vida das contas](#ciclo-de-vida-das-contas)
 - [Recuperação de senha](#recuperação-de-senha)
 - [Verificação de e-mail](#verificação-de-e-mail)
+- [Sessões ativas](#sessões-ativas)
 - [Formato dos erros](#formato-dos-erros)
 - [Fora do escopo](#fora-do-escopo)
 
@@ -86,18 +87,19 @@ O SDK (`supertokens-node` 24.0.3) e o Core (12.2.0) conversam pela versão 5.4 d
 
 Tudo o que toca o SDK fica no módulo [`auth`](../src/modules/auth) e no adapter de identidade do módulo `users`:
 
-| Peça                                                                                                     | Papel                                                                                                                           |
-| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| [`SuperTokensService`](../src/modules/auth/infra/supertokens/supertokens.service.ts)                     | Chama o `supertokens.init`. Roda no construtor, para o SDK já estar pronto quando o `configureApp` monta o CORS                 |
-| [`supertokens.config.ts`](../src/modules/auth/infra/supertokens/supertokens.config.ts)                   | Configuração do `init`: `apiBasePath: '/api/auth'` e as receitas EmailPassword, Session e UserRoles                             |
-| [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts)       | As regras do projeto aplicadas ao SuperTokens ([o que foi customizado](#o-que-foi-customizado))                                 |
-| [`SuperTokensMiddleware`](../src/modules/auth/presentation/middlewares/supertokens.middleware.ts)        | Atende as rotas nativas em `/api/auth`. As outras requisições seguem para os controllers                                        |
-| [`rate-limit.middleware.ts`](../src/modules/auth/presentation/middlewares/rate-limit.middleware.ts)      | Limita as requisições por IP nas rotas públicas, como o login e o cadastro ([limite por IP](#limite-de-requisições-por-ip))     |
-| [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts)                                     | Guard global: exige a sessão, carrega o usuário no MySQL e confere o papel                                                      |
-| [`SuperTokensExceptionFilter`](../src/modules/auth/presentation/filters/supertokens-exception.filter.ts) | Responde os erros do SDK (sessão ausente ou expirada) no formato que os SDKs de front esperam                                   |
-| [`configureApp`](../src/configure-app.ts)                                                                | Prefixo `/api`, CORS, `trust proxy` e limite por IP. O `main.ts` e os testes que sobem a API usam a mesma configuração          |
-| [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts)                        | Porta do módulo `users`: criar credencial, conferir e trocar senha, remover o usuário, revogar sessões, criar e atribuir papéis |
-| [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts)    | Implementação da porta com o SDK                                                                                                |
+| Peça                                                                                                     | Papel                                                                                                                                    |
+| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| [`SuperTokensService`](../src/modules/auth/infra/supertokens/supertokens.service.ts)                     | Chama o `supertokens.init`. Roda no construtor, para o SDK já estar pronto quando o `configureApp` monta o CORS                          |
+| [`supertokens.config.ts`](../src/modules/auth/infra/supertokens/supertokens.config.ts)                   | Configuração do `init`: `apiBasePath: '/api/auth'` e as receitas EmailPassword, Session e UserRoles                                      |
+| [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts)       | As regras do projeto aplicadas ao SuperTokens ([o que foi customizado](#o-que-foi-customizado))                                          |
+| [`session.overrides.ts`](../src/modules/auth/infra/supertokens/session.overrides.ts)                     | Guarda o IP e o user agent do login nos dados da sessão ([sessões ativas](#sessões-ativas))                                              |
+| [`SuperTokensMiddleware`](../src/modules/auth/presentation/middlewares/supertokens.middleware.ts)        | Atende as rotas nativas em `/api/auth`. As outras requisições seguem para os controllers                                                 |
+| [`rate-limit.middleware.ts`](../src/modules/auth/presentation/middlewares/rate-limit.middleware.ts)      | Limita as requisições por IP nas rotas públicas, como o login e o cadastro ([limite por IP](#limite-de-requisições-por-ip))              |
+| [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts)                                     | Guard global: exige a sessão, carrega o usuário no MySQL e confere o papel                                                               |
+| [`SuperTokensExceptionFilter`](../src/modules/auth/presentation/filters/supertokens-exception.filter.ts) | Responde os erros do SDK (sessão ausente ou expirada) no formato que os SDKs de front esperam                                            |
+| [`configureApp`](../src/configure-app.ts)                                                                | Prefixo `/api`, CORS, `trust proxy` e limite por IP. O `main.ts` e os testes que sobem a API usam a mesma configuração                   |
+| [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts)                        | Porta do módulo `users`: criar credencial, conferir e trocar senha, remover o usuário, listar e revogar sessões, criar e atribuir papéis |
+| [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts)    | Implementação da porta com o SDK                                                                                                         |
 
 O `AuthModule` importa o `UsersModule`, que exporta os casos de uso consultados pela autenticação: `CheckLoginLockUseCase`, `RecordLoginAttemptUseCase` e `AuthorizeSignInUseCase` (login), `GetAuthenticatedUserUseCase` (guard) e `CheckPasswordPolicyUseCase` (política de senha).
 
@@ -150,12 +152,13 @@ O `user` da resposta é o usuário do SuperTokens (id, e-mail e método de login
 
 ## O que foi customizado
 
-As regras do projeto entram no SuperTokens por quatro pontos, todos em [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts):
+As regras do projeto entram no SuperTokens por cinco pontos. Os quatro primeiros ficam em [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts), e o quinto, em [`session.overrides.ts`](../src/modules/auth/infra/supertokens/session.overrides.ts):
 
 1. **Quem pode entrar (RN09).** Depois de o SuperTokens conferir a senha, a função `signIn` consulta o usuário no MySQL (`AuthorizeSignInUseCase`). Se ele não estiver ACTIVE, tiver sido excluído ou não existir na aplicação, o resultado vira `WRONG_CREDENTIALS_ERROR`. Se puder entrar, o `last_login_at` é atualizado. O override fica na função `signIn`, e não na API `signInPOST`, porque a sessão só é criada depois dela: um login recusado não chega a gerar tokens.
 2. **Política de senha (RN08).** De 8 a 128 caracteres, com pelo menos uma letra e um número. A regra mora no value object [`Password`](../src/modules/users/domain/value-objects/password.ts), aplicado em todas as rotas que definem senha (cadastro do Client, aceite do convite, troca e redefinição de senha e seed). O validador do campo `password` no SuperTokens usa a mesma regra, para ela valer também nas rotas nativas, caso alguma seja reativada. O login não valida a política: uma senha antiga pode não seguir a regra atual.
 3. **Rotas desativadas (RN16).** As APIs de sign-up, de e-mail existente e de reset de senha são definidas como `undefined`. O middleware deixa de atendê-las, e a requisição cai no 404 do Nest. A [recuperação de senha](#recuperação-de-senha) tem rotas próprias.
 4. **Bloqueio por tentativas (RN17 e RN19).** A API `signInPOST` confere se o e-mail está bloqueado antes de a senha ser conferida e registra a tentativa depois ([bloqueio do login](#bloqueio-do-login-por-tentativas)). Este override fica na API, e não na função `signIn`, porque só a API tem a requisição (IP e user agent) e é chamada uma única vez por login, com conta ou não.
+5. **Origem do login (RN23).** A função `createNewSession`, da receita Session, guarda o IP e o user agent da requisição nos dados da sessão no Core (`sessionDataInDatabase`), para o usuário reconhecer cada sessão na [listagem](#sessões-ativas). O override fica na função porque toda sessão nova passa por ela, e a requisição vem do contexto que o SuperTokens monta ao atender a rota.
 
 O MFA fica fora desta sprint. O ponto de entrada da segunda etapa já existe: é o resultado do `AuthorizeSignInUseCase`, que hoje só diz se o login é permitido.
 
@@ -233,7 +236,7 @@ Na verificação, a API procura a sessão nos dois lugares, então as rotas da a
 
 **Validade e renovação.** O access token vale 15 minutos e o refresh token, 7 dias. Quando o access token expira, a API responde 401 com `{ "message": "try refresh token" }`, e o SDK de front chama o `POST /api/auth/session/refresh` e repete a requisição. O refresh token é **rotativo**: cada renovação devolve um par novo. Reusar um refresh token antigo depois que o sucessor dele já foi usado é tratado como roubo, e a sessão inteira é encerrada (401 com `{ "message": "token theft detected" }`, RN14). Antes disso, o reuso é aceito, para cobrir a resposta de uma renovação que se perdeu na rede.
 
-**Revogação.** Encerrar uma sessão (signout, troca de senha em outro aparelho, redefinição de senha ou roubo detectado) impede a renovação, mas o access token já emitido continua aceito até expirar, por no máximo 15 minutos: ele é verificado pela assinatura, sem consulta ao Core. O bloqueio por status é diferente. Como o guard confere o MySQL a cada requisição, o usuário inativado ou excluído perde o acesso na hora ([o que o AuthGuard faz](#o-que-o-authguard-faz-a-cada-requisição)).
+**Revogação.** Encerrar uma sessão (signout, encerramento pela [lista de sessões](#sessões-ativas), troca de senha em outro aparelho, redefinição de senha ou roubo detectado) impede a renovação, mas o access token já emitido continua aceito até expirar, por no máximo 15 minutos: ele é verificado pela assinatura, sem consulta ao Core. O bloqueio por status é diferente. Como o guard confere o MySQL a cada requisição, o usuário inativado ou excluído perde o acesso na hora ([o que o AuthGuard faz](#o-que-o-authguard-faz-a-cada-requisição)).
 
 **Modo header (app).** No refresh, o refresh token vai no lugar do access token:
 
@@ -302,6 +305,9 @@ O passo 2 custa uma consulta ao MySQL por requisição autenticada. É o preço 
 | `PATCH /api/users/me`                   |      ✔      |   ✔   |   ✔    |            |
 | `PATCH /api/users/me/password`          |      ✔      |   ✔   |   ✔    |            |
 | `POST /api/users/me/email-verification` |     ✔²      |  ✔²   |   ✔    |            |
+| `GET /api/users/me/sessions`            |      ✔      |   ✔   |   ✔    |            |
+| `DELETE /api/users/me/sessions/:id`     |      ✔      |   ✔   |   ✔    |            |
+| `DELETE /api/users/me/sessions`         |      ✔      |   ✔   |   ✔    |            |
 | `DELETE /api/users/me`                  |             |       |   ✔    |            |
 | `GET /api/clients`                      |      ✔      |   ✔   |        |            |
 | `GET /api/clients/:id`                  |      ✔      |   ✔   |        |            |
@@ -324,6 +330,7 @@ Sem sessão, as rotas protegidas respondem 401. Com um papel fora da lista, 403.
 - **Só o SUPER_ADMIN gerencia ADMINs** (RN04). Nas rotas de `/api/admins`, o id de um SuperAdm ou de um Client responde 404.
 - **ADMIN e SUPER_ADMIN não editam os dados do Client** (RN12): só listam, consultam, inativam e reativam. O CPF sai sempre mascarado (`***.456.789-**`), e o id de um ADMIN ou SuperAdm nas rotas de `/api/clients/:id` responde 404.
 - **Só o Client vê o próprio CPF completo**, no `GET /api/users/me`.
+- **Cada usuário só vê e encerra as próprias sessões** (RN23). Nas rotas de `/api/users/me/sessions`, o id da sessão de outro usuário responde 404.
 
 A matriz é testada rota a rota no [`permissions.e2e-spec.ts`](../test/permissions.e2e-spec.ts): sem sessão e com cada um dos três papéis.
 
@@ -536,6 +543,42 @@ sequenceDiagram
 - Uma falha no envio do e-mail não vira erro: a resposta é 204, o motivo fica no log, e o usuário pede o reenvio de novo depois do intervalo.
 
 O link aponta para a página `/verificar-email` do painel web ([FRONTEND.md](FRONTEND.md#verificação-de-e-mail)). Hoje, nenhuma rota exige o e-mail verificado. A primeira vai ser a ativação da verificação em duas etapas (RN24).
+
+## Sessões ativas
+
+O usuário vê onde a conta está aberta e encerra o acesso de outros aparelhos, por três rotas que valem para os três papéis (RN23). O alvo é sempre o usuário da sessão: ninguém vê nem encerra a sessão de outro usuário por elas.
+
+| Método   | Rota                         | Descrição                                                                |
+| -------- | ---------------------------- | ------------------------------------------------------------------------ |
+| `GET`    | `/api/users/me/sessions`     | Sessões abertas, da mais recente para a mais antiga, com a atual marcada |
+| `DELETE` | `/api/users/me/sessions/:id` | Encerra uma sessão do usuário. Responde 204                              |
+| `DELETE` | `/api/users/me/sessions`     | Encerra todas as sessões do usuário, menos a atual. Responde 204         |
+
+```json
+[
+  {
+    "id": "5a1c9f0e-3b7d-4c2a-9e41-0d6f8b2a7c13",
+    "createdAt": "2026-10-06T12:00:00.000Z",
+    "expiresAt": "2026-10-13T12:00:00.000Z",
+    "ipAddress": "203.0.113.10",
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64)",
+    "current": true
+  }
+]
+```
+
+- **De onde vêm os dados.** As sessões ficam só no SuperTokens Core: não há tabela no MySQL. O `id` é o session handle do SuperTokens, que não muda quando a sessão é renovada. O `createdAt` é a data do login, e o `expiresAt`, quando a sessão deixa de ser renovada. Cada renovação adia essa data.
+- **Origem do login.** O `ipAddress` e o `userAgent` são os da requisição de login, gravados pelo override de `createNewSession` nos dados da sessão no Core (`sessionDataInDatabase`). Eles não vão para o access token e não mudam na renovação. O IP é o `request.ip` do Express, que segue o `TRUST_PROXY` ([limite por IP](#limite-de-requisições-por-ip)), e o user agent é cortado em 255 caracteres.
+- **Sessões sem origem.** As sessões abertas antes de a origem ser guardada aparecem na lista com `ipAddress` e `userAgent` nulos. O login feito sem o header `User-Agent` fica só sem o user agent.
+- **A sessão atual.** Só a sessão da requisição vem com `current: true`. A lista não tem paginação.
+- **Encerrar uma sessão.** O id é o da listagem. O id da sessão de outro usuário, de uma sessão já encerrada ou que não existe responde o mesmo 404, para não revelar que a sessão de outra pessoa existe. O id da sessão atual também é aceito, mas, para sair do aparelho em uso, o front usa o signout, que limpa os tokens.
+- **Encerrar as outras.** Mantém só a sessão da requisição e responde 204 mesmo quando ela é a única.
+- **Efeito.** A sessão encerrada não renova mais o token. O access token já emitido continua aceito até expirar, por no máximo 15 minutos, como no signout ([sessão: cookie ou header](#sessão-cookie-ou-header)). Nesse intervalo, a sessão encerrada ainda lista as sessões, e nenhuma vem marcada como a atual.
+- **Onde ficam as regras.** No módulo `users`: os casos de uso `ListSessionsUseCase`, `RevokeSessionUseCase` e `RevokeOtherSessionsUseCase` usam a porta `IdentityProvider` (`listSessions`, `revokeSession` e `revokeOtherSessions`). O `revokeSession` da porta encerra a sessão de qualquer usuário, então o caso de uso confere antes se ela é do usuário logado.
+
+Um limite conhecido:
+
+- **Uma consulta ao Core por sessão.** A listagem busca os ids das sessões e, depois, os dados de cada uma. Com poucas sessões por usuário, o custo é pequeno.
 
 ## Formato dos erros
 
