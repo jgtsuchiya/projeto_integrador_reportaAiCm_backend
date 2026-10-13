@@ -38,7 +38,7 @@ export class SuperTokensService {
         {
           isLoginLocked: async (email) => (await checkLoginLock.execute({ email })).locked,
           recordLoginAttempt: (attempt) => recordLoginAttempt.execute(attempt),
-          authorizeSignIn: async (userId) => (await authorizeSignIn.execute({ userId })).allowed,
+          authorizeSignIn: (userId) => authorizeSignIn.execute({ userId }),
           checkPasswordPolicy: (password) => checkPasswordPolicy.execute(password),
         },
       ),

@@ -135,7 +135,7 @@ curl http://localhost:3000/api/users/me -H 'Authorization: Bearer <valor do st-a
 # {"id":"...","role":"SUPER_ADMIN","name":"Super Admin","email":"superadmin@reportaai.local","status":"ACTIVE",...}
 ```
 
-Para testar as outras rotas, abra a coleção [docs/api.http](docs/api.http) no VS Code, com a extensão REST Client: ela traz o mesmo login e todas as requisições na ordem de um fluxo completo (convite de ADM, cadastro de Client, verificação de e-mail, recuperação de senha, gestão e perfil).
+Para testar as outras rotas, abra a coleção [docs/api.http](docs/api.http) no VS Code, com a extensão REST Client: ela traz o mesmo login e todas as requisições na ordem de um fluxo completo (convite de ADM, cadastro de Client, verificação de e-mail, recuperação de senha, gestão, perfil e segunda etapa do login).
 
 ### Problemas comuns
 
@@ -166,17 +166,18 @@ A API tem três papéis de acesso, e o login é o mesmo para todos (e-mail e sen
 
 A autenticação é feita pelo **SuperTokens**: ele guarda as credenciais e as sessões, e o MySQL guarda os dados dos usuários, o papel e o status de cada um. Toda rota exige sessão, exceto as públicas.
 
-| Grupo                 | Rotas                                                                                                                  | Quem acessa                                                                |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Sessão                | `POST /api/auth/signin`, `POST /api/auth/session/refresh` e `POST /api/auth/signout`                                   | Público (o signout exige sessão)                                           |
-| Perfil                | `GET` e `PATCH /api/users/me`, `PATCH /api/users/me/password` e `DELETE /api/users/me`                                 | Qualquer usuário logado (a exclusão, só o Client)                          |
-| Sessões abertas       | `GET /api/users/me/sessions`, `DELETE /api/users/me/sessions/:id` e `DELETE /api/users/me/sessions`                    | Qualquer usuário logado, só nas próprias sessões                           |
-| Clients               | `POST /api/clients`                                                                                                    | Público (autocadastro)                                                     |
-| Clients (painel)      | `GET /api/clients`, `GET /api/clients/:id` e `PATCH /api/clients/:id/status`                                           | `ADMIN` e `SUPER_ADMIN`                                                    |
-| ADMs                  | `POST`, `GET`, `PATCH` e `DELETE` em `/api/admins`, `PATCH /api/admins/:id/status` e `POST /api/admins/:id/invitation` | `SUPER_ADMIN`                                                              |
-| Convite               | `POST /api/invitations/accept`                                                                                         | Público (o ADM ainda não tem senha)                                        |
-| Recuperação de senha  | `POST /api/password-resets` e `POST /api/password-resets/confirm`                                                      | Público (quem esqueceu a senha não tem sessão)                             |
-| Verificação de e-mail | `POST /api/email-verifications/confirm` e `POST /api/users/me/email-verification`                                      | A confirmação é pública (o link abre no navegador). O reenvio exige sessão |
+| Grupo                  | Rotas                                                                                                                  | Quem acessa                                                                |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Sessão                 | `POST /api/auth/signin`, `POST /api/auth/session/refresh` e `POST /api/auth/signout`                                   | Público (o signout exige sessão)                                           |
+| Perfil                 | `GET` e `PATCH /api/users/me`, `PATCH /api/users/me/password` e `DELETE /api/users/me`                                 | Qualquer usuário logado (a exclusão, só o Client)                          |
+| Sessões abertas        | `GET /api/users/me/sessions`, `DELETE /api/users/me/sessions/:id` e `DELETE /api/users/me/sessions`                    | Qualquer usuário logado, só nas próprias sessões                           |
+| Clients                | `POST /api/clients`                                                                                                    | Público (autocadastro)                                                     |
+| Clients (painel)       | `GET /api/clients`, `GET /api/clients/:id` e `PATCH /api/clients/:id/status`                                           | `ADMIN` e `SUPER_ADMIN`                                                    |
+| ADMs                   | `POST`, `GET`, `PATCH` e `DELETE` em `/api/admins`, `PATCH /api/admins/:id/status` e `POST /api/admins/:id/invitation` | `SUPER_ADMIN`                                                              |
+| Convite                | `POST /api/invitations/accept`                                                                                         | Público (o ADM ainda não tem senha)                                        |
+| Recuperação de senha   | `POST /api/password-resets` e `POST /api/password-resets/confirm`                                                      | Público (quem esqueceu a senha não tem sessão)                             |
+| Verificação de e-mail  | `POST /api/email-verifications/confirm` e `POST /api/users/me/email-verification`                                      | A confirmação é pública (o link abre no navegador). O reenvio exige sessão |
+| Segunda etapa do login | `POST /api/mfa/verify` e `POST /api/mfa/code`                                                                          | Só a sessão pendente, de quem tem a verificação em duas etapas ativa       |
 
 Onde continuar:
 
@@ -206,6 +207,7 @@ O modelo está em [.env.example](.env.example). As variáveis são validadas qua
 | `INVITATION_EXPIRES_IN_HOURS`         | não         | `48`          | Validade, em horas, do link de convite de ADM                                                                                        |
 | `PASSWORD_RESET_EXPIRES_IN_MINUTES`   | não         | `60`          | Validade, em minutos, do link de redefinição de senha ([detalhes](docs/AUTH.md#recuperação-de-senha))                                |
 | `EMAIL_VERIFICATION_EXPIRES_IN_HOURS` | não         | `24`          | Validade, em horas, do link de verificação de e-mail do Client ([detalhes](docs/AUTH.md#verificação-de-e-mail))                      |
+| `MFA_CODE_EXPIRES_IN_MINUTES`         | não         | `10`          | Validade, em minutos, do código da segunda etapa do login ([detalhes](docs/AUTH.md#verificação-em-duas-etapas))                      |
 | `LOGIN_MAX_FAILED_ATTEMPTS`           | não         | `5`           | Falhas de login por e-mail que causam o bloqueio ([detalhes](docs/AUTH.md#bloqueio-do-login-por-tentativas))                         |
 | `LOGIN_LOCK_WINDOW_MINUTES`           | não         | `15`          | Janela, em minutos, em que as falhas de login são contadas                                                                           |
 | `RATE_LIMIT_MAX_REQUESTS`             | não         | `20`          | Requisições por IP em cada rota limitada, por janela ([detalhes](docs/AUTH.md#limite-de-requisições-por-ip))                         |

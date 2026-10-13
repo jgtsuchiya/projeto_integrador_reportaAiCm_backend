@@ -1,3 +1,4 @@
+import { RecipeUserId } from 'supertokens-node';
 import type { APIInterface, RecipeInterface } from 'supertokens-node/recipe/emailpassword/types';
 
 import {
@@ -6,7 +7,9 @@ import {
   overrideEmailPasswordApis,
   overrideEmailPasswordFunctions,
   SignInAttempt,
+  SignInAuthorization,
 } from './email-password.overrides';
+import { SecondFactorClaim } from './second-factor.claim';
 
 type SignInInput = Parameters<RecipeInterface['signIn']>[0];
 type SignInResult = Awaited<ReturnType<RecipeInterface['signIn']>>;
@@ -192,19 +195,25 @@ describe('overrideEmailPasswordApis', () => {
 });
 
 describe('overrideEmailPasswordFunctions', () => {
-  const input = { email: 'maria@example.com', password: 'senha-forte-1' } as SignInInput;
+  let input: SignInInput;
   const okResult = {
     status: 'OK',
     user: { id: USER_ID },
     recipeUserId: {},
   } as unknown as SignInResult;
   let original: jest.Mocked<Pick<RecipeInterface, 'signIn' | 'verifyCredentials'>>;
-  let authorizeSignIn: jest.Mock<Promise<boolean>, [string]>;
+  let authorizeSignIn: jest.Mock<Promise<SignInAuthorization>, [string]>;
   let sut: RecipeInterface;
 
   beforeEach(() => {
+    // O contexto é um objeto novo a cada requisição do login.
+    input = {
+      email: 'maria@example.com',
+      password: 'senha-forte-1',
+      userContext: {},
+    } as SignInInput;
     original = { signIn: jest.fn(), verifyCredentials: jest.fn() };
-    authorizeSignIn = jest.fn<Promise<boolean>, [string]>();
+    authorizeSignIn = jest.fn<Promise<SignInAuthorization>, [string]>();
     sut = overrideEmailPasswordFunctions({ authorizeSignIn })(
       original as unknown as RecipeInterface,
     );
@@ -214,9 +223,20 @@ describe('overrideEmailPasswordFunctions', () => {
     expect(sut.verifyCredentials).toBe(original.verifyCredentials);
   });
 
+  /** Valor com que a claim da segunda etapa nasce numa sessão criada com o contexto do login. */
+  function claimValueAtSessionCreation(): unknown {
+    return SecondFactorClaim.fetchValue(
+      USER_ID,
+      new RecipeUserId(USER_ID),
+      'public',
+      {},
+      input.userContext,
+    );
+  }
+
   it('deve concluir o login quando a aplicação autoriza o usuário', async () => {
     original.signIn.mockResolvedValue(okResult);
-    authorizeSignIn.mockResolvedValue(true);
+    authorizeSignIn.mockResolvedValue({ allowed: true, secondFactorRequired: false });
 
     const result = await sut.signIn(input);
 
@@ -225,13 +245,33 @@ describe('overrideEmailPasswordFunctions', () => {
     expect(authorizeSignIn).toHaveBeenCalledWith(USER_ID);
   });
 
+  it('deve deixar no contexto que a sessão nasce completa quando o login não pede a segunda etapa', async () => {
+    original.signIn.mockResolvedValue(okResult);
+    authorizeSignIn.mockResolvedValue({ allowed: true, secondFactorRequired: false });
+
+    await sut.signIn(input);
+
+    expect(claimValueAtSessionCreation()).toBe(true);
+  });
+
+  it('deve deixar no contexto que a sessão nasce pendente quando o login pede a segunda etapa (RN25)', async () => {
+    original.signIn.mockResolvedValue(okResult);
+    authorizeSignIn.mockResolvedValue({ allowed: true, secondFactorRequired: true });
+
+    const result = await sut.signIn(input);
+
+    expect(result).toBe(okResult);
+    expect(claimValueAtSessionCreation()).toBe(false);
+  });
+
   it('deve responder como senha incorreta quando a aplicação recusa o usuário', async () => {
     original.signIn.mockResolvedValue(okResult);
-    authorizeSignIn.mockResolvedValue(false);
+    authorizeSignIn.mockResolvedValue({ allowed: false });
 
     const result = await sut.signIn(input);
 
     expect(result).toEqual({ status: 'WRONG_CREDENTIALS_ERROR' });
+    expect(claimValueAtSessionCreation()).toBeUndefined();
   });
 
   it('não deve consultar a aplicação quando a senha está incorreta', async () => {

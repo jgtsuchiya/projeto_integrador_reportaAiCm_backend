@@ -9,6 +9,7 @@ import request from 'supertest';
 import { DataSource, In, IsNull, Not } from 'typeorm';
 
 import { Env, envSchema } from '@config/env.schema';
+import { LOGIN_CODE_MAIL_SUBJECT } from '@modules/users/application/services/login-code.service';
 import {
   CreateSuperAdminInput,
   CreateSuperAdminOutput,
@@ -190,6 +191,39 @@ export class E2eApp {
     }
 
     return { ...account, ...tokens };
+  }
+
+  /**
+   * Abre uma sessão pendente: a senha já foi conferida, e o código da segunda etapa ainda não
+   * (RN25). A verificação em duas etapas fica ligada só durante o login, direto no banco (a
+   * rota de ativação ainda não existe), para os outros logins da conta continuarem completos.
+   */
+  async logInPending(account: Account): Promise<Actor> {
+    const repository = this.dataSource.getRepository(UserOrmEntity);
+    await repository.update({ id: account.id }, { mfaEnabled: true });
+
+    try {
+      return await this.logIn(account);
+    } finally {
+      await repository.update({ id: account.id }, { mfaEnabled: false });
+    }
+  }
+
+  /**
+   * Código da segunda etapa do último e-mail enviado ao endereço. Um login feito menos de um
+   * minuto depois de outro não envia um código novo: vale o do e-mail anterior.
+   */
+  lastLoginCode(email: string): string {
+    const message = this.mailSender.messages.findLast(
+      ({ to, subject }) => to === email && subject === LOGIN_CODE_MAIL_SUBJECT,
+    );
+    const match = /^\d{6}$/m.exec(message?.text ?? '');
+
+    if (!match) {
+      throw new Error(`Nenhum código da segunda etapa foi enviado para ${email}.`);
+    }
+
+    return match[0];
   }
 
   /** Id da sessão dos tokens, como o `GET /api/users/me/sessions` a identifica. */

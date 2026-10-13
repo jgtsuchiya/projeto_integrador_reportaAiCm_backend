@@ -15,8 +15,19 @@ export abstract class UserTokenRepository {
    * É assim que o reenvio do convite invalida os links antigos (RN06).
    */
   abstract replace(token: UserToken): Promise<void>;
-  /** Grava só o contador de erros do código (`attempts`), depois de um `registerFailedAttempt`. */
-  abstract saveAttempts(token: UserToken): Promise<void>;
+  /**
+   * Conta no banco o erro registrado por `registerFailedAttempt`. O contador (`attempts`) é
+   * somado no banco, até o limite, em vez de receber o valor da entidade: assim, duas
+   * conferências simultâneas do mesmo código contam dois erros, e uma não apaga a da outra.
+   */
+  abstract saveFailedAttempt(token: UserToken): Promise<void>;
+  /**
+   * Grava o uso do código (`used_at`), feito por `use()`, só se ele ainda vale no banco: não
+   * foi usado, não atingiu o limite de erros nem foi substituído desde que foi lido. Retorna
+   * false quando não vale mais, e nada é gravado. É o que impede o código de ser usado duas
+   * vezes, ou de ser aceito no meio de uma rajada de erros simultâneos.
+   */
+  abstract consume(token: UserToken): Promise<boolean>;
   /** Remove todos os tokens do usuário, como o convite pendente de um ADMIN excluído. */
   abstract deleteByUserId(userId: string): Promise<void>;
 }

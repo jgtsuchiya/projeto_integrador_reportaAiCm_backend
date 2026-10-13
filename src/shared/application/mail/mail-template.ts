@@ -20,6 +20,8 @@ export interface MailTemplateContent {
   title: string;
   /** Texto puro: o HTML é escapado, então dados do usuário (ex.: o nome) podem entrar direto. */
   paragraphs: readonly string[];
+  /** Código para o usuário digitar (ex.: o da segunda etapa do login), em destaque. */
+  code?: string;
   /** Botão com link (ex.: o do convite). No texto puro, vira o link por extenso. */
   action?: MailTemplateAction;
   /** Observação em letra menor, depois do botão (ex.: a validade do link). */
@@ -38,9 +40,12 @@ export function renderMailTemplate(content: MailTemplateContent): MailBody {
   return { html: renderHtml(content), text: renderText(content) };
 }
 
-function renderHtml({ title, paragraphs, action, note }: MailTemplateContent): string {
+function renderHtml({ title, paragraphs, code, action, note }: MailTemplateContent): string {
   const body = [
     ...paragraphs.map((paragraph) => `<p style="margin:0 0 16px">${escapeHtml(paragraph)}</p>`),
+    code
+      ? `<p style="margin:24px 0;font-size:32px;font-weight:bold;letter-spacing:6px">${escapeHtml(code)}</p>`
+      : '',
     action ? renderActionHtml(action) : '',
     note ? `<p style="margin:0 0 16px;font-size:13px;color:#52606d">${escapeHtml(note)}</p>` : '',
   ].join('\n');
@@ -71,8 +76,8 @@ function renderActionHtml(action: MailTemplateAction): string {
 <p style="margin:0 0 16px;font-size:13px;color:#52606d">Se o botão não funcionar, copie e cole este endereço no navegador:<br><a href="${url}" style="color:#1a56db;word-break:break-all">${url}</a></p>`;
 }
 
-function renderText({ title, paragraphs, action, note }: MailTemplateContent): string {
-  return [title, ...paragraphs, action && `${action.label}: ${action.url}`, note, FOOTER]
+function renderText({ title, paragraphs, code, action, note }: MailTemplateContent): string {
+  return [title, ...paragraphs, code, action && `${action.label}: ${action.url}`, note, FOOTER]
     .filter(Boolean)
     .join('\n\n');
 }

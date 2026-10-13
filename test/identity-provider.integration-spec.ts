@@ -25,7 +25,7 @@ describe('SuperTokensIdentityProvider (integração)', () => {
       buildSuperTokensConfig(env, {
         isLoginLocked: async () => false,
         recordLoginAttempt: async () => {},
-        authorizeSignIn: async () => true,
+        authorizeSignIn: async () => ({ allowed: true, secondFactorRequired: false }),
         checkPasswordPolicy: async () => null,
       }),
     );

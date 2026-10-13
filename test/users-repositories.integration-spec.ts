@@ -563,8 +563,8 @@ describe('Repositórios de usuários (integração)', () => {
       }
     });
 
-    describe('saveAttempts', () => {
-      it('deve gravar só o contador de erros do token', async () => {
+    describe('saveFailedAttempt', () => {
+      it('deve somar um erro ao contador do token, sem mexer no resto', async () => {
         const user = await saved(buildClient());
         const other = await saved(buildClient());
         const { token } = UserToken.issueCode({ userId: user.id, validForMinutes: 10 });
@@ -572,9 +572,10 @@ describe('Repositórios de usuários (integração)', () => {
         await tokens.replace(token);
         await tokens.replace(untouched);
 
-        token.registerFailedAttempt();
-        token.registerFailedAttempt();
-        await tokens.saveAttempts(token);
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          token.registerFailedAttempt();
+          await tokens.saveFailedAttempt(token);
+        }
 
         await expect(tokens.findLatest(user.id, UserTokenType.LOGIN_CODE)).resolves.toMatchObject({
           attempts: 2,
@@ -586,6 +587,35 @@ describe('Repositórios de usuários (integração)', () => {
         await expect(tokens.findLatest(other.id, UserTokenType.LOGIN_CODE)).resolves.toMatchObject({
           attempts: 0,
         });
+      });
+
+      it('deve contar os erros de duas conferências que leram o mesmo contador', async () => {
+        const user = await saved(buildClient());
+        await tokens.replace(buildCode(user.id, '123456'));
+        // Como duas requisições simultâneas: as duas leem o contador em 0 antes de gravar.
+        const first = await findCode(user.id);
+        const second = await findCode(user.id);
+
+        first.registerFailedAttempt();
+        await tokens.saveFailedAttempt(first);
+        second.registerFailedAttempt();
+        await tokens.saveFailedAttempt(second);
+
+        expect(first.attempts).toBe(1);
+        expect(second.attempts).toBe(1);
+        await expect(findCode(user.id)).resolves.toMatchObject({ attempts: 2 });
+      });
+
+      it('deve parar de somar no limite de erros', async () => {
+        const user = await saved(buildClient());
+        const token = buildCode(user.id, '123456', { attempts: 4 });
+        await users.saveWithToken(user, token);
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          await tokens.saveFailedAttempt(token);
+        }
+
+        await expect(findCode(user.id)).resolves.toMatchObject({ attempts: 5 });
       });
 
       it('deve recusar o código certo depois de 5 erros gravados (RN25)', async () => {
@@ -600,13 +630,73 @@ describe('Repositórios de usuários (integração)', () => {
           }
 
           current.registerFailedAttempt();
-          await tokens.saveAttempts(current);
+          await tokens.saveFailedAttempt(current);
         }
 
         const found = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
         expect(found?.attempts).toBe(5);
         expect(found?.matchesCode(secret)).toBe(true);
         expect(found?.isUsable()).toBe(false);
+      });
+    });
+
+    describe('consume', () => {
+      it('deve gravar o uso do código que ainda vale', async () => {
+        const user = await saved(buildClient());
+        const other = await saved(buildClient());
+        await tokens.replace(buildCode(user.id, '123456', { attempts: 4 }));
+        await tokens.replace(buildCode(other.id, '123456'));
+        const token = await findCode(user.id);
+        token.use();
+
+        await expect(tokens.consume(token)).resolves.toBe(true);
+
+        await expect(findCode(user.id)).resolves.toMatchObject({
+          usedAt: token.usedAt,
+          attempts: 4,
+        });
+        await expect(findCode(other.id)).resolves.toMatchObject({ usedAt: null });
+      });
+
+      it('não deve gravar o uso de um código que outra conferência já usou', async () => {
+        const user = await saved(buildClient());
+        await tokens.replace(buildCode(user.id, '123456'));
+        // Como duas requisições simultâneas com o código certo: as duas o leem sem uso.
+        const first = await findCode(user.id);
+        const second = await findCode(user.id);
+        first.use(new Date('2026-10-06T12:00:00.000Z'));
+        second.use(new Date('2026-10-06T12:00:01.000Z'));
+
+        await expect(tokens.consume(first)).resolves.toBe(true);
+        await expect(tokens.consume(second)).resolves.toBe(false);
+
+        await expect(findCode(user.id)).resolves.toMatchObject({ usedAt: first.usedAt });
+      });
+
+      it('não deve gravar o uso do código que atingiu o limite de erros depois de lido', async () => {
+        const user = await saved(buildClient());
+        await tokens.replace(buildCode(user.id, '123456', { attempts: 4 }));
+        const right = await findCode(user.id);
+        const wrong = await findCode(user.id);
+        wrong.registerFailedAttempt();
+        await tokens.saveFailedAttempt(wrong);
+        right.use();
+
+        await expect(tokens.consume(right)).resolves.toBe(false);
+
+        await expect(findCode(user.id)).resolves.toMatchObject({ usedAt: null, attempts: 5 });
+      });
+
+      it('não deve gravar o uso de um código substituído por um reenvio', async () => {
+        const user = await saved(buildClient());
+        await tokens.replace(buildCode(user.id, '123456'));
+        const replaced = await findCode(user.id);
+        await tokens.replace(buildCode(user.id, '654321'));
+        replaced.use();
+
+        await expect(tokens.consume(replaced)).resolves.toBe(false);
+
+        await expect(findCode(user.id)).resolves.toMatchObject({ usedAt: null });
       });
     });
   });
@@ -783,6 +873,17 @@ describe('Repositórios de usuários (integração)', () => {
       await expect(profiles.existsByCpf(Cpf.create('52998224725'))).resolves.toBe(false);
     });
   });
+
+  /** Lê do banco o código vigente do usuário, numa entidade nova a cada chamada. */
+  async function findCode(userId: string): Promise<UserToken> {
+    const token = await tokens.findLatest(userId, UserTokenType.LOGIN_CODE);
+
+    if (!token) {
+      throw new Error('O usuário não tem código da segunda etapa.');
+    }
+
+    return token;
+  }
 
   /** Código da segunda etapa com o valor escolhido pelo teste (o `issueCode` sorteia). */
   function buildCode(

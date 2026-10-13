@@ -83,6 +83,8 @@ expect(mailSender.messages).toHaveLength(1);
 
 Os fakes de um único módulo ficam em `src/modules/<feature>/testing`, também fora do build. No módulo `users`, o [`in-memory-users.ts`](../src/modules/users/testing/in-memory-users.ts) traz os repositórios em memória (que compartilham um `InMemoryUsersDatabase`, como as tabelas do MySQL) e o `FakeIdentityProvider`, no lugar do SuperTokens. As sessões do fake são os handles de cada usuário, que o teste cria direto em `sessions`. O teste que confere os dados de uma sessão (datas, IP e user agent) a abre com o `openSession`.
 
+Os repositórios em memória guardam as entidades por referência, então não reproduzem duas requisições lendo o mesmo dado ao mesmo tempo. O que depende disso, como o limite de erros do código da segunda etapa (`saveFailedAttempt` e `consume`), é testado contra o MySQL, no `test/users-repositories.integration-spec.ts` e no `test/mfa.integration-spec.ts`.
+
 ## Testes que fazem login
 
 Todo login pela API grava uma linha em `login_attempts`, e 5 falhas seguidas para o mesmo e-mail o bloqueiam por 15 minutos ([AUTH.md](AUTH.md#bloqueio-do-login-por-tentativas)). Como o banco de teste é o mesmo entre uma execução e outra, o teste de integração que faz login:
@@ -117,18 +119,28 @@ A mesma conta recebe no máximo um e-mail do mesmo tipo por minuto, e o cadastro
 
 O teste que cadastra um Client pela API sobe a aplicação com o `FakeMailSender`, mesmo sem conferir o e-mail: sem ele, cada cadastro enviaria uma mensagem de verdade ao SMTP.
 
-Para conferir que um segredo (a senha ou o token de um link) não vai para o log, suba a aplicação com o [`MemoryLogger`](../test/support/memory-logger.ts), que guarda as linhas em memória: `createNestApplication({ logger })`.
+Para conferir que um segredo (a senha, o token de um link ou o código da segunda etapa) não vai para o log, suba a aplicação com o [`MemoryLogger`](../test/support/memory-logger.ts), que guarda as linhas em memória: `createNestApplication({ logger })`.
+
+## Testes da segunda etapa do login
+
+O código da segunda etapa também só existe no e-mail. No texto da mensagem, ele fica sozinho numa linha, e o teste o lê com `/^\d{6}$/m` ([AUTH.md](AUTH.md#verificação-em-duas-etapas)).
+
+- **Ligar a verificação em duas etapas.** A rota de ativação ainda não existe, então o teste liga o `users.mfa_enabled` direto no banco. O `test/mfa.integration-spec.ts` cria o usuário já com ele ligado. Nos e2e, o `e2e.logInPending(account)` o liga só durante o login e devolve os tokens da sessão pendente: os outros logins da conta continuam completos.
+- **Ler o código.** Nos e2e, com o `e2e.lastLoginCode(email)`. Um login feito menos de 1 minuto depois de outro não envia um código novo, e o helper devolve o do e-mail anterior, que continua valendo.
+- **Código sorteado.** O teste que precisa de um código conhecido (ex.: o código de outra conta, que tem de ser diferente) troca o `token_hash` no banco, como o `setCode` do `test/mfa.integration-spec.ts`. Comparar dois códigos sorteados falharia uma vez em um milhão.
+- **Intervalo de 1 minuto.** Vale o mesmo recuo do `created_at` dos links: o login já envia um código, então o reenvio logo em seguida responde 422.
+- **Estado da sessão.** A claim `mfa-verified` vai no payload do access token, que é um JWT: o teste de integração a lê decodificando o token, sem chamar a API.
 
 ## Testes e2e
 
 Os e2e sobem a API inteira e a chamam por HTTP com o **supertest**, contra o MySQL de teste e o SuperTokens Core. O único fake é o `FakeMailSender`, no lugar do SMTP. Eles cobrem os fluxos de ponta a ponta e as permissões. Os detalhes de cada rota (validação, erros e casos de borda) ficam nos testes de integração.
 
-| Arquivo                         | O que cobre                                                                                  |
-| ------------------------------- | -------------------------------------------------------------------------------------------- |
-| `test/client-flow.e2e-spec.ts`  | Fluxo do Client: cadastro → login → `/users/me` → refresh → signout                          |
-| `test/admin-flow.e2e-spec.ts`   | Fluxo do ADM: seed do SuperAdm → convite → aceite → login                                    |
-| `test/inactivation.e2e-spec.ts` | O usuário inativado perde o acesso na requisição seguinte                                    |
-| `test/permissions.e2e-spec.ts`  | Matriz de permissões: cada rota protegida sem sessão (401) e com cada papel (sucesso ou 403) |
+| Arquivo                         | O que cobre                                                                                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/client-flow.e2e-spec.ts`  | Fluxo do Client: cadastro → login → `/users/me` → refresh → signout                                                                         |
+| `test/admin-flow.e2e-spec.ts`   | Fluxo do ADM: seed do SuperAdm → convite → aceite → login                                                                                   |
+| `test/inactivation.e2e-spec.ts` | O usuário inativado perde o acesso na requisição seguinte                                                                                   |
+| `test/permissions.e2e-spec.ts`  | Matriz de permissões: cada rota protegida sem sessão (401), com cada papel (sucesso ou 403) e com uma sessão pendente (403 `invalid claim`) |
 
 ```bash
 npm run db:up
@@ -167,7 +179,8 @@ describe('Perfil (e2e)', () => {
 - **Contas:** são criadas pelos mesmos caminhos da aplicação: `seedSuperAdmin()` (o caso de uso do `npm run seed`), `createAdmin()` (convite e aceite) e `registerClient()` (autocadastro). É o seed que cria os papéis no SuperTokens, então ele vem antes de qualquer cadastro, como em produção.
 - **Login:** no modo header (`st-auth-mode: header`), como o app mobile. O access token vai no `Authorization: Bearer`.
 - **Sessões:** o `currentSessionId(tokens)` devolve o id da sessão dos tokens, como o `GET /api/users/me/sessions` a identifica. O teste que encerra uma sessão abre uma só para isso, com o `logIn`: a sessão que os outros testes compartilham continua valendo.
-- **Rota nova:** toda rota protegida entra na matriz do `permissions.e2e-spec.ts`, com os papéis permitidos e o status de sucesso. Quando um papel permitido para numa regra da própria rota, o status dela vai em `refused`: é o caso do reenvio da verificação de e-mail, que responde 422 ao ADM e ao SuperAdm, já verificados.
+- **Sessão pendente:** o `logInPending(account)` abre a sessão de quem já passou pela senha e ainda não conferiu o código da segunda etapa, e o `lastLoginCode(email)` lê o código do e-mail ([testes da segunda etapa](#testes-da-segunda-etapa-do-login)).
+- **Rota nova:** toda rota protegida entra na matriz do `permissions.e2e-spec.ts`, com os papéis permitidos e o status de sucesso. Quando um papel permitido para numa regra da própria rota, o status dela vai em `refused`: é o caso do reenvio da verificação de e-mail, que responde 422 ao ADM e ao SuperAdm, já verificados. A matriz também chama cada rota com uma sessão pendente e espera o 403 `invalid claim`. Só as rotas marcadas com `acceptsPending` ficam de fora: o signout e as de `/api/mfa`.
 
 ## Comandos
 

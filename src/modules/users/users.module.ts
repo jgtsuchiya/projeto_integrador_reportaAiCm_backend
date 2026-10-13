@@ -15,6 +15,7 @@ import {
   EmailVerificationConfig,
   EmailVerificationService,
 } from './application/services/email-verification.service';
+import { LoginCodeConfig, LoginCodeService } from './application/services/login-code.service';
 import { LoginLockConfig, LoginLockService } from './application/services/login-lock.service';
 import {
   PasswordResetConfig,
@@ -45,12 +46,14 @@ import { RegisterClientUseCase } from './application/use-cases/register-client.u
 import { RequestPasswordResetUseCase } from './application/use-cases/request-password-reset.use-case';
 import { ResendAdminInvitationUseCase } from './application/use-cases/resend-admin-invitation.use-case';
 import { ResendEmailVerificationUseCase } from './application/use-cases/resend-email-verification.use-case';
+import { ResendLoginCodeUseCase } from './application/use-cases/resend-login-code.use-case';
 import { ResetPasswordUseCase } from './application/use-cases/reset-password.use-case';
 import { RevokeOtherSessionsUseCase } from './application/use-cases/revoke-other-sessions.use-case';
 import { RevokeSessionUseCase } from './application/use-cases/revoke-session.use-case';
 import { UpdateAdminUseCase } from './application/use-cases/update-admin.use-case';
 import { UpdateProfileUseCase } from './application/use-cases/update-profile.use-case';
 import { VerifyEmailUseCase } from './application/use-cases/verify-email.use-case';
+import { VerifyLoginCodeUseCase } from './application/use-cases/verify-login-code.use-case';
 import { ClientProfileRepository } from './domain/repositories/client-profile.repository';
 import { LoginAttemptRepository } from './domain/repositories/login-attempt.repository';
 import { UserRepository } from './domain/repositories/user.repository';
@@ -83,8 +86,8 @@ import { SessionsController } from './presentation/controllers/sessions.controll
       UserTokenOrmEntity,
       LoginAttemptOrmEntity,
     ]),
-    // E-mails da conta: convite do ADMIN, redefinição de senha, aviso de troca de senha e
-    // verificação de e-mail.
+    // E-mails da conta: convite do ADMIN, redefinição de senha, aviso de troca de senha,
+    // verificação de e-mail e código da segunda etapa do login.
     MailModule,
     // O pedido de redefinição de senha responde antes de buscar a conta e enviar o e-mail.
     BackgroundTasksModule,
@@ -128,6 +131,9 @@ import { SessionsController } from './presentation/controllers/sessions.controll
     RevokeSessionUseCase,
     RevokeOtherSessionsUseCase,
     AuthorizeSignInUseCase,
+    VerifyLoginCodeUseCase,
+    ResendLoginCodeUseCase,
+    LoginCodeService,
     GetAuthenticatedUserUseCase,
     CheckPasswordPolicyUseCase,
     LoginLockService,
@@ -169,6 +175,13 @@ import { SessionsController } from './presentation/controllers/sessions.controll
       }),
     },
     {
+      provide: LoginCodeConfig,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>): LoginCodeConfig => ({
+        expiresInMinutes: config.get('MFA_CODE_EXPIRES_IN_MINUTES', { infer: true }),
+      }),
+    },
+    {
       provide: LoginLockConfig,
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>): LoginLockConfig => ({
@@ -180,12 +193,15 @@ import { SessionsController } from './presentation/controllers/sessions.controll
   exports: [
     // Usado pelo seed (src/seed.ts).
     CreateSuperAdminUseCase,
-    // Usados pelo AuthModule: overrides do sign-in, guard de autenticação e validador de senha.
+    // Usados pelo AuthModule: overrides do sign-in, guard de autenticação, validador de senha
+    // e rotas da segunda etapa do login.
     AuthorizeSignInUseCase,
     CheckLoginLockUseCase,
     RecordLoginAttemptUseCase,
     GetAuthenticatedUserUseCase,
     CheckPasswordPolicyUseCase,
+    VerifyLoginCodeUseCase,
+    ResendLoginCodeUseCase,
   ],
 })
 export class UsersModule {}

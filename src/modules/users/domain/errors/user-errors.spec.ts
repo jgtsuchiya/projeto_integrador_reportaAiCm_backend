@@ -16,6 +16,7 @@ import { IncorrectPasswordError } from './incorrect-password.error';
 import { InvalidBirthDateError } from './invalid-birth-date.error';
 import { InvalidCpfError } from './invalid-cpf.error';
 import { InvalidEmailError } from './invalid-email.error';
+import { InvalidLoginCodeError } from './invalid-login-code.error';
 import { InvalidPasswordError } from './invalid-password.error';
 import { InvalidPhoneError } from './invalid-phone.error';
 import { InvalidStatusTransitionError } from './invalid-status-transition.error';
@@ -38,6 +39,7 @@ describe('Erros do domínio de usuários', () => {
     [new InvalidUserNameError('mensagem'), BusinessRuleError, { field: 'name' }],
     [new UserAlreadyDeletedError(), BusinessRuleError, undefined],
     [new InvalidUserTokenError(), BusinessRuleError, { field: 'token' }],
+    [new InvalidLoginCodeError(), BusinessRuleError, { field: 'code' }],
     [new AdminNotPendingError(), BusinessRuleError, undefined],
     [new EmailNotVerifiedError(), BusinessRuleError, undefined],
     [new EmailAlreadyVerifiedError(), BusinessRuleError, undefined],

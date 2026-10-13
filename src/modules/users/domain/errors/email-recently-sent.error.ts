@@ -1,9 +1,10 @@
 import { BusinessRuleError } from '@shared/domain/errors/business-rule.error';
 
 /**
- * RN22: a mesma conta recebe no máximo um e-mail do mesmo tipo por minuto
- * (`USER_TOKEN_RESEND_INTERVAL_MINUTES`). Vale para o reenvio pedido por quem tem sessão: o
- * pedido de redefinição de senha, que é público, só ignora o pedido repetido (RN20).
+ * RN22 e RN25: a mesma conta recebe no máximo um e-mail do mesmo tipo por minuto
+ * (`USER_TOKEN_RESEND_INTERVAL_MINUTES`). Vale para o reenvio pedido por quem tem sessão (o
+ * link de verificação de e-mail e o código da segunda etapa): o pedido de redefinição de
+ * senha, que é público, só ignora o pedido repetido (RN20).
  */
 export class EmailRecentlySentError extends BusinessRuleError {
   constructor() {

@@ -9,6 +9,7 @@ import {
   InvitedAdmin,
   newEmail,
   PASSWORD,
+  readTokens,
   Tokens,
 } from './support/e2e-app';
 
@@ -35,19 +36,27 @@ interface RouteCase {
    * mostra que eles passaram pela autorização: quem não tem permissão recebe 403.
    */
   refused?: Partial<Record<Role, number>>;
+  /**
+   * A rota aceita a sessão pendente, de quem ainda não conferiu o código da segunda etapa
+   * (RN25). O padrão é recusá-la com o 403 `invalid claim`.
+   */
+  acceptsPending?: boolean;
   send: (call: Call) => PromiseLike<request.Response>;
 }
 
 /**
  * Matriz de permissões (docs/sprints/sprint-2-usuarios.md e docs/sprints/sprint-3-login.md,
- * seção 4): cada rota protegida é chamada sem sessão (401) e com cada papel (o status de
- * sucesso ou 403).
+ * seção 4): cada rota protegida é chamada sem sessão (401), com cada papel (o status de
+ * sucesso ou 403) e com uma sessão pendente (403 `invalid claim`, menos nas rotas que a
+ * aceitam).
  */
 describe('Matriz de permissões (e2e)', () => {
   let e2e: E2eApp;
   let actors: Record<Role, Actor>;
   /** Alvos das chamadas barradas e das permitidas que não os alteram. */
   let targets: { admin: Actor; pendingAdmin: InvitedAdmin; client: Actor };
+  /** Sessão pendente de um Client criado só para isso: nenhum teste a conclui nem a encerra. */
+  let pendingSession: Actor;
 
   beforeAll(async () => {
     e2e = await E2eApp.start();
@@ -63,6 +72,7 @@ describe('Matriz de permissões (e2e)', () => {
       pendingAdmin: await e2e.inviteAdmin(superAdmin),
       client: await e2e.registerClient(),
     };
+    pendingSession = await e2e.logInPending(await e2e.registerClient());
   });
 
   afterAll(async () => {
@@ -89,6 +99,7 @@ describe('Matriz de permissões (e2e)', () => {
           route: 'POST /api/auth/signout',
           allowed: ROLES,
           success: 200,
+          acceptsPending: true,
           // Sai de uma sessão aberta só para isso: a compartilhada continua valendo.
           send: async ({ actor }) =>
             call(actor && (await e2e.logIn(actor)), 'post', '/auth/signout'),
@@ -164,6 +175,41 @@ describe('Matriz de permissões (e2e)', () => {
           success: 204,
           // Encerra as outras sessões da conta e mantém a de quem chama, que é a compartilhada.
           send: ({ actor }) => call(actor, 'delete', '/users/me/sessions'),
+        },
+      ],
+    },
+    {
+      line: 'Receber e conferir o código da segunda etapa (sessão pendente)',
+      routes: [
+        {
+          route: 'POST /api/mfa/verify',
+          allowed: ROLES,
+          success: 204,
+          acceptsPending: true,
+          // A sessão é aberta só para isso, e fica pendente: a senha já foi conferida, e o
+          // código ainda não.
+          send: async ({ actor }) => {
+            const pending = actor && (await e2e.logInPending(actor));
+
+            return call(pending, 'post', '/mfa/verify', {
+              code: actor ? e2e.lastLoginCode(actor.email) : '000000',
+            });
+          },
+        },
+        {
+          route: 'POST /api/mfa/code',
+          allowed: ROLES,
+          success: 204,
+          acceptsPending: true,
+          send: async ({ actor }) => {
+            const pending = actor && (await e2e.logInPending(actor));
+            // O login acabou de enviar um código: o reenvio espera o intervalo de 1 minuto.
+            if (actor) {
+              await e2e.passResendInterval(actor.id);
+            }
+
+            return call(pending, 'post', '/mfa/code');
+          },
         },
       ],
     },
@@ -338,8 +384,35 @@ describe('Matriz de permissões (e2e)', () => {
     });
   });
 
+  describe('Sessão pendente: senha conferida, código da segunda etapa ainda não (RN25)', () => {
+    it('deve renovar a sessão pendente, que continua pendente', async () => {
+      const pending = await e2e.logInPending(actors.CLIENT);
+
+      const response = await e2e.refresh(pending.refreshToken);
+
+      expect(response.status).toBe(200);
+      const me = await call(readTokens(response), 'get', '/users/me');
+      expect(me.status).toBe(403);
+    });
+
+    it('deve sair com a sessão pendente', async () => {
+      const response = await call(await e2e.logInPending(actors.CLIENT), 'post', '/auth/signout');
+
+      expect(response.status).toBe(200);
+    });
+
+    it('deve responder 422 à sessão completa nas rotas da segunda etapa', async () => {
+      const responses = await Promise.all([
+        call(actors.CLIENT, 'post', '/mfa/verify', { code: '000000' }),
+        call(actors.CLIENT, 'post', '/mfa/code'),
+      ]);
+
+      expect(responses.map(({ status }) => status)).toEqual([422, 422]);
+    });
+  });
+
   describe.each(matrix)('$line', ({ routes }) => {
-    describe.each(routes)('$route', ({ allowed, success, refused = {}, send }) => {
+    describe.each(routes)('$route', ({ allowed, success, refused = {}, acceptsPending, send }) => {
       it('deve responder 401 sem sessão', async () => {
         const response = await send({ allowed: false });
 
@@ -357,6 +430,16 @@ describe('Matriz de permissões (e2e)', () => {
 
         expect(response.status).toBe(status);
       });
+
+      if (!acceptsPending) {
+        it('deve responder 403 à sessão pendente', async () => {
+          const response = await send({ actor: pendingSession, allowed: false });
+
+          expect(response.status).toBe(403);
+          // O 403 do papel sem permissão tem outro corpo: este é o da segunda etapa.
+          expect(response.body).toMatchObject({ message: 'invalid claim' });
+        });
+      }
     });
   });
 });
