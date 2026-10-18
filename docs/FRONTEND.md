@@ -253,7 +253,24 @@ Se o e-mail do cadastro não chegar (o servidor de e-mail pode falhar), o cadast
 
 Para quem tem a verificação em duas etapas ativa, a senha é só a primeira etapa: o login responde `OK` e cria a sessão, mas ela fica **pendente** até o usuário digitar o código de 6 dígitos que a API envia para o e-mail dele. Vale para os três papéis, no painel e no app.
 
-> A opção de ativar a verificação em duas etapas ainda não tem rota. A tela do código já pode ser feita: até lá, nenhuma conta cai nela.
+**Ativar e desativar.** A opção fica nas configurações da conta, no painel e no app. O usuário liga ou desliga e confirma com a senha atual:
+
+```ts
+const response = await fetch(`${API_URL}/api/users/me/mfa`, {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ enabled: true, password }), // enabled: false para desativar
+});
+// 200: o corpo é o perfil atualizado, com o mfaEnabled.
+```
+
+- O estado atual vem no `mfaEnabled` do [`GET /api/users/me`](#depois-do-login-perfil-e-papel).
+- **Ativar exige o e-mail verificado** (`emailVerifiedAt` preenchido). Sem ele, a resposta é 422. No app, enquanto o Client não confirmar o e-mail, mostre a opção de [reenviar a verificação](#verificação-de-e-mail) no lugar do botão de ativar.
+- **Ativar encerra as outras sessões da conta**, que caem na renovação seguinte, em até 15 minutos, e pedem o código no próximo login. O aparelho que ativou continua logado, sem pedir o código. Avise o usuário antes de confirmar.
+- Desativar não encerra nenhuma sessão. Ativar o que já está ativo, ou desativar o que já está desativado, responde 200 sem efeito.
+- A senha incorreta responde **401**, que os SDKs confundem com sessão expirada: trate como na troca de senha ([erros](#erros)).
+
+O login de quem ativou segue os três passos abaixo.
 
 **1. Depois do login, confira se a sessão está pendente.** A situação vem na claim `mfa-verified` do access token, que o SDK lê sem chamar a API:
 
@@ -290,12 +307,16 @@ const response = await fetch(`${API_URL}/api/mfa/verify`, {
 
 | Rota                                | Resposta | Significado                                                                                                                  |
 | ----------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `PATCH /api/users/me/mfa`           | 200      | Verificação ativada ou desativada. O corpo é o perfil, com o `mfaEnabled`                                                    |
+| `PATCH /api/users/me/mfa`           | 400      | Falta o `enabled` (booleano) ou a senha                                                                                      |
+| `PATCH /api/users/me/mfa`           | 401      | Senha incorreta ([erros](#erros))                                                                                            |
+| `PATCH /api/users/me/mfa`           | 422      | Ativação com o e-mail ainda não verificado                                                                                   |
 | `POST /api/mfa/verify`              | 204      | Código conferido e login concluído                                                                                           |
 | `POST /api/mfa/verify`              | 400      | Código fora do formato (6 dígitos)                                                                                           |
 | `POST /api/mfa/verify`              | 422      | Código errado, vencido, já usado ou invalidado por 5 erros. O usuário tenta de novo ou pede outro código                     |
 | `POST /api/mfa/code`                | 204      | Código novo enviado                                                                                                          |
 | `POST /api/mfa/code`                | 422      | O último código saiu há menos de 1 minuto                                                                                    |
-| As duas                             | 422      | A sessão não está pendente (o login já foi concluído, ou a conta não tem a verificação em duas etapas). A `message` diz qual |
+| `/api/mfa/verify` e `/api/mfa/code` | 422      | A sessão não está pendente (o login já foi concluído, ou a conta não tem a verificação em duas etapas). A `message` diz qual |
 | Outras rotas, com a sessão pendente | 403      | `{ "message": "invalid claim", ... }`: falta o código                                                                        |
 
 Se o e-mail com o código não chegar (o servidor de e-mail pode falhar), o login vale do mesmo jeito: o usuário pede o reenvio depois de 1 minuto.
@@ -314,6 +335,7 @@ GET /api/users/me
   "email": "maria.silva@exemplo.com",
   "status": "ACTIVE",
   "emailVerifiedAt": null,
+  "mfaEnabled": false,
   "lastLoginAt": "2026-10-04T23:57:35.427Z",
   "createdAt": "2026-10-04T23:57:35.237Z",
   "updatedAt": "2026-10-04T23:57:35.237Z",
@@ -325,6 +347,7 @@ GET /api/users/me
 
 - `role` é `SUPER_ADMIN`, `ADMIN` ou `CLIENT`, e não muda depois que a conta é criada.
 - `emailVerifiedAt` é `null` até o Client confirmar o e-mail ([verificação de e-mail](#verificação-de-e-mail)). No ADM e no SuperAdm, vem sempre preenchido.
+- `mfaEnabled` diz se o login da conta pede o código da [verificação em duas etapas](#verificação-em-duas-etapas).
 - `cpf`, `phone` e `birthDate` só existem para o Client. CPF e telefone vêm só com dígitos: a máscara é por conta do front.
 - No painel, o CPF dos Clients vem sempre mascarado (`***.982.247-**`) nas rotas de `/api/clients`.
 
@@ -371,6 +394,7 @@ A renovação do access token é automática e o usuário não percebe. A sessã
 - o usuário é inativado ou excluído: o bloqueio vale na requisição seguinte;
 - a sessão é encerrada em outro aparelho, pela lista de [sessões abertas](#sessões-abertas): ela cai na renovação seguinte, em até 15 minutos;
 - a senha é trocada em outro aparelho: as outras sessões caem na renovação seguinte, em até 15 minutos, e a de quem trocou continua;
+- a verificação em duas etapas é ativada em outro aparelho: as outras sessões caem do mesmo jeito, e a de quem ativou continua;
 - a senha é redefinida pelo link do e-mail: todas as sessões caem na renovação seguinte, em até 15 minutos.
 
 Nesses casos, a API responde 401, o SDK apaga os tokens e avisa pelo `onHandleEvent`, com a ação `UNAUTHORISED`. Use o evento para levar o usuário à tela de login:
@@ -392,6 +416,7 @@ function onHandleEvent(event: { action: string }) {
 | `GET` e `PATCH /api/users/me`                                               |     ✔      |  ✔  | O Client também edita `phone` e `birthDate`                     |
 | `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 401     |
 | `/api/users/me/sessions` (listagem, encerrar uma, encerrar as outras)       |     ✔      |  ✔  | Sessões abertas do usuário logado, de qualquer papel            |
+| `PATCH /api/users/me/mfa`                                                   |     ✔      |  ✔  | `{ enabled, password }`. Ativar exige o e-mail verificado       |
 | `POST /api/mfa/verify` e `POST /api/mfa/code`                               |     ✔      |  ✔  | Tela do código da segunda etapa, com a sessão pendente          |
 | `POST /api/password-resets`                                                 |     ✔      |  ✔  | "Esqueci minha senha", sem sessão. Responde sempre 204          |
 | `POST /api/password-resets/confirm`                                         |     ✔      |     | Página `/redefinir-senha`, sem sessão                           |
@@ -451,7 +476,7 @@ As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 co
 
 A sessão pendente da [verificação em duas etapas](#verificação-em-duas-etapas) também recebe um erro no formato do SuperTokens, em qualquer rota protegida: 403 com `{ "message": "invalid claim", "claimValidationErrors": [...] }`. Diferencie os dois 403 pelo corpo: o da aplicação tem `statusCode`, e este tem `claimValidationErrors`.
 
-> **Atenção à senha de confirmação incorreta.** O `PATCH /api/users/me/password` e o `DELETE /api/users/me` respondem 401 quando a senha informada está errada. Os dois SDKs tratam qualquer 401 da API como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes (`maxRetryAttemptsForSessionRefresh`), e depois lançam um erro em vez de devolver a resposta. Nessas duas chamadas, capture o erro e trate-o como senha incorreta.
+> **Atenção à senha de confirmação incorreta.** O `PATCH /api/users/me/password`, o `PATCH /api/users/me/mfa` e o `DELETE /api/users/me` respondem 401 quando a senha informada está errada. Os dois SDKs tratam qualquer 401 da API como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes (`maxRetryAttemptsForSessionRefresh`), e depois lançam um erro em vez de devolver a resposta. Nessas três chamadas, capture o erro e trate-o como senha incorreta.
 
 ## Testando sem o front
 

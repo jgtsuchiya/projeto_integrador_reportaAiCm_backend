@@ -158,9 +158,10 @@ describe('Segunda etapa do login por código (integração)', () => {
   });
 
   /**
-   * Cria a credencial no SuperTokens e o usuário ACTIVE no MySQL, com o mesmo id. Até a rota
-   * de ativação existir (T9), a verificação em duas etapas é ligada direto no banco. O usuário
-   * é um ADMIN porque o perfil dele (`GET /api/users/me`) não depende de outra tabela.
+   * Cria a credencial no SuperTokens e o usuário ACTIVE no MySQL, com o mesmo id. A verificação
+   * em duas etapas é ligada direto no banco, para estes testes não dependerem da rota de
+   * ativação, que tem os próprios testes no `profile.integration-spec.ts`. O usuário é um ADMIN
+   * porque o perfil dele (`GET /api/users/me`) não depende de outra tabela.
    */
   async function createUser({ mfa }: { mfa: boolean }): Promise<TestUser> {
     const email = Email.create(`mfa.${randomUUID()}@reportaai.invalid`);

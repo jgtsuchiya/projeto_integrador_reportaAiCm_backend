@@ -14,6 +14,8 @@ export interface ProfileOutput {
   email: string;
   status: UserStatus;
   emailVerifiedAt: Date | null;
+  /** Verificação em duas etapas ativa: o login pede o código enviado por e-mail (RN24, RN25). */
+  mfaEnabled: boolean;
   lastLoginAt: Date | null;
   createdAt: Date;
   /** No CLIENT, a alteração mais recente entre o usuário e o perfil. */
@@ -34,6 +36,7 @@ export function toProfileOutput(user: User, profile: ClientProfile | null): Prof
     email: user.email.value,
     status: user.status,
     emailVerifiedAt: user.emailVerifiedAt,
+    mfaEnabled: user.mfaEnabled,
     lastLoginAt: user.lastLoginAt,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,

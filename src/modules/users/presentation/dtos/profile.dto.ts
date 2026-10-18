@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { domainString } from '@shared/presentation/validation/domain-string.schema';
 
+import type { ChangeMfaInput } from '../../application/use-cases/change-mfa.use-case';
 import type { ChangePasswordInput } from '../../application/use-cases/change-password.use-case';
 import type { DeleteOwnAccountInput } from '../../application/use-cases/delete-own-account.use-case';
 import type { UpdateProfileInput } from '../../application/use-cases/update-profile.use-case';
@@ -37,6 +38,17 @@ export const changePasswordBodySchema = z.object({
 }) satisfies z.ZodType<Omit<ChangePasswordInput, 'userId' | 'sessionHandle'>>;
 
 export type ChangePasswordBody = z.infer<typeof changePasswordBodySchema>;
+
+/**
+ * Corpo do `PATCH /api/users/me/mfa`: liga (`true`) ou desliga (`false`) a verificação em duas
+ * etapas, com a senha atual, que confirma a mudança (RN24).
+ */
+export const changeMfaBodySchema = z.object({
+  enabled: z.boolean(),
+  password: z.string().min(1, 'A senha é obrigatória.'),
+}) satisfies z.ZodType<Omit<ChangeMfaInput, 'userId' | 'sessionHandle'>>;
+
+export type ChangeMfaBody = z.infer<typeof changeMfaBodySchema>;
 
 /** Corpo do `DELETE /api/users/me`: a senha atual confirma a exclusão (RN15). */
 export const deleteOwnAccountBodySchema = z.object({

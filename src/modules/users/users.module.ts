@@ -26,6 +26,7 @@ import { AcceptInvitationUseCase } from './application/use-cases/accept-invitati
 import { AuthorizeSignInUseCase } from './application/use-cases/authorize-sign-in.use-case';
 import { ChangeAdminStatusUseCase } from './application/use-cases/change-admin-status.use-case';
 import { ChangeClientStatusUseCase } from './application/use-cases/change-client-status.use-case';
+import { ChangeMfaUseCase } from './application/use-cases/change-mfa.use-case';
 import { ChangePasswordUseCase } from './application/use-cases/change-password.use-case';
 import { CheckLoginLockUseCase } from './application/use-cases/check-login-lock.use-case';
 import { CheckPasswordPolicyUseCase } from './application/use-cases/check-password-policy.use-case';
@@ -126,6 +127,7 @@ import { SessionsController } from './presentation/controllers/sessions.controll
     GetProfileUseCase,
     UpdateProfileUseCase,
     ChangePasswordUseCase,
+    ChangeMfaUseCase,
     DeleteOwnAccountUseCase,
     ListSessionsUseCase,
     RevokeSessionUseCase,

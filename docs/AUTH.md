@@ -320,6 +320,7 @@ O passo 2 custa uma consulta ao MySQL por requisição autenticada. É o preço 
 | `GET /api/users/me/sessions`            |      ✔      |   ✔   |   ✔    |            |
 | `DELETE /api/users/me/sessions/:id`     |      ✔      |   ✔   |   ✔    |            |
 | `DELETE /api/users/me/sessions`         |      ✔      |   ✔   |   ✔    |            |
+| `PATCH /api/users/me/mfa`               |      ✔      |   ✔   |   ✔    |            |
 | `POST /api/mfa/verify`                  |     ✔³      |  ✔³   |   ✔³   |            |
 | `POST /api/mfa/code`                    |     ✔³      |  ✔³   |   ✔³   |            |
 | `DELETE /api/users/me`                  |             |       |   ✔    |            |
@@ -347,6 +348,7 @@ Sem sessão, as rotas protegidas respondem 401. Com um papel fora da lista, 403.
 - **ADMIN e SUPER_ADMIN não editam os dados do Client** (RN12): só listam, consultam, inativam e reativam. O CPF sai sempre mascarado (`***.456.789-**`), e o id de um ADMIN ou SuperAdm nas rotas de `/api/clients/:id` responde 404.
 - **Só o Client vê o próprio CPF completo**, no `GET /api/users/me`.
 - **Cada usuário só vê e encerra as próprias sessões** (RN23). Nas rotas de `/api/users/me/sessions`, o id da sessão de outro usuário responde 404.
+- **A verificação em duas etapas só é ativada com o e-mail verificado** (RN24). O Client que ainda não confirmou o e-mail recebe 422 no `PATCH /api/users/me/mfa`.
 
 A matriz é testada rota a rota no [`permissions.e2e-spec.ts`](../test/permissions.e2e-spec.ts): sem sessão, com cada um dos três papéis e com uma sessão pendente.
 
@@ -562,7 +564,7 @@ sequenceDiagram
 - **Um e-mail por minuto.** O pedido feito menos de 1 minuto depois do último e-mail responde 422, e o link que já foi continua valendo. O intervalo conta também a partir do link do cadastro. Aqui a resposta pode dizer o motivo, ao contrário do pedido de redefinição de senha: quem chama já está logado na própria conta.
 - Uma falha no envio do e-mail não vira erro: a resposta é 204, o motivo fica no log, e o usuário pede o reenvio de novo depois do intervalo.
 
-O link aponta para a página `/verificar-email` do painel web ([FRONTEND.md](FRONTEND.md#verificação-de-e-mail)). Hoje, nenhuma rota exige o e-mail verificado. A primeira vai ser a ativação da verificação em duas etapas (RN24).
+O link aponta para a página `/verificar-email` do painel web ([FRONTEND.md](FRONTEND.md#verificação-de-e-mail)). A única rota que exige o e-mail verificado é a ativação da [verificação em duas etapas](#verificação-em-duas-etapas) (RN24).
 
 ## Sessões ativas
 
@@ -604,7 +606,15 @@ Um limite conhecido:
 
 Quem tem a verificação em duas etapas ativa (`users.mfa_enabled`) conclui o login com um código de 6 dígitos enviado por e-mail (RN25). A receita de MFA do SuperTokens é paga, então a segunda etapa é da aplicação: o código fica em `user_tokens`, e o estado da sessão, numa claim customizada.
 
-> A rota que liga e desliga o `mfa_enabled` (`PATCH /api/users/me/mfa`, RN24) ainda não existe. Até lá, nenhuma conta passa pela segunda etapa fora dos testes.
+**Ativação e desativação (`PATCH /api/users/me/mfa`).** Vale para os três papéis, sempre na própria conta (RN24). Recebe `{ "enabled": true, "password": "..." }` e responde 200 com o perfil atualizado, no formato do `GET /api/users/me`, que traz o `mfaEnabled`.
+
+- **A senha atual confirma a mudança**, nos dois sentidos. A senha incorreta responde 401 (`Senha incorreta.`, com `details.field` igual a `password`), como na troca de senha.
+- **Ativar exige o e-mail verificado**, porque é para ele que o código vai. Sem o `email_verified_at`, a resposta é 422. Na prática, só o Client que ainda não confirmou o e-mail cai nesse caso: o ADM e o SuperAdm já nascem verificados.
+- **Ativar revoga as outras sessões** da conta, que passam pela segunda etapa no próximo login. A sessão que ativou continua completa, sem pedir o código: a claim dela foi gravada no login, quando a conta ainda não tinha a verificação, e não é buscada de novo.
+- **Desativar não revoga nada.** Os logins seguintes deixam de pedir o código. Uma sessão que já estava pendente continua pendente e conclui o login com o código que recebeu.
+- **Pedir o estado que a conta já tem** (ativar o que já está ativo, ou desativar o que já está desativado) responde 200 sem efeito: nada é gravado, e nenhuma sessão é revogada. A senha é conferida mesmo assim.
+- **A sessão pendente não muda a verificação.** Ela recebe o 403 `invalid claim` nesta rota, como nas outras: quem tem só a senha não consegue desligar a verificação para entrar.
+- **Ordem dos passos.** O `mfa_enabled` é gravado antes de as outras sessões serem revogadas. Assim, um login feito entre os dois passos já abre uma sessão pendente. Na ordem inversa, ele abriria uma sessão completa que escaparia da revogação.
 
 ```mermaid
 sequenceDiagram
@@ -660,13 +670,14 @@ sequenceDiagram
 - É buscado pelo usuário da sessão, e não pelo hash: o código de uma conta nunca vale para outra.
 - **O limite de erros vale também para tentativas simultâneas.** O erro é somado no banco (`attempts = attempts + 1`), e o uso é gravado com condição (`used_at` vazio e menos de 5 erros). Sem isso, várias conferências ao mesmo tempo leriam o mesmo contador, e quem tem a senha testaria muito mais do que 5 códigos. O intervalo de 1 minuto fecha o outro caminho: um código novo zera os erros, e quem tem a senha não consegue trocar de código a cada 5 tentativas.
 
-**Onde ficam as regras.** O código é do módulo `users`: o [`LoginCodeService`](../src/modules/users/application/services/login-code.service.ts) emite e envia, e os casos de uso `VerifyLoginCodeUseCase` e `ResendLoginCodeUseCase` conferem e reenviam. A sessão é do módulo `auth`: o [`MfaController`](../src/modules/auth/presentation/controllers/mfa.controller.ts) chama o caso de uso e, em seguida, marca a sessão pela porta `SessionSecondFactor`. As rotas não entram no [limite por IP](#limite-de-requisições-por-ip), que é das rotas públicas: aqui, quem segura as tentativas é o limite de erros do código.
+**Onde ficam as regras.** A ativação é do módulo `users`: o `ChangeMfaUseCase` confere a senha pela porta `IdentityProvider` e aplica as regras da entidade `User` (`enableMfa` e `disableMfa`). O código também é do módulo `users`: o [`LoginCodeService`](../src/modules/users/application/services/login-code.service.ts) emite e envia, e os casos de uso `VerifyLoginCodeUseCase` e `ResendLoginCodeUseCase` conferem e reenviam. A sessão é do módulo `auth`: o [`MfaController`](../src/modules/auth/presentation/controllers/mfa.controller.ts) chama o caso de uso e, em seguida, marca a sessão pela porta `SessionSecondFactor`. As rotas não entram no [limite por IP](#limite-de-requisições-por-ip), que é das rotas públicas: aqui, quem segura as tentativas é o limite de erros do código.
 
 Limites conhecidos:
 
 - **Código por e-mail é um segundo fator fraco.** Ele usa o mesmo canal da recuperação de senha: quem invade a caixa de e-mail passa pelas duas barreiras.
 - **Logins simultâneos.** Dois logins ao mesmo tempo para a mesma conta podem passar juntos pela conferência do intervalo de 1 minuto e enviar dois códigos. Só o mais recente vale.
 - **Código conferido e sessão não marcada.** Se a chamada ao Core falhar depois de o código ser usado, a sessão continua pendente, e o usuário pede outro código.
+- **Revogação que falha depois da ativação.** Se a chamada ao Core falhar depois de o `mfa_enabled` ser gravado, a resposta é 500, a verificação fica ativa e as outras sessões continuam abertas. Repetir a ativação não as revoga, porque a conta já está no estado pedido: o usuário as encerra pelo `DELETE /api/users/me/sessions` ([sessões ativas](#sessões-ativas)).
 - **Quem tem a senha consegue atrapalhar o login do dono.** O código é da conta, e não da sessão: quem abre uma sessão pendente pode gastar os 5 erros de cada código. Ele não passa da segunda etapa, e o e-mail do código orienta o dono a redefinir a senha, o que encerra todas as sessões.
 
 ## Formato dos erros
@@ -682,8 +693,8 @@ Limites conhecidos:
 
 Nas rotas da aplicação: 400 para validação (com a lista de campos em `details`), 401 para senha incorreta, 403 para papel sem permissão, 404 para recurso inexistente, 409 para e-mail ou CPF já cadastrado e 422 para regra de negócio violada.
 
-> **Cuidado com o 401 nas rotas da aplicação.** Os SDKs de front tratam qualquer 401 como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes, e depois lançam um erro. Hoje, o único 401 que não vem da sessão é o da senha de confirmação incorreta (`IncorrectPasswordError`, no `PATCH /api/users/me/password` e no `DELETE /api/users/me`), e os fronts precisam tratá-lo à parte ([FRONTEND.md](FRONTEND.md#erros)). Numa rota nova, não use `UnauthorizedError` para um erro que não seja de sessão.
+> **Cuidado com o 401 nas rotas da aplicação.** Os SDKs de front tratam qualquer 401 como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes, e depois lançam um erro. Hoje, o único 401 que não vem da sessão é o da senha de confirmação incorreta (`IncorrectPasswordError`, no `PATCH /api/users/me/password`, no `PATCH /api/users/me/mfa` e no `DELETE /api/users/me`), e os fronts precisam tratá-lo à parte ([FRONTEND.md](FRONTEND.md#erros)). Numa rota nova, não use `UnauthorizedError` para um erro que não seja de sessão.
 
 ## Fora do escopo
 
-Ainda não existem: a rota para ativar e desativar a verificação em duas etapas (a segunda etapa do login já funciona, mas o `mfa_enabled` ainda não tem rota) e a troca de e-mail. Os pontos em aberto (custo do MFA no SuperTokens, validade do refresh token, hospedagem do Core em produção) estão no fim do [plano da sprint 2](sprints/sprint-2-usuarios.md#10-pontos-em-aberto), que também traz as regras de negócio RN01 a RN16 citadas neste documento. As regras RN17 a RN25 estão no [plano da sprint 3](sprints/sprint-3-login.md#4-regras-de-negócio).
+Ainda não existem a troca de e-mail e, na verificação em duas etapas, o aplicativo autenticador (TOTP) e a obrigatoriedade por papel ([pontos em aberto da sprint 3](sprints/sprint-3-login.md#10-pontos-em-aberto)). Os pontos em aberto (custo do MFA no SuperTokens, validade do refresh token, hospedagem do Core em produção) estão no fim do [plano da sprint 2](sprints/sprint-2-usuarios.md#10-pontos-em-aberto), que também traz as regras de negócio RN01 a RN16 citadas neste documento. As regras RN17 a RN25 estão no [plano da sprint 3](sprints/sprint-3-login.md#4-regras-de-negócio).

@@ -4,6 +4,7 @@ import { CurrentUser } from '@modules/auth/presentation/decorators/current-user.
 import { Roles } from '@modules/auth/presentation/decorators/roles.decorator';
 
 import type { ProfileOutput } from '../../application/dtos/profile.output';
+import { ChangeMfaUseCase } from '../../application/use-cases/change-mfa.use-case';
 import { ChangePasswordUseCase } from '../../application/use-cases/change-password.use-case';
 import { DeleteOwnAccountUseCase } from '../../application/use-cases/delete-own-account.use-case';
 import type { AuthenticatedUser } from '../../application/use-cases/get-authenticated-user.use-case';
@@ -12,6 +13,8 @@ import { ResendEmailVerificationUseCase } from '../../application/use-cases/rese
 import { UpdateProfileUseCase } from '../../application/use-cases/update-profile.use-case';
 import { Role } from '../../domain/value-objects/role';
 import {
+  type ChangeMfaBody,
+  changeMfaBodySchema,
   type ChangePasswordBody,
   changePasswordBodySchema,
   type DeleteOwnAccountBody,
@@ -29,6 +32,7 @@ export class ProfileController {
     private readonly changePasswordUseCase: ChangePasswordUseCase,
     private readonly deleteOwnAccountUseCase: DeleteOwnAccountUseCase,
     private readonly resendEmailVerificationUseCase: ResendEmailVerificationUseCase,
+    private readonly changeMfaUseCase: ChangeMfaUseCase,
   ) {}
 
   /** Perfil e papel. É por aqui que os fronts descobrem o papel depois do login. */
@@ -68,6 +72,23 @@ export class ProfileController {
   @HttpCode(HttpStatus.NO_CONTENT)
   resendEmailVerification(@CurrentUser() user: AuthenticatedUser): Promise<void> {
     return this.resendEmailVerificationUseCase.execute({ userId: user.id });
+  }
+
+  /**
+   * Liga ou desliga a verificação em duas etapas, com a senha atual, e responde o perfil
+   * atualizado (RN24). Ativar exige o e-mail verificado e revoga as outras sessões, mantendo a
+   * atual, que continua completa.
+   */
+  @Patch('mfa')
+  changeMfa(
+    @Body({ schema: changeMfaBodySchema }) body: ChangeMfaBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ProfileOutput> {
+    return this.changeMfaUseCase.execute({
+      userId: user.id,
+      sessionHandle: user.sessionHandle,
+      ...body,
+    });
   }
 
   /** Autoexclusão com anonimização, só para o CLIENT (RN11, RN15). */

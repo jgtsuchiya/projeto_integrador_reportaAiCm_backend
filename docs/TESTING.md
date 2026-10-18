@@ -125,7 +125,7 @@ Para conferir que um segredo (a senha, o token de um link ou o código da segund
 
 O código da segunda etapa também só existe no e-mail. No texto da mensagem, ele fica sozinho numa linha, e o teste o lê com `/^\d{6}$/m` ([AUTH.md](AUTH.md#verificação-em-duas-etapas)).
 
-- **Ligar a verificação em duas etapas.** A rota de ativação ainda não existe, então o teste liga o `users.mfa_enabled` direto no banco. O `test/mfa.integration-spec.ts` cria o usuário já com ele ligado. Nos e2e, o `e2e.logInPending(account)` o liga só durante o login e devolve os tokens da sessão pendente: os outros logins da conta continuam completos.
+- **Ligar a verificação em duas etapas.** A rota de ativação (`PATCH /api/users/me/mfa`) tem os próprios testes, no `test/profile.integration-spec.ts`. Os testes da segunda etapa ligam o `users.mfa_enabled` direto no banco, porque a rota exige o e-mail verificado e revoga as outras sessões da conta. O `test/mfa.integration-spec.ts` cria o usuário já com ele ligado. Nos e2e, o `e2e.logInPending(account)` o liga só durante o login e devolve os tokens da sessão pendente: os outros logins da conta continuam completos.
 - **Ler o código.** Nos e2e, com o `e2e.lastLoginCode(email)`. Um login feito menos de 1 minuto depois de outro não envia um código novo, e o helper devolve o do e-mail anterior, que continua valendo.
 - **Código sorteado.** O teste que precisa de um código conhecido (ex.: o código de outra conta, que tem de ser diferente) troca o `token_hash` no banco, como o `setCode` do `test/mfa.integration-spec.ts`. Comparar dois códigos sorteados falharia uma vez em um milhão.
 - **Intervalo de 1 minuto.** Vale o mesmo recuo do `created_at` dos links: o login já envia um código, então o reenvio logo em seguida responde 422.

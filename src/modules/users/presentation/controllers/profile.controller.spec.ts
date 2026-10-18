@@ -1,6 +1,7 @@
 import { Test } from '@nestjs/testing';
 
 import type { ProfileOutput } from '../../application/dtos/profile.output';
+import { ChangeMfaUseCase } from '../../application/use-cases/change-mfa.use-case';
 import { ChangePasswordUseCase } from '../../application/use-cases/change-password.use-case';
 import { DeleteOwnAccountUseCase } from '../../application/use-cases/delete-own-account.use-case';
 import type { AuthenticatedUser } from '../../application/use-cases/get-authenticated-user.use-case';
@@ -16,6 +17,7 @@ describe('ProfileController', () => {
   let changePasswordUseCase: jest.Mocked<ChangePasswordUseCase>;
   let deleteOwnAccountUseCase: jest.Mocked<DeleteOwnAccountUseCase>;
   let resendEmailVerificationUseCase: jest.Mocked<ResendEmailVerificationUseCase>;
+  let changeMfaUseCase: jest.Mocked<ChangeMfaUseCase>;
 
   const user: AuthenticatedUser = { id: 'client-1', role: 'CLIENT', sessionHandle: 'session-1' };
   const profile: ProfileOutput = {
@@ -25,6 +27,7 @@ describe('ProfileController', () => {
     email: 'maria@example.com',
     status: 'ACTIVE',
     emailVerifiedAt: null,
+    mfaEnabled: false,
     lastLoginAt: new Date('2026-09-28T13:00:00.000Z'),
     createdAt: new Date('2026-09-28T12:00:00.000Z'),
     updatedAt: new Date('2026-09-28T12:00:00.000Z'),
@@ -42,6 +45,7 @@ describe('ProfileController', () => {
         { provide: ChangePasswordUseCase, useValue: { execute: jest.fn() } },
         { provide: DeleteOwnAccountUseCase, useValue: { execute: jest.fn() } },
         { provide: ResendEmailVerificationUseCase, useValue: { execute: jest.fn() } },
+        { provide: ChangeMfaUseCase, useValue: { execute: jest.fn() } },
       ],
     }).compile();
 
@@ -51,6 +55,7 @@ describe('ProfileController', () => {
     changePasswordUseCase = moduleRef.get(ChangePasswordUseCase);
     deleteOwnAccountUseCase = moduleRef.get(DeleteOwnAccountUseCase);
     resendEmailVerificationUseCase = moduleRef.get(ResendEmailVerificationUseCase);
+    changeMfaUseCase = moduleRef.get(ChangeMfaUseCase);
   });
 
   it('deve buscar o perfil do usuário da sessão', async () => {
@@ -89,6 +94,21 @@ describe('ProfileController', () => {
     await sut.resendEmailVerification(user);
 
     expect(resendEmailVerificationUseCase.execute).toHaveBeenCalledWith({ userId: 'client-1' });
+  });
+
+  it('deve mudar a verificação em duas etapas mantendo a sessão da requisição', async () => {
+    const updated = { ...profile, mfaEnabled: true };
+    changeMfaUseCase.execute.mockResolvedValue(updated);
+
+    await expect(sut.changeMfa({ enabled: true, password: 'senha-forte-1' }, user)).resolves.toBe(
+      updated,
+    );
+    expect(changeMfaUseCase.execute).toHaveBeenCalledWith({
+      userId: 'client-1',
+      sessionHandle: 'session-1',
+      enabled: true,
+      password: 'senha-forte-1',
+    });
   });
 
   it('deve excluir a conta do usuário da sessão', async () => {
