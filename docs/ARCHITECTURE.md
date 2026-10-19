@@ -217,11 +217,39 @@ await this.mailSender.send({
 
 O template escapa o HTML de todo o conteúdo, então dados do usuário (como o nome) podem entrar direto.
 
-Se o servidor SMTP não aceitar a mensagem, o `send` lança um `MailDeliveryError` com mensagem genérica. O motivo (ex.: `Invalid login: 535 ... (EAUTH)`) vai só para o log, sem a configuração do SMTP e com o usuário e a senha mascarados. Se o caso de uso não tratar o erro, a resposta é 500. Cada etapa da conexão SMTP tem timeout de 10 s, porque o envio acontece dentro da requisição.
+Se o servidor SMTP não aceitar a mensagem, o `send` lança um `MailDeliveryError` com mensagem genérica. O motivo (ex.: `Invalid login: 535 ... (EAUTH)`) vai só para o log, sem a configuração do SMTP e com o usuário e a senha mascarados. Se o caso de uso não tratar o erro, a resposta é 500. Cada etapa da conexão SMTP tem timeout de 10 s, porque o envio acontece dentro da requisição. A exceção é o pedido de redefinição de senha, que responde antes de enviar ([tarefas em segundo plano](#tarefas-em-segundo-plano)).
 
 No módulo `users`, os e-mails da conta (convite, redefinição de senha, verificação de e-mail e código do login) passam pelo [`UserMailService`](../src/modules/users/application/services/user-mail.service.ts). Ele monta o link `${WEB_APP_URL}<página>?token=...` e trata o `MailDeliveryError`: o `send` devolve `false` em vez de lançar o erro, porque nenhum desses fluxos é desfeito por causa do e-mail.
 
 Em dev, o SMTP é o **Mailpit** do docker-compose: nenhum e-mail sai para a internet, e todos aparecem em http://localhost:8025.
+
+## Tarefas em segundo plano
+
+Quando a resposta não pode esperar o trabalho, o controller o entrega ao [`BackgroundTasks`](../src/shared/application/ports/background-tasks.ts) e responde em seguida. É o caso do pedido de redefinição de senha: se a rota esperasse a busca da conta e o envio do e-mail, o tempo de resposta revelaria se o e-mail tem conta ([AUTH.md](AUTH.md#recuperação-de-senha)).
+
+| Peça                                                                                        | Papel                                                                                      |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`BackgroundTasks`](../src/shared/application/ports/background-tasks.ts)                    | Porta, com `run(name, task)` e `drain()`                                                   |
+| [`InProcessBackgroundTasks`](../src/shared/infra/background/in-process-background-tasks.ts) | Adapter que roda a tarefa no próprio processo, ligado à porta pelo `BackgroundTasksModule` |
+
+```ts
+// <feature>.module.ts
+@Module({ imports: [BackgroundTasksModule], controllers: [PasswordResetsController] })
+
+// no controller
+@Post()
+@HttpCode(HttpStatus.NO_CONTENT)
+request(@Body({ schema: requestPasswordResetBodySchema }) body: RequestPasswordResetBody): void {
+  this.backgroundTasks.run('Pedido de redefinição de senha', () =>
+    this.requestPasswordResetUseCase.execute(body),
+  );
+}
+```
+
+- **O caso de uso não muda.** Ele faz o trabalho inteiro e pode ser esperado, como qualquer outro. Quem decide não esperar é o controller.
+- **A falha vai só para o log**, com o `name` da tarefa: a requisição já foi respondida. Por isso, use o `BackgroundTasks` só quando a resposta não depende do resultado.
+- **Sem fila.** A tarefa roda no processo da API e se perde se ele cair. No encerramento normal (`app.close()` ou SIGTERM), a API espera as tarefas em andamento.
+- **Nos testes** que sobem a aplicação, `app.get(BackgroundTasks).drain()` espera as tarefas terminarem ([TESTING.md](TESTING.md#testes-de-rotas-que-respondem-antes-de-terminar)).
 
 ## Convenções de nomenclatura
 

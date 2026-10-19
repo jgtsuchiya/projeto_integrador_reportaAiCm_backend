@@ -12,7 +12,8 @@
 # nos headers da resposta e o access token vai no Authorization das chamadas seguintes.
 # O painel web usa cookies, que o SDK dele controla (ver docs/AUTH.md e docs/FRONTEND.md).
 #
-# O único passo manual é o token do convite do ADM, que só existe no e-mail (seção 3).
+# O único passo manual são os tokens dos links, que só existem nos e-mails: o do convite do ADM
+# (seção 3) e o da redefinição de senha (seção 5).
 
 @baseUrl = http://localhost:3000/api
 
@@ -32,6 +33,10 @@
 
 # Token do link de convite (.../convite?token=<token>), copiado do e-mail (seção 3).
 @invitationToken = cole-aqui-o-token-do-convite
+
+# Token do link de redefinição de senha (.../redefinir-senha?token=<token>), copiado do e-mail
+# (seção 5).
+@passwordResetToken = cole-aqui-o-token-da-redefinicao
 
 ###
 # ==============================================================================================
@@ -157,7 +162,43 @@ Content-Type: application/json
 
 ###
 # ==============================================================================================
-# 5. Gestão de Clients pelo painel (ADMIN e SUPER_ADMIN)
+# 5. Recuperação de senha (público, igual para os três papéis)
+# ==============================================================================================
+
+### Pede o link de redefinição: "esqueci minha senha"
+# Resposta: sempre 204, exista ou não a conta, e antes de o e-mail ser enviado. Só a conta ACTIVE
+# recebe o link, que vale 60 minutos e invalida os anteriores. A mesma conta recebe no máximo
+# um e-mail por minuto: um pedido repetido antes disso responde 204 e não envia nada.
+# E-mail fora do formato: 400.
+POST {{baseUrl}}/password-resets
+Content-Type: application/json
+
+{
+  "email": "{{clientEmail}}"
+}
+
+### Lê o último e-mail capturado pelo Mailpit (não é rota da API)
+# Copie o token do link (.../redefinir-senha?token=<token>) para a variável @passwordResetToken,
+# no topo do arquivo.
+GET http://localhost:8025/view/latest.txt
+
+### Redefine a senha com o token do link
+# Encerra todas as sessões do usuário, libera o login bloqueado por tentativas e envia o e-mail
+# de aviso "Sua senha foi alterada". A coleção repete a senha do cadastro, para as seções
+# seguintes continuarem funcionando.
+# Resposta: 204. Token inválido, expirado, já usado ou substituído por um pedido novo: 422.
+# Senha fora da política: 400, e o link continua valendo.
+POST {{baseUrl}}/password-resets/confirm
+Content-Type: application/json
+
+{
+  "token": "{{passwordResetToken}}",
+  "password": "{{clientPassword}}"
+}
+
+###
+# ==============================================================================================
+# 6. Gestão de Clients pelo painel (ADMIN e SUPER_ADMIN)
 # ==============================================================================================
 
 ### Lista os Clients: paginação, filtro por status e busca
@@ -194,7 +235,7 @@ Authorization: Bearer {{adminToken}}
 
 ###
 # ==============================================================================================
-# 6. Perfil do usuário logado (qualquer papel; aqui, o Client)
+# 7. Perfil do usuário logado (qualquer papel; aqui, o Client)
 # ==============================================================================================
 
 ### Login do Client
@@ -234,6 +275,7 @@ Authorization: Bearer {{clientToken}}
 }
 
 ### Troca a própria senha: encerra as outras sessões e mantém a atual
+# O usuário recebe o e-mail de aviso "Sua senha foi alterada".
 # Resposta: 204. Senha atual incorreta: 401.
 PATCH {{baseUrl}}/users/me/password
 Content-Type: application/json
@@ -257,7 +299,7 @@ Authorization: Bearer {{clientToken}}
 
 ###
 # ==============================================================================================
-# 7. Gestão de ADMs (só o SUPER_ADMIN)
+# 8. Gestão de ADMs (só o SUPER_ADMIN)
 # ==============================================================================================
 
 ### Lista os ADMs: paginação e filtro por status (PENDING, ACTIVE ou INACTIVE)
@@ -309,7 +351,7 @@ Authorization: Bearer {{superAdminToken}}
 
 ###
 # ==============================================================================================
-# 8. Renovar e encerrar a sessão (rotas nativas do SuperTokens)
+# 9. Renovar e encerrar a sessão (rotas nativas do SuperTokens)
 # ==============================================================================================
 
 ### Renova a sessão: o refresh token vai no lugar do access token
@@ -328,7 +370,7 @@ Authorization: Bearer {{refreshSuperAdmin.response.headers.st-access-token}}
 
 ###
 # ==============================================================================================
-# 9. Rotas nativas desativadas (RN16)
+# 10. Rotas nativas desativadas (RN16)
 # ==============================================================================================
 
 ### Sign-up nativo: desativado, o cadastro é pelo POST /clients
@@ -347,7 +389,7 @@ Content-Type: application/json
 # Resposta: 404.
 GET {{baseUrl}}/auth/emailpassword/email/exists?email={{clientEmail}}
 
-### Reset de senha: desativado (a recuperação de senha está fora do escopo da sprint)
+### Reset de senha nativo: desativado, a recuperação é pelo POST /password-resets (seção 5)
 # Resposta: 404.
 POST {{baseUrl}}/auth/user/password/reset/token
 Content-Type: application/json

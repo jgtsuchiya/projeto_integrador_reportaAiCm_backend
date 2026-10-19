@@ -23,6 +23,7 @@ describe('envSchema', () => {
       DB_PORT: 3306,
       DB_LOGGING: false,
       INVITATION_EXPIRES_IN_HOURS: 48,
+      PASSWORD_RESET_EXPIRES_IN_MINUTES: 60,
       LOGIN_MAX_FAILED_ATTEMPTS: 5,
       LOGIN_LOCK_WINDOW_MINUTES: 15,
       RATE_LIMIT_MAX_REQUESTS: 20,
@@ -42,6 +43,7 @@ describe('envSchema', () => {
       DB_PORT: '3307',
       DB_LOGGING: 'true',
       INVITATION_EXPIRES_IN_HOURS: '72',
+      PASSWORD_RESET_EXPIRES_IN_MINUTES: '30',
       LOGIN_MAX_FAILED_ATTEMPTS: '3',
       LOGIN_LOCK_WINDOW_MINUTES: '30',
       RATE_LIMIT_MAX_REQUESTS: '100',
@@ -55,6 +57,7 @@ describe('envSchema', () => {
     expect(env.DB_PORT).toBe(3307);
     expect(env.DB_LOGGING).toBe(true);
     expect(env.INVITATION_EXPIRES_IN_HOURS).toBe(72);
+    expect(env.PASSWORD_RESET_EXPIRES_IN_MINUTES).toBe(30);
     expect(env.LOGIN_MAX_FAILED_ATTEMPTS).toBe(3);
     expect(env.LOGIN_LOCK_WINDOW_MINUTES).toBe(30);
     expect(env.RATE_LIMIT_MAX_REQUESTS).toBe(100);
@@ -122,6 +125,10 @@ describe('envSchema', () => {
   );
 
   it.each([
+    ['PASSWORD_RESET_EXPIRES_IN_MINUTES', '0'],
+    ['PASSWORD_RESET_EXPIRES_IN_MINUTES', '-1'],
+    ['PASSWORD_RESET_EXPIRES_IN_MINUTES', '1.5'],
+    ['PASSWORD_RESET_EXPIRES_IN_MINUTES', 'abc'],
     ['LOGIN_MAX_FAILED_ATTEMPTS', '0'],
     ['LOGIN_MAX_FAILED_ATTEMPTS', '-1'],
     ['LOGIN_MAX_FAILED_ATTEMPTS', '1.5'],

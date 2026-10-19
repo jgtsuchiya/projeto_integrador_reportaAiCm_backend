@@ -16,6 +16,7 @@ import {
 } from '@modules/users/application/use-cases/create-super-admin.use-case';
 import { LoginAttemptOrmEntity } from '@modules/users/infra/database/entities/login-attempt.orm-entity';
 import { UserOrmEntity } from '@modules/users/infra/database/entities/user.orm-entity';
+import { BackgroundTasks } from '@shared/application/ports/background-tasks';
 import { MailSender } from '@shared/application/ports/mail-sender';
 import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
 import { FakeMailSender } from '@shared/testing/fake-mail-sender';
@@ -143,6 +144,8 @@ export class E2eApp {
 
   async close(): Promise<void> {
     try {
+      // Um pedido de redefinição de senha ainda em andamento gravaria depois da limpeza.
+      await this.app.get(BackgroundTasks).drain();
       await this.clearData();
     } finally {
       await this.app.close();

@@ -18,6 +18,7 @@ A autenticação é feita pelo **SuperTokens** self-hosted, integrado pelo SDK `
 - [Matriz de permissões](#matriz-de-permissões)
 - [Como proteger uma rota nova](#como-proteger-uma-rota-nova)
 - [Ciclo de vida das contas](#ciclo-de-vida-das-contas)
+- [Recuperação de senha](#recuperação-de-senha)
 - [Formato dos erros](#formato-dos-erros)
 - [Fora do escopo](#fora-do-escopo)
 
@@ -90,7 +91,7 @@ Tudo o que toca o SDK fica no módulo [`auth`](../src/modules/auth) e no adapter
 | [`supertokens.config.ts`](../src/modules/auth/infra/supertokens/supertokens.config.ts)                   | Configuração do `init`: `apiBasePath: '/api/auth'` e as receitas EmailPassword, Session e UserRoles                             |
 | [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts)       | As regras do projeto aplicadas ao SuperTokens ([o que foi customizado](#o-que-foi-customizado))                                 |
 | [`SuperTokensMiddleware`](../src/modules/auth/presentation/middlewares/supertokens.middleware.ts)        | Atende as rotas nativas em `/api/auth`. As outras requisições seguem para os controllers                                        |
-| [`rate-limit.middleware.ts`](../src/modules/auth/presentation/middlewares/rate-limit.middleware.ts)      | Limita as requisições por IP no login, no cadastro e no convite ([limite por IP](#limite-de-requisições-por-ip))                |
+| [`rate-limit.middleware.ts`](../src/modules/auth/presentation/middlewares/rate-limit.middleware.ts)      | Limita as requisições por IP nas rotas públicas, como o login e o cadastro ([limite por IP](#limite-de-requisições-por-ip))     |
 | [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts)                                     | Guard global: exige a sessão, carrega o usuário no MySQL e confere o papel                                                      |
 | [`SuperTokensExceptionFilter`](../src/modules/auth/presentation/filters/supertokens-exception.filter.ts) | Responde os erros do SDK (sessão ausente ou expirada) no formato que os SDKs de front esperam                                   |
 | [`configureApp`](../src/configure-app.ts)                                                                | Prefixo `/api`, CORS, `trust proxy` e limite por IP. O `main.ts` e os testes que sobem a API usam a mesma configuração          |
@@ -117,7 +118,7 @@ As outras rotas da receita EmailPassword ficam **desativadas** e respondem 404 (
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `POST /api/auth/signup`                                                           | O Client se cadastra pelo `POST /api/clients`, e o ADM é convidado |
 | `GET /api/auth/emailpassword/email/exists` (e a antiga `/signup/email/exists`)    | Permitiria descobrir quais e-mails têm conta                       |
-| `POST /api/auth/user/password/reset/token` e `POST /api/auth/user/password/reset` | A recuperação de senha está fora do escopo                         |
+| `POST /api/auth/user/password/reset/token` e `POST /api/auth/user/password/reset` | A recuperação usa rotas próprias, em `/api/password-resets`        |
 
 ### Login
 
@@ -151,8 +152,8 @@ O `user` da resposta é o usuário do SuperTokens (id, e-mail e método de login
 As regras do projeto entram no SuperTokens por quatro pontos, todos em [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts):
 
 1. **Quem pode entrar (RN09).** Depois de o SuperTokens conferir a senha, a função `signIn` consulta o usuário no MySQL (`AuthorizeSignInUseCase`). Se ele não estiver ACTIVE, tiver sido excluído ou não existir na aplicação, o resultado vira `WRONG_CREDENTIALS_ERROR`. Se puder entrar, o `last_login_at` é atualizado. O override fica na função `signIn`, e não na API `signInPOST`, porque a sessão só é criada depois dela: um login recusado não chega a gerar tokens.
-2. **Política de senha (RN08).** De 8 a 128 caracteres, com pelo menos uma letra e um número. A regra mora no value object [`Password`](../src/modules/users/domain/value-objects/password.ts), aplicado em todas as rotas que definem senha (cadastro do Client, aceite do convite, troca de senha e seed). O validador do campo `password` no SuperTokens usa a mesma regra, para ela valer também nas rotas nativas, caso alguma seja reativada. O login não valida a política: uma senha antiga pode não seguir a regra atual.
-3. **Rotas desativadas (RN16).** As APIs de sign-up, de e-mail existente e de reset de senha são definidas como `undefined`. O middleware deixa de atendê-las, e a requisição cai no 404 do Nest.
+2. **Política de senha (RN08).** De 8 a 128 caracteres, com pelo menos uma letra e um número. A regra mora no value object [`Password`](../src/modules/users/domain/value-objects/password.ts), aplicado em todas as rotas que definem senha (cadastro do Client, aceite do convite, troca e redefinição de senha e seed). O validador do campo `password` no SuperTokens usa a mesma regra, para ela valer também nas rotas nativas, caso alguma seja reativada. O login não valida a política: uma senha antiga pode não seguir a regra atual.
+3. **Rotas desativadas (RN16).** As APIs de sign-up, de e-mail existente e de reset de senha são definidas como `undefined`. O middleware deixa de atendê-las, e a requisição cai no 404 do Nest. A [recuperação de senha](#recuperação-de-senha) tem rotas próprias.
 4. **Bloqueio por tentativas (RN17 e RN19).** A API `signInPOST` confere se o e-mail está bloqueado antes de a senha ser conferida e registra a tentativa depois ([bloqueio do login](#bloqueio-do-login-por-tentativas)). Este override fica na API, e não na função `signIn`, porque só a API tem a requisição (IP e user agent) e é chamada uma única vez por login, com conta ou não.
 
 O MFA fica fora desta sprint. O ponto de entrada da segunda etapa já existe: é o resultado do `AuthorizeSignInUseCase`, que hoje só diz se o login é permitido.
@@ -180,7 +181,7 @@ flowchart TD
 - **Registro (RN19).** Cada tentativa respondida vira uma linha em `login_attempts`, com o e-mail, o IP, o user agent e o resultado. A senha nunca é gravada. O IP é o `request.ip` do Express, que segue o `TRUST_PROXY` ([limite por IP](#limite-de-requisições-por-ip)).
 - **O que não gera registro.** O e-mail fora do formato (`FIELD_ERROR`), que o SuperTokens recusa antes do override, e o e-mail que o SuperTokens aceita mas o [`Email`](../src/modules/users/domain/value-objects/email.ts) da aplicação recusa (ex.: mais de 254 caracteres). Como nenhuma conta tem um e-mail assim, esse login responde sempre `WRONG_CREDENTIALS_ERROR`.
 - **Retenção (RN19).** As linhas com mais de 30 dias são apagadas pelo [`LoginAttemptRetentionScheduler`](../src/modules/users/infra/scheduling/login-attempt-retention.scheduler.ts), quando a API sobe e, depois, uma vez por dia. As tentativas do e-mail de uma conta são apagadas junto com ela, na exclusão (RN11).
-- **Zerar o bloqueio.** O `LoginLockService.clear(email)` apaga as falhas que estão na conta. É o que a redefinição de senha vai usar (RN21).
+- **Zerar o bloqueio.** O `LoginLockService.clear(email)` apaga as falhas que estão na conta. É o que a [redefinição de senha](#recuperação-de-senha) usa (RN21).
 - **Onde ficam as regras.** No módulo `users`: o [`LoginLockService`](../src/modules/users/application/services/login-lock.service.ts) conta as falhas, e os casos de uso `CheckLoginLockUseCase` e `RecordLoginAttemptUseCase` são chamados pelo override por meio do `SuperTokensHooks`, como o `AuthorizeSignInUseCase`.
 
 Dois limites conhecidos:
@@ -192,11 +193,13 @@ Dois limites conhecidos:
 
 As rotas públicas que recebem credenciais ou disparam e-mail aceitam `RATE_LIMIT_MAX_REQUESTS` requisições por IP a cada `RATE_LIMIT_WINDOW_SECONDS` segundos, em cada rota (RN18). Por padrão, são 20 por minuto:
 
-| Método | Rota                      |
-| ------ | ------------------------- |
-| `POST` | `/api/auth/signin`        |
-| `POST` | `/api/clients`            |
-| `POST` | `/api/invitations/accept` |
+| Método | Rota                           |
+| ------ | ------------------------------ |
+| `POST` | `/api/auth/signin`             |
+| `POST` | `/api/clients`                 |
+| `POST` | `/api/invitations/accept`      |
+| `POST` | `/api/password-resets`         |
+| `POST` | `/api/password-resets/confirm` |
 
 Acima do limite, a resposta é 429 no formato de erro da aplicação, inclusive no login, com o header `Retry-After` (os segundos que faltam para a janela acabar):
 
@@ -228,7 +231,7 @@ Na verificação, a API procura a sessão nos dois lugares, então as rotas da a
 
 **Validade e renovação.** O access token vale 15 minutos e o refresh token, 7 dias. Quando o access token expira, a API responde 401 com `{ "message": "try refresh token" }`, e o SDK de front chama o `POST /api/auth/session/refresh` e repete a requisição. O refresh token é **rotativo**: cada renovação devolve um par novo. Reusar um refresh token antigo depois que o sucessor dele já foi usado é tratado como roubo, e a sessão inteira é encerrada (401 com `{ "message": "token theft detected" }`, RN14). Antes disso, o reuso é aceito, para cobrir a resposta de uma renovação que se perdeu na rede.
 
-**Revogação.** Encerrar uma sessão (signout, troca de senha em outro aparelho ou roubo detectado) impede a renovação, mas o access token já emitido continua aceito até expirar, por no máximo 15 minutos: ele é verificado pela assinatura, sem consulta ao Core. O bloqueio por status é diferente. Como o guard confere o MySQL a cada requisição, o usuário inativado ou excluído perde o acesso na hora ([o que o AuthGuard faz](#o-que-o-authguard-faz-a-cada-requisição)).
+**Revogação.** Encerrar uma sessão (signout, troca de senha em outro aparelho, redefinição de senha ou roubo detectado) impede a renovação, mas o access token já emitido continua aceito até expirar, por no máximo 15 minutos: ele é verificado pela assinatura, sem consulta ao Core. O bloqueio por status é diferente. Como o guard confere o MySQL a cada requisição, o usuário inativado ou excluído perde o acesso na hora ([o que o AuthGuard faz](#o-que-o-authguard-faz-a-cada-requisição)).
 
 **Modo header (app).** No refresh, o refresh token vai no lugar do access token:
 
@@ -282,28 +285,30 @@ O passo 2 custa uma consulta ao MySQL por requisição autenticada. É o preço 
 
 ## Matriz de permissões
 
-| Rota                               | SUPER_ADMIN | ADMIN | CLIENT | Sem sessão |
-| ---------------------------------- | :---------: | :---: | :----: | :--------: |
-| `GET /api/health`                  |      ✔      |   ✔   |   ✔    |     ✔      |
-| `POST /api/auth/signin`            |      ✔      |   ✔   |   ✔    |     ✔      |
-| `POST /api/auth/session/refresh`   |      ✔      |   ✔   |   ✔    |     ✔¹     |
-| `POST /api/clients` (autocadastro) |      ✔      |   ✔   |   ✔    |     ✔      |
-| `POST /api/invitations/accept`     |      ✔      |   ✔   |   ✔    |     ✔      |
-| `POST /api/auth/signout`           |      ✔      |   ✔   |   ✔    |            |
-| `GET /api/users/me`                |      ✔      |   ✔   |   ✔    |            |
-| `PATCH /api/users/me`              |      ✔      |   ✔   |   ✔    |            |
-| `PATCH /api/users/me/password`     |      ✔      |   ✔   |   ✔    |            |
-| `DELETE /api/users/me`             |             |       |   ✔    |            |
-| `GET /api/clients`                 |      ✔      |   ✔   |        |            |
-| `GET /api/clients/:id`             |      ✔      |   ✔   |        |            |
-| `PATCH /api/clients/:id/status`    |      ✔      |   ✔   |        |            |
-| `POST /api/admins`                 |      ✔      |       |        |            |
-| `GET /api/admins`                  |      ✔      |       |        |            |
-| `GET /api/admins/:id`              |      ✔      |       |        |            |
-| `PATCH /api/admins/:id`            |      ✔      |       |        |            |
-| `PATCH /api/admins/:id/status`     |      ✔      |       |        |            |
-| `POST /api/admins/:id/invitation`  |      ✔      |       |        |            |
-| `DELETE /api/admins/:id`           |      ✔      |       |        |            |
+| Rota                                | SUPER_ADMIN | ADMIN | CLIENT | Sem sessão |
+| ----------------------------------- | :---------: | :---: | :----: | :--------: |
+| `GET /api/health`                   |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/auth/signin`             |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/auth/session/refresh`    |      ✔      |   ✔   |   ✔    |     ✔¹     |
+| `POST /api/clients` (autocadastro)  |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/invitations/accept`      |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/password-resets`         |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/password-resets/confirm` |      ✔      |   ✔   |   ✔    |     ✔      |
+| `POST /api/auth/signout`            |      ✔      |   ✔   |   ✔    |            |
+| `GET /api/users/me`                 |      ✔      |   ✔   |   ✔    |            |
+| `PATCH /api/users/me`               |      ✔      |   ✔   |   ✔    |            |
+| `PATCH /api/users/me/password`      |      ✔      |   ✔   |   ✔    |            |
+| `DELETE /api/users/me`              |             |       |   ✔    |            |
+| `GET /api/clients`                  |      ✔      |   ✔   |        |            |
+| `GET /api/clients/:id`              |      ✔      |   ✔   |        |            |
+| `PATCH /api/clients/:id/status`     |      ✔      |   ✔   |        |            |
+| `POST /api/admins`                  |      ✔      |       |        |            |
+| `GET /api/admins`                   |      ✔      |       |        |            |
+| `GET /api/admins/:id`               |      ✔      |       |        |            |
+| `PATCH /api/admins/:id`             |      ✔      |       |        |            |
+| `PATCH /api/admins/:id/status`      |      ✔      |       |        |            |
+| `POST /api/admins/:id/invitation`   |      ✔      |       |        |            |
+| `DELETE /api/admins/:id`            |      ✔      |       |        |            |
 
 ¹ Não usa o access token, mas exige um refresh token válido.
 
@@ -389,12 +394,15 @@ Só o usuário ACTIVE e não excluído faz login e acessa a API. Uma transição
 | Inativação                                         | `status` INACTIVE                                                                                                                                                                                       | Revoga todas as sessões                                        |
 | Reativação                                         | `status` ACTIVE                                                                                                                                                                                         | Nada: o usuário faz login de novo                              |
 | Troca de senha                                     | Nada                                                                                                                                                                                                    | Confere a senha atual, grava a nova e revoga as outras sessões |
+| Pedido de redefinição de senha                     | O token em `user_tokens`, no lugar dos anteriores do mesmo tipo                                                                                                                                         | Nada                                                           |
+| Redefinição de senha                               | O token marcado como usado, o `email_verified_at` preenchido (se estava vazio) e as falhas de login do e-mail apagadas                                                                                  | Grava a senha nova e revoga todas as sessões                   |
 | Exclusão (ADM pelo SuperAdm, Client por ele mesmo) | `deleted_at` e e-mail anonimizado. No Client, também o nome, e o `client_profiles` é apagado. As tentativas de login do e-mail são apagadas ([DATABASE.md](DATABASE.md#exclusão-lógica-e-anonimização)) | Remove o usuário, com as credenciais, as sessões e os papéis   |
 
 Como não existe transação entre os dois bancos, a ordem das gravações é escolhida para uma falha no meio não deixar o usuário num estado ruim:
 
 - **Na criação**, a credencial vem primeiro, porque o id dela é o `users.id`. Se a gravação no MySQL falhar, a credencial é removida (compensação), e não sobra credencial órfã.
 - **Na inativação e na autoexclusão do Client**, o MySQL vem primeiro. Como o login e o guard conferem o MySQL, o acesso já está bloqueado (e os dados, anonimizados) mesmo se a chamada ao SuperTokens falhar.
+- **Na redefinição de senha**, o token é o último a ser gravado. Tudo o que vem antes (senha, sessões e bloqueio) pode ser repetido: se um passo falhar, o link continua válido, e o usuário redefine de novo.
 - **Na exclusão de um ADM**, o SuperTokens vem primeiro. Se a gravação no MySQL falhar, o ADM continua visível e o SuperAdm repete a exclusão. Na ordem inversa, uma falha deixaria o e-mail preso no SuperTokens, sem poder receber um novo convite.
 
 **Os papéis do SuperTokens são criados pelo seed.** Num ambiente novo, rode o `npm run seed` antes de qualquer cadastro: sem ele, o `POST /api/clients` e o `POST /api/admins` respondem 500, porque o papel ainda não existe no Core.
@@ -425,6 +433,53 @@ sequenceDiagram
 
 O convite não usa o reset de senha do SuperTokens: lá, a validade do token é uma configuração global do Core, e gerar um link novo não invalida os anteriores.
 
+## Recuperação de senha
+
+O "esqueci minha senha" é igual para os três papéis e usa duas rotas públicas da aplicação, com o token em `user_tokens`, como o convite (RN20 e RN21). O reset nativo do SuperTokens continua desativado (RN16).
+
+```mermaid
+sequenceDiagram
+    actor U as Usuário
+    participant F as App ou painel
+    participant API
+    participant E as E-mail
+    participant W as Painel web
+
+    U->>F: "Esqueci minha senha"
+    F->>API: POST /api/password-resets { email }
+    API-->>F: 204 (sempre)
+    API->>E: link WEB_APP_URL/redefinir-senha?token=...
+    E->>U: e-mail com o link
+    U->>W: abre o link e escolhe a senha
+    W->>API: POST /api/password-resets/confirm { token, password }
+    API-->>W: 204, todas as sessões revogadas
+    API->>E: aviso "Sua senha foi alterada"
+    U->>F: login com a senha nova
+```
+
+**Pedido (`POST /api/password-resets`).**
+
+- **Responde sempre 204**, exista ou não a conta. A resposta sai antes de a conta ser buscada e de o e-mail ser enviado: o trabalho segue em segundo plano ([`BackgroundTasks`](ARCHITECTURE.md#tarefas-em-segundo-plano)). Assim, nem a resposta nem o tempo dela revelam se o e-mail tem conta. Uma falha no pedido, inclusive no envio do e-mail, vai só para o log.
+- **Quem recebe o link.** Só a conta ACTIVE e não excluída. Para um e-mail sem conta, ou de uma conta PENDING, INACTIVE ou excluída, nada é enviado. O ADM PENDING continua dependendo do convite.
+- **O token** é aleatório e de uso único, e o banco guarda só o SHA-256 dele. Vale `PASSWORD_RESET_EXPIRES_IN_MINUTES` (60 por padrão). Um pedido novo invalida os links anteriores.
+- **Um e-mail por minuto.** Um pedido feito menos de 1 minuto depois do anterior, para a mesma conta, responde 204 e não envia nada: o link que já foi continua valendo.
+- **O único erro é o 400**, para um e-mail fora do formato. Ele não revela nada, porque depende só do texto enviado.
+
+**Redefinição (`POST /api/password-resets/confirm`).**
+
+- Aplica a política de senha (RN08), grava a senha nova no SuperTokens, **revoga todas as sessões** do usuário, zera o [bloqueio por tentativas](#bloqueio-do-login-por-tentativas) do e-mail, preenche o `email_verified_at`, se estiver vazio (o link prova a posse do e-mail), e marca o token como usado.
+- Um token inexistente, expirado, já usado, substituído por um pedido novo ou de outro tipo (como o do convite) responde sempre o mesmo 422. O token de uma conta que foi excluída ou inativada depois do pedido também.
+- Uma senha fora da política responde 400 e não consome o token.
+
+**Aviso.** Depois da redefinição, o usuário recebe o e-mail "Sua senha foi alterada". O mesmo aviso sai na troca pelo perfil (`PATCH /api/users/me/password`). É por ele que o dono da conta descobre uma troca que não fez. Uma falha no envio do aviso não desfaz a troca.
+
+As duas rotas entram no [limite por IP](#limite-de-requisições-por-ip). O link aponta para a página `/redefinir-senha` do painel web, para os três papéis ([FRONTEND.md](FRONTEND.md#esqueci-minha-senha)).
+
+Dois limites conhecidos:
+
+- **O pedido em andamento se perde se a API cair.** As tarefas em segundo plano rodam no próprio processo, sem fila. No encerramento normal, a API espera as que estão em andamento. Se o e-mail não chegar, o usuário pede o link de novo.
+- **Pedidos simultâneos.** Dois pedidos ao mesmo tempo para a mesma conta podem passar juntos pela conferência do intervalo de 1 minuto. Quem segura esse caso é o limite por IP.
+
 ## Formato dos erros
 
 | Origem                                            | Status HTTP                  | Corpo                                                                                           |
@@ -441,4 +496,4 @@ Nas rotas da aplicação: 400 para validação (com a lista de campos em `detail
 
 ## Fora do escopo
 
-Ainda não existem: MFA, recuperação de senha, verificação de e-mail do Client e troca de e-mail. Os pontos em aberto (custo do MFA no SuperTokens, validade do refresh token, hospedagem do Core em produção) estão no fim do [plano da sprint](sprints/sprint-2-usuarios.md#10-pontos-em-aberto), que também traz as regras de negócio (RN01 a RN16) citadas neste documento.
+Ainda não existem: MFA, verificação de e-mail do Client e troca de e-mail. Os pontos em aberto (custo do MFA no SuperTokens, validade do refresh token, hospedagem do Core em produção) estão no fim do [plano da sprint 2](sprints/sprint-2-usuarios.md#10-pontos-em-aberto), que também traz as regras de negócio RN01 a RN16 citadas neste documento. As regras RN17 a RN25 estão no [plano da sprint 3](sprints/sprint-3-login.md#4-regras-de-negócio).

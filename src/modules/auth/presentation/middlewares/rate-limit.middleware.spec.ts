@@ -55,6 +55,12 @@ describe('findRateLimitedRoute', () => {
     ['com barra invertida', '/api/auth\\signin', '/api/auth/signin'],
     ['com o tenant do SuperTokens', '/api/auth/public/signin', '/api/auth/signin'],
     ['com o tenant em maiúsculas e barra final', '/api/auth/Public/signin/', '/api/auth/signin'],
+    ['do pedido de redefinição de senha', '/api/Password-Resets/', '/api/password-resets'],
+    [
+      'da redefinição de senha, com query string',
+      '/api/password-resets/confirm?origem=email',
+      '/api/password-resets/confirm',
+    ],
   ])('deve encontrar a rota no caminho %s', (_case, url, path) => {
     const result = findRateLimitedRoute('POST', url);
 
@@ -72,6 +78,8 @@ describe('findRateLimitedRoute', () => {
     ['POST', '/api/clients/5d1c1f0e-8a3b-4f6e-9c2d-7b8a9e0f1a2b'],
     ['POST', '/api/auth/public/outro/signin'],
     ['POST', '/api/public/clients'],
+    ['GET', '/api/password-resets'],
+    ['POST', '/api/password-resets/confirm/outro'],
     ['POST', 'http://['],
   ])('não deve encontrar rota limitada em %s %s', (method, url) => {
     const result = findRateLimitedRoute(method, url);
@@ -159,6 +167,18 @@ describe('createRateLimitMiddleware', () => {
 
     expect(next).toHaveBeenCalledTimes(1);
     expect(status).not.toHaveBeenCalled();
+  });
+
+  it('deve contar em separado o pedido e a confirmação da redefinição de senha', async () => {
+    await reachLimit('/api/password-resets');
+    next.mockClear();
+
+    const confirm = await call('POST', '/api/password-resets/confirm');
+    const request = await call('POST', '/api/password-resets');
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(confirm.status).not.toHaveBeenCalled();
+    expect(request.status).toHaveBeenCalledWith(429);
   });
 
   it('deve contar cada IP em separado', async () => {

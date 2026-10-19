@@ -43,7 +43,8 @@ export interface SuperTokensHooks {
  *
  * - sign-up: o CLIENT se cadastra pelo `POST /api/clients` e o ADMIN é convidado (RN05, RN06);
  * - `signup/email/exists`: permitiria descobrir quais e-mails têm conta;
- * - reset de senha: fora do escopo da sprint.
+ * - reset de senha: a recuperação é feita pelas rotas de `/api/password-resets`, com o token
+ *   em `user_tokens` (RN20). No reset nativo, um link novo não invalida os anteriores.
  *
  * O sign-in ganha o bloqueio por tentativas (RN17): antes de a senha ser conferida, o e-mail
  * bloqueado recebe um `GENERAL_ERROR`, igual para e-mail com ou sem conta. Depois, a tentativa

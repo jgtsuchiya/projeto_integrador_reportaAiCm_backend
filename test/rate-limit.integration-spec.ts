@@ -183,6 +183,17 @@ describe('Limite de requisições por IP (integração)', () => {
       expect(register.status).toBe(400);
     });
 
+    it('não deve consumir o limite da redefinição de senha com os pedidos do link', async () => {
+      const ip = newIp();
+      await sendTimes(LIMIT, 'POST', '/api/password-resets', ip);
+
+      const request = await send('POST', '/api/password-resets', ip);
+      const confirm = await send('POST', '/api/password-resets/confirm', ip);
+
+      expect(request.status).toBe(429);
+      expect(confirm.status).toBe(400);
+    });
+
     it('deve contar cada IP em separado', async () => {
       const ip = newIp();
       await sendTimes(LIMIT, 'POST', '/api/auth/signin', ip);
@@ -202,6 +213,8 @@ describe('Limite de requisições por IP (integração)', () => {
       ['/api/auth\\signin', '/api/auth/signin'],
       ['/API/Clients/', '/api/clients'],
       ['/api/Invitations/Accept?origem=email', '/api/invitations/accept'],
+      ['/API/Password-Resets/', '/api/password-resets'],
+      ['/api/password-resets/confirm?origem=email', '/api/password-resets/confirm'],
     ])('deve contar %s na mesma rota de %s', async (variation, path) => {
       const ip = newIp();
 

@@ -8,6 +8,7 @@ import Session from 'supertokens-node/recipe/session';
 import { DataSource, In } from 'typeorm';
 
 import { envSchema } from '@config/env.schema';
+import { PASSWORD_CHANGED_MAIL_SUBJECT } from '@modules/users/application/services/password-changed-notice';
 import { Email } from '@modules/users/domain/value-objects/email';
 import { Password } from '@modules/users/domain/value-objects/password';
 import { Role, ROLES } from '@modules/users/domain/value-objects/role';
@@ -17,7 +18,9 @@ import { UserTokenOrmEntity } from '@modules/users/infra/database/entities/user-
 import { UserOrmEntity } from '@modules/users/infra/database/entities/user.orm-entity';
 import { ROLE_IDS } from '@modules/users/infra/database/mappers/user.mapper';
 import { SuperTokensIdentityProvider } from '@modules/users/infra/identity/supertokens-identity-provider';
+import { MailDeliveryError, MailSender } from '@shared/application/ports/mail-sender';
 import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
+import { FakeMailSender } from '@shared/testing/fake-mail-sender';
 
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
@@ -56,6 +59,7 @@ function randomCpf(): string {
 describe('Perfil do usuário autenticado (integração)', () => {
   const env = envSchema.parse(process.env);
   const identityProvider = new SuperTokensIdentityProvider();
+  const mailSender = new FakeMailSender();
   const emails: string[] = [];
   const createdIds: string[] = [];
   let dataSource: DataSource;
@@ -79,7 +83,10 @@ describe('Perfil do usuário autenticado (integração)', () => {
     await dataSource.initialize();
     await dataSource.runMigrations();
 
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(MailSender)
+      .useValue(mailSender)
+      .compile();
     app = moduleRef.createNestApplication({ logger: false });
     configureApp(app);
     await app.listen(0, '127.0.0.1');
@@ -341,6 +348,11 @@ describe('Perfil do usuário autenticado (integração)', () => {
       return request('PATCH', '/users/me/password', { ...user, body });
     }
 
+    /** Assuntos dos e-mails enviados ao endereço. */
+    function subjectsSentTo(email: string): string[] {
+      return mailSender.messages.filter(({ to }) => to === email).map(({ subject }) => subject);
+    }
+
     it('deve trocar a senha e revogar as outras sessões, mantendo a atual (RN13)', async () => {
       const client = await createClient();
       const other = await signIn(client.email, PASSWORD);
@@ -363,6 +375,32 @@ describe('Perfil do usuário autenticado (integração)', () => {
       await expect(newSignIn.json()).resolves.toMatchObject({ status: 'OK' });
     });
 
+    it('deve avisar o usuário da troca por e-mail (RN21)', async () => {
+      const admin = await createStaff(Role.ADMIN);
+
+      const response = await changePassword(admin, {
+        currentPassword: PASSWORD,
+        newPassword: NEW_PASSWORD,
+      });
+
+      expect(response.status).toBe(204);
+      expect(subjectsSentTo(admin.email)).toEqual([PASSWORD_CHANGED_MAIL_SUBJECT]);
+    });
+
+    it('deve trocar a senha mesmo quando o e-mail de aviso falha', async () => {
+      const client = await createClient();
+      jest.spyOn(mailSender, 'send').mockRejectedValueOnce(new MailDeliveryError());
+
+      const response = await changePassword(client, {
+        currentPassword: PASSWORD,
+        newPassword: NEW_PASSWORD,
+      });
+
+      expect(response.status).toBe(204);
+      const signIn = await signInRequest(client.email, NEW_PASSWORD);
+      await expect(signIn.json()).resolves.toMatchObject({ status: 'OK' });
+    });
+
     it('deve responder 401 e manter a senha quando a senha atual está incorreta', async () => {
       const admin = await createStaff(Role.ADMIN);
 
@@ -378,6 +416,7 @@ describe('Perfil do usuário autenticado (integração)', () => {
       });
       const signIn = await signInRequest(admin.email, PASSWORD);
       await expect(signIn.json()).resolves.toMatchObject({ status: 'OK' });
+      expect(subjectsSentTo(admin.email)).toEqual([]);
     });
 
     it('deve responder 400 para uma nova senha fora da política (RN08)', async () => {
