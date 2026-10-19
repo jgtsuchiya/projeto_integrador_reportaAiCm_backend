@@ -18,6 +18,7 @@ import { Cpf } from '../domain/value-objects/cpf';
 import { Email } from '../domain/value-objects/email';
 import { Password } from '../domain/value-objects/password';
 import { Role } from '../domain/value-objects/role';
+import { UserTokenType } from '../domain/value-objects/user-token-type';
 
 /**
  * Fakes do módulo users para os testes de caso de uso. Os repositórios compartilham um
@@ -152,6 +153,14 @@ export class InMemoryUserTokenRepository extends UserTokenRepository {
     );
   }
 
+  async findLatest(userId: string, type: UserTokenType): Promise<UserToken | null> {
+    const [latest] = [...this.database.tokens.values()]
+      .filter((token) => token.userId === userId && token.type === type)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    return latest ?? null;
+  }
+
   async replace(token: UserToken): Promise<void> {
     for (const [id, existing] of this.database.tokens) {
       if (existing.userId === token.userId && existing.type === token.type) {
@@ -160,6 +169,13 @@ export class InMemoryUserTokenRepository extends UserTokenRepository {
     }
 
     this.database.tokens.set(token.id, token);
+  }
+
+  async saveAttempts(token: UserToken): Promise<void> {
+    // Como o UPDATE do banco: um token já removido (ex.: por um reenvio) não volta.
+    if (this.database.tokens.has(token.id)) {
+      this.database.tokens.set(token.id, token);
+    }
   }
 
   async deleteByUserId(userId: string): Promise<void> {

@@ -219,6 +219,8 @@ O template escapa o HTML de todo o conteúdo, então dados do usuário (como o n
 
 Se o servidor SMTP não aceitar a mensagem, o `send` lança um `MailDeliveryError` com mensagem genérica. O motivo (ex.: `Invalid login: 535 ... (EAUTH)`) vai só para o log, sem a configuração do SMTP e com o usuário e a senha mascarados. Se o caso de uso não tratar o erro, a resposta é 500. Cada etapa da conexão SMTP tem timeout de 10 s, porque o envio acontece dentro da requisição.
 
+No módulo `users`, os e-mails da conta (convite, redefinição de senha, verificação de e-mail e código do login) passam pelo [`UserMailService`](../src/modules/users/application/services/user-mail.service.ts). Ele monta o link `${WEB_APP_URL}<página>?token=...` e trata o `MailDeliveryError`: o `send` devolve `false` em vez de lançar o erro, porque nenhum desses fluxos é desfeito por causa do e-mail.
+
 Em dev, o SMTP é o **Mailpit** do docker-compose: nenhum e-mail sai para a internet, e todos aparecem em http://localhost:8025.
 
 ## Convenções de nomenclatura

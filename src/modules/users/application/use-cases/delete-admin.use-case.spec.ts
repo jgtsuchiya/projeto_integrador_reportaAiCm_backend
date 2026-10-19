@@ -12,6 +12,7 @@ import {
   InMemoryUserTokenRepository,
 } from '../../testing/in-memory-users';
 import { AdminInvitationService } from '../services/admin-invitation.service';
+import { UserMailService } from '../services/user-mail.service';
 import { DeleteAdminUseCase } from './delete-admin.use-case';
 
 describe('DeleteAdminUseCase', () => {
@@ -26,10 +27,10 @@ describe('DeleteAdminUseCase', () => {
     database = new InMemoryUsersDatabase();
     userRepository = new InMemoryUserRepository(database);
     identityProvider = new FakeIdentityProvider();
-    invitationService = new AdminInvitationService(new FakeMailSender(), {
-      webAppUrl: 'http://localhost:5173',
-      expiresInHours: 48,
-    });
+    invitationService = new AdminInvitationService(
+      new UserMailService(new FakeMailSender(), { webAppUrl: 'http://localhost:5173' }),
+      { expiresInHours: 48 },
+    );
     sut = new DeleteAdminUseCase(
       userRepository,
       new InMemoryUserTokenRepository(database),

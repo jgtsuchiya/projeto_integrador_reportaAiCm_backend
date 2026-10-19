@@ -9,6 +9,7 @@ import { AdminNotPendingError } from './admin-not-pending.error';
 import { ClientOnlyFieldsError } from './client-only-fields.error';
 import { CpfAlreadyInUseError } from './cpf-already-in-use.error';
 import { EmailAlreadyInUseError } from './email-already-in-use.error';
+import { EmailNotVerifiedError } from './email-not-verified.error';
 import { IncorrectPasswordError } from './incorrect-password.error';
 import { InvalidBirthDateError } from './invalid-birth-date.error';
 import { InvalidCpfError } from './invalid-cpf.error';
@@ -35,6 +36,7 @@ describe('Erros do domínio de usuários', () => {
     [new UserAlreadyDeletedError(), BusinessRuleError, undefined],
     [new InvalidUserTokenError(), BusinessRuleError, { field: 'token' }],
     [new AdminNotPendingError(), BusinessRuleError, undefined],
+    [new EmailNotVerifiedError(), BusinessRuleError, undefined],
     [new ClientOnlyFieldsError(['phone']), BusinessRuleError, { fields: ['phone'] }],
     [
       new InvalidStatusTransitionError('PENDING', 'INACTIVE'),

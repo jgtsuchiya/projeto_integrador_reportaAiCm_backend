@@ -10,6 +10,7 @@ import {
   AdminInvitationConfig,
   AdminInvitationService,
 } from './application/services/admin-invitation.service';
+import { UserMailConfig, UserMailService } from './application/services/user-mail.service';
 import { AcceptInvitationUseCase } from './application/use-cases/accept-invitation.use-case';
 import { AuthorizeSignInUseCase } from './application/use-cases/authorize-sign-in.use-case';
 import { ChangeAdminStatusUseCase } from './application/use-cases/change-admin-status.use-case';
@@ -67,6 +68,7 @@ import { ProfileController } from './presentation/controllers/profile.controller
     ResendAdminInvitationUseCase,
     AcceptInvitationUseCase,
     AdminInvitationService,
+    UserMailService,
     ListAdminsUseCase,
     GetAdminUseCase,
     UpdateAdminUseCase,
@@ -87,10 +89,16 @@ import { ProfileController } from './presentation/controllers/profile.controller
     { provide: UserTokenRepository, useClass: TypeOrmUserTokenRepository },
     { provide: IdentityProvider, useClass: SuperTokensIdentityProvider },
     {
+      provide: UserMailConfig,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>): UserMailConfig => ({
+        webAppUrl: config.get('WEB_APP_URL', { infer: true }),
+      }),
+    },
+    {
       provide: AdminInvitationConfig,
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>): AdminInvitationConfig => ({
-        webAppUrl: config.get('WEB_APP_URL', { infer: true }),
         expiresInHours: config.get('INVITATION_EXPIRES_IN_HOURS', { infer: true }),
       }),
     },

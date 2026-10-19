@@ -17,6 +17,7 @@ import {
   InMemoryUsersDatabase,
 } from '../../testing/in-memory-users';
 import { AdminInvitationService } from '../services/admin-invitation.service';
+import { UserMailService } from '../services/user-mail.service';
 import { InviteAdminInput, InviteAdminUseCase } from './invite-admin.use-case';
 
 const HOUR_IN_MS = 60 * 60 * 1000;
@@ -52,10 +53,10 @@ describe('InviteAdminUseCase', () => {
     sut = new InviteAdminUseCase(
       userRepository,
       identityProvider,
-      new AdminInvitationService(mailSender, {
-        webAppUrl: 'http://localhost:5173',
-        expiresInHours: 48,
-      }),
+      new AdminInvitationService(
+        new UserMailService(mailSender, { webAppUrl: 'http://localhost:5173' }),
+        { expiresInHours: 48 },
+      ),
     );
   });
 

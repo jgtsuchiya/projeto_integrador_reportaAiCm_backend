@@ -1,5 +1,6 @@
 import { Entity } from '@shared/domain/entity';
 
+import { EmailNotVerifiedError } from '../errors/email-not-verified.error';
 import { InvalidStatusTransitionError } from '../errors/invalid-status-transition.error';
 import { InvalidUserNameError } from '../errors/invalid-user-name.error';
 import { SuperAdminProtectedError } from '../errors/super-admin-protected.error';
@@ -199,6 +200,52 @@ export class User extends Entity {
 
   recordLogin(): void {
     this.props.lastLoginAt = new Date();
+  }
+
+  /**
+   * O usuário provou que o e-mail é dele, pelo link de verificação (RN22) ou de redefinição
+   * de senha (RN21). Só a primeira verificação é registrada: as seguintes não mudam a data.
+   */
+  verifyEmail(): void {
+    this.ensureNotDeleted();
+
+    if (this.props.emailVerifiedAt !== null) {
+      return;
+    }
+
+    this.touch();
+    this.props.emailVerifiedAt = this.props.updatedAt;
+  }
+
+  /**
+   * Liga a verificação em duas etapas (RN24). Exige o e-mail verificado, porque é para ele
+   * que o código do login é enviado. Não tem efeito se ela já estiver ligada.
+   */
+  enableMfa(): void {
+    this.ensureNotDeleted();
+
+    if (this.props.mfaEnabled) {
+      return;
+    }
+
+    if (this.props.emailVerifiedAt === null) {
+      throw new EmailNotVerifiedError();
+    }
+
+    this.props.mfaEnabled = true;
+    this.touch();
+  }
+
+  /** Desliga a verificação em duas etapas (RN24). Não tem efeito se ela já estiver desligada. */
+  disableMfa(): void {
+    this.ensureNotDeleted();
+
+    if (!this.props.mfaEnabled) {
+      return;
+    }
+
+    this.props.mfaEnabled = false;
+    this.touch();
   }
 
   /**

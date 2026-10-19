@@ -7,6 +7,7 @@ export class UserTokenMapper {
       userId: entity.userId,
       type: entity.type,
       tokenHash: entity.tokenHash,
+      attempts: entity.attempts,
       expiresAt: entity.expiresAt,
       usedAt: entity.usedAt,
       createdAt: entity.createdAt,
@@ -19,6 +20,7 @@ export class UserTokenMapper {
     entity.userId = token.userId;
     entity.type = token.type;
     entity.tokenHash = token.tokenHash;
+    entity.attempts = token.attempts;
     entity.expiresAt = token.expiresAt;
     entity.usedAt = token.usedAt;
     entity.createdAt = token.createdAt;
