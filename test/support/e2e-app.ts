@@ -97,6 +97,9 @@ export function readTokens(response: request.Response): Tokens {
   };
 }
 
+/** Páginas do painel web que recebem o token dos links enviados por e-mail. */
+export type LinkPage = '/convite' | '/redefinir-senha' | '/verificar-email';
+
 /**
  * A API de pé para os testes e2e (`test/*.e2e-spec.ts`), contra o MySQL de teste e o
  * SuperTokens Core, com o `FakeMailSender` no lugar do SMTP. As requisições são feitas com o
@@ -148,7 +151,7 @@ export class E2eApp {
   async close(): Promise<void> {
     try {
       // Um pedido de redefinição de senha ainda em andamento gravaria depois da limpeza.
-      await this.app.get(BackgroundTasks).drain();
+      await this.waitForBackgroundTasks();
       await this.clearData();
     } finally {
       await this.app.close();
@@ -179,6 +182,14 @@ export class E2eApp {
       .post('/api/auth/session/refresh')
       .set('st-auth-mode', 'header')
       .auth(refreshToken, { type: 'bearer' });
+  }
+
+  /**
+   * Espera o trabalho que a API continua depois de responder. É o caso do pedido de
+   * redefinição de senha, que responde 204 antes de buscar a conta e de enviar o e-mail.
+   */
+  waitForBackgroundTasks(): Promise<void> {
+    return this.app.get(BackgroundTasks).drain();
   }
 
   /** Abre uma sessão nova para a conta. */
@@ -227,6 +238,24 @@ export class E2eApp {
     return match[0];
   }
 
+  /**
+   * Token do link para a página do painel, no último e-mail enviado ao endereço com esse link.
+   * O token só existe no e-mail: o banco guarda o hash dele.
+   */
+  lastLinkToken(email: string, page: LinkPage): string {
+    const pattern = new RegExp(`${page}\\?token=([\\w-]+)`);
+    const match = this.mailSender.messages
+      .filter(({ to }) => to === email)
+      .map(({ text }) => pattern.exec(text))
+      .findLast((result) => result !== null);
+
+    if (!match) {
+      throw new Error(`Nenhum link para ${page} foi enviado para ${email}.`);
+    }
+
+    return match[1];
+  }
+
   /** Id da sessão dos tokens, como o `GET /api/users/me/sessions` a identifica. */
   async currentSessionId(tokens: Tokens): Promise<string> {
     const response = await this.api()
@@ -270,18 +299,11 @@ export class E2eApp {
       .send({ name: 'Ana Souza', email });
     assertStatus(response, 201, 'Convite');
 
-    return { id: (response.body as { id: string }).id, email, token: this.lastInvitationToken() };
-  }
-
-  /** Token do link de convite do último e-mail enviado. */
-  lastInvitationToken(): string {
-    const match = /\/convite\?token=([\w-]+)/.exec(this.mailSender.messages.at(-1)?.text ?? '');
-
-    if (!match) {
-      throw new Error('Nenhum convite foi enviado.');
-    }
-
-    return match[1];
+    return {
+      id: (response.body as { id: string }).id,
+      email,
+      token: this.lastLinkToken(email, '/convite'),
+    };
   }
 
   /** Convida um ADMIN, aceita o convite e faz login. */
@@ -306,6 +328,28 @@ export class E2eApp {
       email: payload.email,
       password: payload.password,
     });
+  }
+
+  /**
+   * Cadastra um Client com a verificação em duas etapas ativa, pelos caminhos da aplicação:
+   * cadastro, confirmação do e-mail pelo link (a ativação exige o e-mail verificado) e
+   * `PATCH /api/users/me/mfa`. A sessão devolvida é a que ativou, que continua completa
+   * (RN24). Os logins seguintes abrem sessões pendentes.
+   */
+  async registerClientWithMfa(): Promise<Actor> {
+    const client = await this.registerClient();
+    const verification = await this.api()
+      .post('/api/email-verifications/confirm')
+      .send({ token: this.lastLinkToken(client.email, '/verificar-email') });
+    assertStatus(verification, 204, 'Confirmação do e-mail');
+
+    const activation = await this.api()
+      .patch('/api/users/me/mfa')
+      .auth(client.accessToken, { type: 'bearer' })
+      .send({ enabled: true, password: client.password });
+    assertStatus(activation, 200, 'Ativação da verificação em duas etapas');
+
+    return client;
   }
 
   /**
