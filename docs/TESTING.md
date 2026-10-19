@@ -81,7 +81,7 @@ const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
 expect(mailSender.messages).toHaveLength(1);
 ```
 
-Os fakes de um único módulo ficam em `src/modules/<feature>/testing`, também fora do build. No módulo `users`, o [`in-memory-users.ts`](../src/modules/users/testing/in-memory-users.ts) traz os repositórios em memória (que compartilham um `InMemoryUsersDatabase`, como as tabelas do MySQL) e o `FakeIdentityProvider`, no lugar do SuperTokens.
+Os fakes de um único módulo ficam em `src/modules/<feature>/testing`, também fora do build. No módulo `users`, o [`in-memory-users.ts`](../src/modules/users/testing/in-memory-users.ts) traz os repositórios em memória (que compartilham um `InMemoryUsersDatabase`, como as tabelas do MySQL) e o `FakeIdentityProvider`, no lugar do SuperTokens. As sessões do fake são os handles de cada usuário, que o teste cria direto em `sessions`. O teste que confere os dados de uma sessão (datas, IP e user agent) a abre com o `openSession`.
 
 ## Testes que fazem login
 
@@ -166,6 +166,7 @@ describe('Perfil (e2e)', () => {
 - **Banco de teste:** o script carrega o `.env.test` e usa a mesma proteção dos testes de integração (aborta se o banco não terminar em `_test`). Cada arquivo começa e termina **apagando todos os usuários** do banco de teste, as credenciais deles no SuperTokens e as tentativas de login.
 - **Contas:** são criadas pelos mesmos caminhos da aplicação: `seedSuperAdmin()` (o caso de uso do `npm run seed`), `createAdmin()` (convite e aceite) e `registerClient()` (autocadastro). É o seed que cria os papéis no SuperTokens, então ele vem antes de qualquer cadastro, como em produção.
 - **Login:** no modo header (`st-auth-mode: header`), como o app mobile. O access token vai no `Authorization: Bearer`.
+- **Sessões:** o `currentSessionId(tokens)` devolve o id da sessão dos tokens, como o `GET /api/users/me/sessions` a identifica. O teste que encerra uma sessão abre uma só para isso, com o `logIn`: a sessão que os outros testes compartilham continua valendo.
 - **Rota nova:** toda rota protegida entra na matriz do `permissions.e2e-spec.ts`, com os papéis permitidos e o status de sucesso. Quando um papel permitido para numa regra da própria rota, o status dela vai em `refused`: é o caso do reenvio da verificação de e-mail, que responde 422 ao ADM e ao SuperAdm, já verificados.
 
 ## Comandos

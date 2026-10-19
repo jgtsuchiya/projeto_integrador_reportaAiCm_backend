@@ -85,7 +85,7 @@ providers: [
 
 Assim, o caso de uso depende apenas de `ReportRepository`. Os testes unitários conseguem trocar a implementação por um fake sem precisar de banco.
 
-Os serviços externos seguem o mesmo padrão, com a porta em `application/ports/`. No módulo `users`, o [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts) (criar credencial, conferir e trocar senha, remover o usuário, revogar sessões, criar e atribuir papéis) é implementado pelo [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts). Só a infra importa o `supertokens-node`. As portas usadas por mais de um módulo, como a de [envio de e-mail](#envio-de-e-mail), ficam em `shared/application/ports/`.
+Os serviços externos seguem o mesmo padrão, com a porta em `application/ports/`. No módulo `users`, o [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts) (criar credencial, conferir e trocar senha, remover o usuário, listar e revogar sessões, criar e atribuir papéis) é implementado pelo [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts). Só a infra importa o `supertokens-node`. As portas usadas por mais de um módulo, como a de [envio de e-mail](#envio-de-e-mail), ficam em `shared/application/ports/`.
 
 ### Entidades e value objects
 

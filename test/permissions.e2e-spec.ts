@@ -139,6 +139,35 @@ describe('Matriz de permissões (e2e)', () => {
       ],
     },
     {
+      line: 'Listar e encerrar as próprias sessões (autenticado)',
+      routes: [
+        {
+          route: 'GET /api/users/me/sessions',
+          allowed: ROLES,
+          success: 200,
+          send: ({ actor }) => call(actor, 'get', '/users/me/sessions'),
+        },
+        {
+          route: 'DELETE /api/users/me/sessions/:id',
+          allowed: ROLES,
+          success: 204,
+          send: async ({ actor }) => {
+            // Encerra uma sessão aberta só para isso: a compartilhada continua valendo.
+            const id = actor ? await e2e.currentSessionId(await e2e.logIn(actor)) : 'sem-sessao';
+
+            return call(actor, 'delete', `/users/me/sessions/${id}`);
+          },
+        },
+        {
+          route: 'DELETE /api/users/me/sessions',
+          allowed: ROLES,
+          success: 204,
+          // Encerra as outras sessões da conta e mantém a de quem chama, que é a compartilhada.
+          send: ({ actor }) => call(actor, 'delete', '/users/me/sessions'),
+        },
+      ],
+    },
+    {
       line: 'Excluir a própria conta (CLIENT)',
       routes: [
         {

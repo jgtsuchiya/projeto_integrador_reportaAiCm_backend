@@ -25,6 +25,8 @@ jest.mock('supertokens-node/recipe/session', () => ({
     revokeAllSessionsForUser: jest.fn(),
     getAllSessionHandlesForUser: jest.fn(),
     revokeMultipleSessions: jest.fn(),
+    getSessionInformation: jest.fn(),
+    revokeSession: jest.fn(),
   },
 }));
 jest.mock('supertokens-node/recipe/userroles', () => ({
@@ -170,6 +172,81 @@ describe('SuperTokensIdentityProvider', () => {
 
       expect(Session.revokeMultipleSessions).not.toHaveBeenCalled();
     });
+  });
+
+  describe('listSessions', () => {
+    type SessionInformation = NonNullable<
+      Awaited<ReturnType<typeof Session.getSessionInformation>>
+    >;
+
+    function mockSessions(sessions: Record<string, Partial<SessionInformation> | undefined>): void {
+      jest.mocked(Session.getAllSessionHandlesForUser).mockResolvedValue(Object.keys(sessions));
+      jest
+        .mocked(Session.getSessionInformation)
+        .mockImplementation(async (handle) => sessions[handle] as SessionInformation | undefined);
+    }
+
+    it('deve listar as sessões do usuário, com as datas e a origem do login', async () => {
+      mockSessions({
+        celular: {
+          sessionHandle: 'celular',
+          timeCreated: Date.parse('2026-10-05T12:00:00.000Z'),
+          expiry: Date.parse('2026-10-12T12:00:00.000Z'),
+          sessionDataInDatabase: { ipAddress: '203.0.113.10', userAgent: 'Mozilla/5.0' },
+        },
+      });
+
+      const sessions = await sut.listSessions(USER_ID);
+
+      expect(Session.getAllSessionHandlesForUser).toHaveBeenCalledWith(USER_ID);
+      expect(Session.getSessionInformation).toHaveBeenCalledWith('celular');
+      expect(sessions).toEqual([
+        {
+          handle: 'celular',
+          createdAt: new Date('2026-10-05T12:00:00.000Z'),
+          expiresAt: new Date('2026-10-12T12:00:00.000Z'),
+          ipAddress: '203.0.113.10',
+          userAgent: 'Mozilla/5.0',
+        },
+      ]);
+    });
+
+    it('deve listar sem IP e sem user agent a sessão aberta antes de a origem ser guardada', async () => {
+      mockSessions({
+        antiga: { sessionHandle: 'antiga', timeCreated: 0, expiry: 0, sessionDataInDatabase: {} },
+      });
+
+      const sessions = await sut.listSessions(USER_ID);
+
+      expect(sessions).toEqual([expect.objectContaining({ ipAddress: null, userAgent: null })]);
+    });
+
+    it('deve ignorar a sessão encerrada entre as duas consultas', async () => {
+      mockSessions({
+        encerrada: undefined,
+        aberta: { sessionHandle: 'aberta', timeCreated: 0, expiry: 0, sessionDataInDatabase: {} },
+      });
+
+      const sessions = await sut.listSessions(USER_ID);
+
+      expect(sessions.map(({ handle }) => handle)).toEqual(['aberta']);
+    });
+
+    it('deve devolver uma lista vazia para o usuário sem sessões', async () => {
+      mockSessions({});
+
+      await expect(sut.listSessions(USER_ID)).resolves.toEqual([]);
+    });
+  });
+
+  it.each([
+    ['que existe', true],
+    ['que não existe mais', false],
+  ])('deve encerrar a sessão %s sem lançar erro', async (_case, revoked) => {
+    jest.mocked(Session.revokeSession).mockResolvedValue(revoked);
+
+    await expect(sut.revokeSession('celular')).resolves.toBeUndefined();
+    expect(Session.revokeSession).toHaveBeenCalledWith('celular');
   });
 
   it('deve criar os papéis sem permissões', async () => {

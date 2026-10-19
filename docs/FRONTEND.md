@@ -276,6 +276,40 @@ GET /api/users/me
 - `cpf`, `phone` e `birthDate` só existem para o Client. CPF e telefone vêm só com dígitos: a máscara é por conta do front.
 - No painel, o CPF dos Clients vem sempre mascarado (`***.982.247-**`) nas rotas de `/api/clients`.
 
+## Sessões abertas
+
+O usuário, de qualquer papel, vê onde a conta está aberta e encerra o acesso de outros aparelhos. A tela "Onde você está conectado" vale para o painel e para o app:
+
+```http
+GET /api/users/me/sessions
+```
+
+```json
+[
+  {
+    "id": "5a1c9f0e-3b7d-4c2a-9e41-0d6f8b2a7c13",
+    "createdAt": "2026-10-06T12:00:00.000Z",
+    "expiresAt": "2026-10-13T12:00:00.000Z",
+    "ipAddress": "203.0.113.10",
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64)",
+    "current": true
+  }
+]
+```
+
+- A lista vem da sessão mais recente para a mais antiga, sem paginação. `createdAt` é a data do login.
+- `current` é `true` só na sessão que fez a requisição. Mostre-a como "este aparelho", sem o botão de encerrar: para sair dela, use o `signOut` do SDK.
+- `ipAddress` e `userAgent` são os do login e podem vir `null`, como nas sessões abertas antes de esta listagem existir. O `userAgent` é o texto cru do header: transformar em "Chrome no Linux" é por conta do front.
+
+| Rota                                | Resposta | Significado                                                          |
+| ----------------------------------- | -------- | -------------------------------------------------------------------- |
+| `GET /api/users/me/sessions`        | 200      | Lista das sessões abertas                                            |
+| `DELETE /api/users/me/sessions/:id` | 204      | Sessão encerrada. O `:id` é o `id` da listagem                       |
+| `DELETE /api/users/me/sessions/:id` | 404      | A sessão não existe mais (ex.: já foi encerrada). Recarregue a lista |
+| `DELETE /api/users/me/sessions`     | 204      | Todas as outras sessões encerradas. A atual continua aberta          |
+
+O aparelho da sessão encerrada não cai na hora: ele perde o acesso na renovação seguinte do token, em até 15 minutos.
+
 ## Quando a sessão acaba
 
 A renovação do access token é automática e o usuário não percebe. A sessão termina de vez quando:
@@ -283,6 +317,7 @@ A renovação do access token é automática e o usuário não percebe. A sessã
 - o usuário sai (`signOut`);
 - o refresh token expira, depois de 7 dias sem uso;
 - o usuário é inativado ou excluído: o bloqueio vale na requisição seguinte;
+- a sessão é encerrada em outro aparelho, pela lista de [sessões abertas](#sessões-abertas): ela cai na renovação seguinte, em até 15 minutos;
 - a senha é trocada em outro aparelho: as outras sessões caem na renovação seguinte, em até 15 minutos, e a de quem trocou continua;
 - a senha é redefinida pelo link do e-mail: todas as sessões caem na renovação seguinte, em até 15 minutos.
 
@@ -304,6 +339,7 @@ function onHandleEvent(event: { action: string }) {
 | `POST /api/auth/signin`, `/session/refresh` e `/signout`                    |     ✔      |  ✔  | Pelo SDK                                                        |
 | `GET` e `PATCH /api/users/me`                                               |     ✔      |  ✔  | O Client também edita `phone` e `birthDate`                     |
 | `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 401     |
+| `/api/users/me/sessions` (listagem, encerrar uma, encerrar as outras)       |     ✔      |  ✔  | Sessões abertas do usuário logado, de qualquer papel            |
 | `POST /api/password-resets`                                                 |     ✔      |  ✔  | "Esqueci minha senha", sem sessão. Responde sempre 204          |
 | `POST /api/password-resets/confirm`                                         |     ✔      |     | Página `/redefinir-senha`, sem sessão                           |
 | `POST /api/clients`                                                         |            |  ✔  | Autocadastro, sem sessão. Envia o link de verificação de e-mail |

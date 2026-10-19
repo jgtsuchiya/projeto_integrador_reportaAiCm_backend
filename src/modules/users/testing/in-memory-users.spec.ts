@@ -3,6 +3,7 @@ import { UserToken } from '../domain/entities/user-token.entity';
 import { Email } from '../domain/value-objects/email';
 import { UserTokenType } from '../domain/value-objects/user-token-type';
 import {
+  FakeIdentityProvider,
   InMemoryLoginAttemptRepository,
   InMemoryUsersDatabase,
   InMemoryUserTokenRepository,
@@ -163,5 +164,68 @@ describe('InMemoryLoginAttemptRepository', () => {
     await sut.deleteOlderThan(new Date('2026-10-06T12:00:00.000Z'));
 
     expect([...database.loginAttempts.values()]).toEqual([kept]);
+  });
+});
+
+describe('FakeIdentityProvider', () => {
+  const celular = {
+    handle: 'celular',
+    createdAt: new Date('2026-10-05T12:00:00.000Z'),
+    expiresAt: new Date('2026-10-12T12:00:00.000Z'),
+    ipAddress: '203.0.113.10',
+    userAgent: 'Mozilla/5.0',
+  };
+  let sut: FakeIdentityProvider;
+
+  beforeEach(() => {
+    sut = new FakeIdentityProvider();
+  });
+
+  describe('listSessions', () => {
+    it('deve listar as sessões abertas do usuário, ignorando as dos outros', async () => {
+      sut.openSession('user-1', celular);
+      sut.openSession('user-2', { ...celular, handle: 'de-outro-usuario' });
+
+      await expect(sut.listSessions('user-1')).resolves.toEqual([celular]);
+      await expect(sut.listSessions('user-3')).resolves.toEqual([]);
+    });
+
+    it('deve listar sem a origem do login a sessão criada só com o handle', async () => {
+      sut.sessions.set('user-1', ['antiga']);
+
+      await expect(sut.listSessions('user-1')).resolves.toEqual([
+        expect.objectContaining({ handle: 'antiga', ipAddress: null, userAgent: null }),
+      ]);
+    });
+
+    it('não deve listar as sessões revogadas', async () => {
+      sut.openSession('user-1', celular);
+      sut.openSession('user-1', { ...celular, handle: 'notebook' });
+
+      await sut.revokeOtherSessions('user-1', 'notebook');
+
+      await expect(sut.listSessions('user-1')).resolves.toEqual([
+        expect.objectContaining({ handle: 'notebook' }),
+      ]);
+    });
+  });
+
+  describe('revokeSession', () => {
+    it('deve encerrar só a sessão informada', async () => {
+      sut.sessions.set('user-1', ['celular', 'notebook']);
+      sut.sessions.set('user-2', ['tablet']);
+
+      await sut.revokeSession('celular');
+
+      expect(sut.sessions.get('user-1')).toEqual(['notebook']);
+      expect(sut.sessions.get('user-2')).toEqual(['tablet']);
+    });
+
+    it('deve ignorar uma sessão que não existe', async () => {
+      sut.sessions.set('user-1', ['celular']);
+
+      await expect(sut.revokeSession('inexistente')).resolves.toBeUndefined();
+      expect(sut.sessions.get('user-1')).toEqual(['celular']);
+    });
   });
 });

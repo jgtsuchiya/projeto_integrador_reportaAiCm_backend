@@ -11,6 +11,7 @@ import {
   overrideEmailPasswordFunctions,
   SuperTokensHooks,
 } from './email-password.overrides';
+import { overrideSessionFunctions } from './session.overrides';
 
 export type SuperTokensEnv = Pick<
   Env,
@@ -52,7 +53,7 @@ export function buildSuperTokensConfig(
           apis: overrideEmailPasswordApis(hooks),
         },
       }),
-      Session.init(),
+      Session.init({ override: { functions: overrideSessionFunctions } }),
       UserRoles.init(),
     ],
   };
