@@ -2,32 +2,192 @@ import type { APIInterface, RecipeInterface } from 'supertokens-node/recipe/emai
 
 import {
   buildPasswordField,
+  LOGIN_LOCKED_MESSAGE,
   overrideEmailPasswordApis,
   overrideEmailPasswordFunctions,
+  SignInAttempt,
 } from './email-password.overrides';
 
 type SignInInput = Parameters<RecipeInterface['signIn']>[0];
 type SignInResult = Awaited<ReturnType<RecipeInterface['signIn']>>;
+type SignInPost = NonNullable<APIInterface['signInPOST']>;
+type SignInPostInput = Parameters<SignInPost>[0];
+type SignInPostResult = Awaited<ReturnType<SignInPost>>;
 
 const USER_ID = '5d1c1f0e-8a3b-4f6e-9c2d-7b8a9e0f1a2b';
 
 describe('overrideEmailPasswordApis', () => {
-  const original = {
-    signInPOST: jest.fn(),
-    signUpPOST: jest.fn(),
-    emailExistsGET: jest.fn(),
-    generatePasswordResetTokenPOST: jest.fn(),
-    passwordResetPOST: jest.fn(),
-  } as unknown as APIInterface;
+  const EMAIL = 'maria@example.com';
+  const PASSWORD = 'senha-forte-1';
+  const okResult = { status: 'OK', user: { id: USER_ID }, session: {} } as SignInPostResult;
+  let original: { [Api in keyof APIInterface]: jest.Mock };
+  let isLoginLocked: jest.Mock<Promise<boolean>, [string]>;
+  let recordLoginAttempt: jest.Mock<Promise<void>, [SignInAttempt]>;
+  let sut: APIInterface;
 
-  it('deve manter só o sign-in e desativar o cadastro, a checagem de e-mail e o reset', () => {
-    const sut = overrideEmailPasswordApis(original);
+  beforeEach(() => {
+    original = {
+      signInPOST: jest.fn(),
+      signUpPOST: jest.fn(),
+      emailExistsGET: jest.fn(),
+      generatePasswordResetTokenPOST: jest.fn(),
+      passwordResetPOST: jest.fn(),
+    };
+    isLoginLocked = jest.fn<Promise<boolean>, [string]>().mockResolvedValue(false);
+    recordLoginAttempt = jest.fn<Promise<void>, [SignInAttempt]>().mockResolvedValue();
+    sut = overrideEmailPasswordApis({ isLoginLocked, recordLoginAttempt })(original);
+  });
 
-    expect(sut.signInPOST).toBe(original.signInPOST);
+  /** Entrada do `signInPOST`, com a requisição do Express em `options.req.original`. */
+  function buildInput(
+    request: { ip?: string; userAgent?: string; email?: unknown } = {},
+  ): SignInPostInput {
+    const { ip = '203.0.113.10', userAgent = 'Mozilla/5.0 (Linux; Android 16)' } = request;
+
+    return {
+      formFields: [
+        { id: 'email', value: 'email' in request ? request.email : EMAIL },
+        { id: 'password', value: PASSWORD },
+      ],
+      options: {
+        req: {
+          original: 'ip' in request ? { ip: request.ip } : { ip },
+          getHeaderValue: (key: string) =>
+            key === 'user-agent' && !('userAgent' in request && request.userAgent === undefined)
+              ? userAgent
+              : undefined,
+        },
+      },
+    } as unknown as SignInPostInput;
+  }
+
+  function signIn(input: SignInPostInput = buildInput()): Promise<SignInPostResult> {
+    return sut.signInPOST!(input);
+  }
+
+  it('deve desativar o cadastro, a checagem de e-mail e o reset (RN16)', () => {
+    expect(sut.signInPOST).toEqual(expect.any(Function));
     expect(sut.signUpPOST).toBeUndefined();
     expect(sut.emailExistsGET).toBeUndefined();
     expect(sut.generatePasswordResetTokenPOST).toBeUndefined();
     expect(sut.passwordResetPOST).toBeUndefined();
+  });
+
+  it('deve manter o sign-in desativado se o SuperTokens não o oferecer', () => {
+    const withoutSignIn = overrideEmailPasswordApis({ isLoginLocked, recordLoginAttempt })({
+      ...original,
+      signInPOST: undefined,
+    });
+
+    expect(withoutSignIn.signInPOST).toBeUndefined();
+  });
+
+  it('deve conferir o bloqueio do e-mail antes de a senha ser conferida', async () => {
+    const order: string[] = [];
+    isLoginLocked.mockImplementation(async () => {
+      order.push('bloqueio');
+
+      return false;
+    });
+    original.signInPOST.mockImplementation(async () => {
+      order.push('senha');
+
+      return okResult;
+    });
+    const input = buildInput();
+
+    const result = await signIn(input);
+
+    expect(result).toBe(okResult);
+    expect(order).toEqual(['bloqueio', 'senha']);
+    expect(isLoginLocked).toHaveBeenCalledWith(EMAIL);
+    expect(original.signInPOST).toHaveBeenCalledWith(input);
+  });
+
+  it('deve chamar o sign-in original como método, porque o SuperTokens o resolve pelo this', async () => {
+    original.signInPOST.mockResolvedValue(okResult);
+
+    await signIn();
+
+    expect(original.signInPOST.mock.contexts).toEqual([original]);
+  });
+
+  it('deve recusar o login do e-mail bloqueado sem conferir a senha e sem registrar (RN17)', async () => {
+    isLoginLocked.mockResolvedValue(true);
+
+    const result = await signIn();
+
+    expect(result).toEqual({
+      status: 'GENERAL_ERROR',
+      message: 'Muitas tentativas. Tente novamente em alguns minutos.',
+    });
+    expect(LOGIN_LOCKED_MESSAGE).toBe('Muitas tentativas. Tente novamente em alguns minutos.');
+    expect(original.signInPOST).not.toHaveBeenCalled();
+    expect(recordLoginAttempt).not.toHaveBeenCalled();
+  });
+
+  it('deve registrar o login com sucesso, com o e-mail, o IP e o user agent (RN19)', async () => {
+    original.signInPOST.mockResolvedValue(okResult);
+
+    await signIn();
+
+    expect(recordLoginAttempt).toHaveBeenCalledTimes(1);
+    expect(recordLoginAttempt).toHaveBeenCalledWith({
+      email: EMAIL,
+      ipAddress: '203.0.113.10',
+      userAgent: 'Mozilla/5.0 (Linux; Android 16)',
+      succeeded: true,
+    });
+  });
+
+  it.each([
+    ['a credencial inválida, que inclui a recusa da RN09', { status: 'WRONG_CREDENTIALS_ERROR' }],
+    ['o login não permitido', { status: 'SIGN_IN_NOT_ALLOWED', reason: 'motivo' }],
+    ['um erro geral', { status: 'GENERAL_ERROR', message: 'mensagem' }],
+  ])('deve registrar como falha %s', async (_case, failure) => {
+    original.signInPOST.mockResolvedValue(failure);
+
+    const result = await signIn();
+
+    expect(result).toBe(failure);
+    expect(recordLoginAttempt).toHaveBeenCalledWith(expect.objectContaining({ succeeded: false }));
+  });
+
+  it('nunca deve entregar a senha para o registro da tentativa', async () => {
+    original.signInPOST.mockResolvedValue({ status: 'WRONG_CREDENTIALS_ERROR' });
+
+    await signIn();
+
+    expect(JSON.stringify(recordLoginAttempt.mock.calls)).not.toContain(PASSWORD);
+    expect(JSON.stringify(isLoginLocked.mock.calls)).not.toContain(PASSWORD);
+  });
+
+  it('deve registrar a tentativa sem IP e sem user agent quando a requisição não os traz', async () => {
+    original.signInPOST.mockResolvedValue({ status: 'WRONG_CREDENTIALS_ERROR' });
+
+    await signIn(buildInput({ ip: undefined, userAgent: undefined }));
+
+    expect(recordLoginAttempt).toHaveBeenCalledWith({
+      email: EMAIL,
+      ipAddress: null,
+      userAgent: null,
+      succeeded: false,
+    });
+  });
+
+  it('não deve registrar a tentativa quando o SuperTokens falha ao conferir a senha', async () => {
+    original.signInPOST.mockRejectedValue(new Error('Core fora do ar.'));
+
+    await expect(signIn()).rejects.toThrow('Core fora do ar.');
+    expect(recordLoginAttempt).not.toHaveBeenCalled();
+  });
+
+  it('deve deixar o SuperTokens responder quando o campo e-mail não é um texto', async () => {
+    original.signInPOST.mockRejectedValue(new Error('Should never come here.'));
+
+    await expect(signIn(buildInput({ email: 123 }))).rejects.toThrow('Should never come here.');
+    expect(isLoginLocked).not.toHaveBeenCalled();
+    expect(recordLoginAttempt).not.toHaveBeenCalled();
   });
 });
 

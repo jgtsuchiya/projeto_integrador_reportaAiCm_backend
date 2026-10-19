@@ -2,11 +2,13 @@ import { Page, PageRequest } from '@shared/domain/pagination';
 
 import { IdentityProvider } from '../application/ports/identity-provider';
 import { ClientProfile } from '../domain/entities/client-profile.entity';
+import { LoginAttempt } from '../domain/entities/login-attempt.entity';
 import { UserToken } from '../domain/entities/user-token.entity';
 import { User } from '../domain/entities/user.entity';
 import { EmailAlreadyInUseError } from '../domain/errors/email-already-in-use.error';
 import { UserNotFoundError } from '../domain/errors/user-not-found.error';
 import { ClientProfileRepository } from '../domain/repositories/client-profile.repository';
+import { LoginAttemptRepository } from '../domain/repositories/login-attempt.repository';
 import {
   ClientFilter,
   ClientWithProfile,
@@ -32,6 +34,7 @@ export class InMemoryUsersDatabase {
   readonly users = new Map<string, User>();
   readonly profiles = new Map<string, ClientProfile>();
   readonly tokens = new Map<string, UserToken>();
+  readonly loginAttempts = new Map<string, LoginAttempt>();
 }
 
 export class InMemoryUserRepository extends UserRepository {
@@ -182,6 +185,58 @@ export class InMemoryUserTokenRepository extends UserTokenRepository {
     for (const [id, token] of this.database.tokens) {
       if (token.userId === userId) {
         this.database.tokens.delete(id);
+      }
+    }
+  }
+}
+
+export class InMemoryLoginAttemptRepository extends LoginAttemptRepository {
+  constructor(private readonly database: InMemoryUsersDatabase) {
+    super();
+  }
+
+  async save(attempt: LoginAttempt): Promise<void> {
+    this.database.loginAttempts.set(attempt.id, attempt);
+  }
+
+  async countRecentFailures(email: Email, since: Date): Promise<number> {
+    const recent = this.attemptsOf(email).filter((attempt) => attempt.createdAt > since);
+    const lastSuccess = Math.max(
+      since.getTime(),
+      ...recent
+        .filter((attempt) => attempt.succeeded)
+        .map((attempt) => attempt.createdAt.getTime()),
+    );
+
+    return recent.filter(
+      (attempt) => !attempt.succeeded && attempt.createdAt.getTime() > lastSuccess,
+    ).length;
+  }
+
+  async deleteFailuresSince(email: Email, since: Date): Promise<void> {
+    this.deleteWhere(
+      (attempt) => attempt.email.equals(email) && !attempt.succeeded && attempt.createdAt > since,
+    );
+  }
+
+  async deleteByEmail(email: Email): Promise<void> {
+    this.deleteWhere((attempt) => attempt.email.equals(email));
+  }
+
+  async deleteOlderThan(date: Date): Promise<void> {
+    this.deleteWhere((attempt) => attempt.createdAt < date);
+  }
+
+  private attemptsOf(email: Email): LoginAttempt[] {
+    return [...this.database.loginAttempts.values()].filter((attempt) =>
+      attempt.email.equals(email),
+    );
+  }
+
+  private deleteWhere(matches: (attempt: LoginAttempt) => boolean): void {
+    for (const [id, attempt] of this.database.loginAttempts) {
+      if (matches(attempt)) {
+        this.database.loginAttempts.delete(id);
       }
     }
   }

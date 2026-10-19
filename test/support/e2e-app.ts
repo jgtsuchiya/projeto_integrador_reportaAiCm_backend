@@ -14,6 +14,7 @@ import {
   CreateSuperAdminOutput,
   CreateSuperAdminUseCase,
 } from '@modules/users/application/use-cases/create-super-admin.use-case';
+import { LoginAttemptOrmEntity } from '@modules/users/infra/database/entities/login-attempt.orm-entity';
 import { UserOrmEntity } from '@modules/users/infra/database/entities/user.orm-entity';
 import { MailSender } from '@shared/application/ports/mail-sender';
 import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
@@ -97,7 +98,8 @@ export function readTokens(response: request.Response): Tokens {
  * SuperTokens Core, com o `FakeMailSender` no lugar do SMTP. As requisições são feitas com o
  * supertest, e o login, no modo header (`st-auth-mode: header`).
  *
- * Cada arquivo de teste parte do banco sem usuários: o `start` e o `close` apagam todos eles.
+ * Cada arquivo de teste parte do banco sem usuários e sem tentativas de login: o `start` e o
+ * `close` apagam todos eles.
  * As contas são criadas pelos mesmos caminhos da aplicação (seed, convite e autocadastro).
  */
 export class E2eApp {
@@ -130,7 +132,7 @@ export class E2eApp {
     const e2e = new E2eApp(app, app.get(DataSource), mailSender);
 
     try {
-      await e2e.clearUsers();
+      await e2e.clearData();
     } catch (error) {
       await app.close();
       throw error;
@@ -141,7 +143,7 @@ export class E2eApp {
 
   async close(): Promise<void> {
     try {
-      await this.clearUsers();
+      await this.clearData();
     } finally {
       await this.app.close();
     }
@@ -250,10 +252,14 @@ export class E2eApp {
   }
 
   /**
-   * Apaga todos os usuários do banco de teste e as credenciais deles no SuperTokens. O Core
-   * é o mesmo do ambiente de dev, então só saem dele os ids encontrados no banco de teste.
+   * Apaga todos os usuários do banco de teste, as tentativas de login e as credenciais deles
+   * no SuperTokens. O Core é o mesmo do ambiente de dev, então só saem dele os ids encontrados
+   * no banco de teste.
    */
-  private async clearUsers(): Promise<void> {
+  private async clearData(): Promise<void> {
+    // As tentativas de login não têm FK para users, então saem à parte.
+    await this.dataSource.getRepository(LoginAttemptOrmEntity).deleteAll();
+
     const repository = this.dataSource.getRepository(UserOrmEntity);
     const users = await repository.find({ select: { id: true }, withDeleted: true });
     const ids = users.map(({ id }) => id);

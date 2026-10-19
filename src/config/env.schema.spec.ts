@@ -23,6 +23,8 @@ describe('envSchema', () => {
       DB_PORT: 3306,
       DB_LOGGING: false,
       INVITATION_EXPIRES_IN_HOURS: 48,
+      LOGIN_MAX_FAILED_ATTEMPTS: 5,
+      LOGIN_LOCK_WINDOW_MINUTES: 15,
       RATE_LIMIT_MAX_REQUESTS: 20,
       RATE_LIMIT_WINDOW_SECONDS: 60,
       TRUST_PROXY: 0,
@@ -40,6 +42,8 @@ describe('envSchema', () => {
       DB_PORT: '3307',
       DB_LOGGING: 'true',
       INVITATION_EXPIRES_IN_HOURS: '72',
+      LOGIN_MAX_FAILED_ATTEMPTS: '3',
+      LOGIN_LOCK_WINDOW_MINUTES: '30',
       RATE_LIMIT_MAX_REQUESTS: '100',
       RATE_LIMIT_WINDOW_SECONDS: '30',
       TRUST_PROXY: '1',
@@ -51,6 +55,8 @@ describe('envSchema', () => {
     expect(env.DB_PORT).toBe(3307);
     expect(env.DB_LOGGING).toBe(true);
     expect(env.INVITATION_EXPIRES_IN_HOURS).toBe(72);
+    expect(env.LOGIN_MAX_FAILED_ATTEMPTS).toBe(3);
+    expect(env.LOGIN_LOCK_WINDOW_MINUTES).toBe(30);
     expect(env.RATE_LIMIT_MAX_REQUESTS).toBe(100);
     expect(env.RATE_LIMIT_WINDOW_SECONDS).toBe(30);
     expect(env.TRUST_PROXY).toBe(1);
@@ -116,6 +122,14 @@ describe('envSchema', () => {
   );
 
   it.each([
+    ['LOGIN_MAX_FAILED_ATTEMPTS', '0'],
+    ['LOGIN_MAX_FAILED_ATTEMPTS', '-1'],
+    ['LOGIN_MAX_FAILED_ATTEMPTS', '1.5'],
+    ['LOGIN_MAX_FAILED_ATTEMPTS', 'abc'],
+    ['LOGIN_LOCK_WINDOW_MINUTES', '0'],
+    ['LOGIN_LOCK_WINDOW_MINUTES', '-1'],
+    ['LOGIN_LOCK_WINDOW_MINUTES', '1.5'],
+    ['LOGIN_LOCK_WINDOW_MINUTES', 'abc'],
     ['RATE_LIMIT_MAX_REQUESTS', '0'],
     ['RATE_LIMIT_MAX_REQUESTS', '-1'],
     ['RATE_LIMIT_MAX_REQUESTS', '1.5'],

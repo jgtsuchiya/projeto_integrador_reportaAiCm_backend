@@ -11,6 +11,7 @@ A autenticação é feita pelo **SuperTokens** self-hosted, integrado pelo SDK `
 - [Integração com o NestJS](#integração-com-o-nestjs)
 - [Rotas nativas do SuperTokens](#rotas-nativas-do-supertokens)
 - [O que foi customizado](#o-que-foi-customizado)
+- [Bloqueio do login por tentativas](#bloqueio-do-login-por-tentativas)
 - [Limite de requisições por IP](#limite-de-requisições-por-ip)
 - [Sessão: cookie ou header](#sessão-cookie-ou-header)
 - [O que o AuthGuard faz a cada requisição](#o-que-o-authguard-faz-a-cada-requisição)
@@ -96,7 +97,7 @@ Tudo o que toca o SDK fica no módulo [`auth`](../src/modules/auth) e no adapter
 | [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts)                        | Porta do módulo `users`: criar credencial, conferir e trocar senha, remover o usuário, revogar sessões, criar e atribuir papéis |
 | [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts)    | Implementação da porta com o SDK                                                                                                |
 
-O `AuthModule` importa o `UsersModule`, que exporta os três casos de uso consultados pela autenticação: `AuthorizeSignInUseCase` (login), `GetAuthenticatedUserUseCase` (guard) e `CheckPasswordPolicyUseCase` (política de senha).
+O `AuthModule` importa o `UsersModule`, que exporta os casos de uso consultados pela autenticação: `CheckLoginLockUseCase`, `RecordLoginAttemptUseCase` e `AuthorizeSignInUseCase` (login), `GetAuthenticatedUserUseCase` (guard) e `CheckPasswordPolicyUseCase` (política de senha).
 
 O `supertokens-node` não entra no `domain` nem na `application` de nenhum módulo: o ESLint barra o import. Os casos de uso usam a porta `IdentityProvider`, e os testes unitários a trocam pelo `FakeIdentityProvider` ([TESTING.md](TESTING.md#fakes-compartilhados)).
 
@@ -134,11 +135,12 @@ Content-Type: application/json
 
 A resposta é **sempre 200**, e o resultado vem no campo `status`. A única exceção é o 429 do [limite por IP](#limite-de-requisições-por-ip):
 
-| `status`                  | Quando acontece                                                                                      |
-| ------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `OK`                      | Login feito. Os tokens vêm nos cookies ou nos headers ([cookie ou header](#sessão-cookie-ou-header)) |
-| `WRONG_CREDENTIALS_ERROR` | Senha errada, e-mail sem conta ou usuário que não pode entrar (PENDING, INACTIVE ou excluído)        |
-| `FIELD_ERROR`             | E-mail fora do formato. O campo `formFields` traz o erro de cada campo                               |
+| `status`                  | Quando acontece                                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `OK`                      | Login feito. Os tokens vêm nos cookies ou nos headers ([cookie ou header](#sessão-cookie-ou-header))                     |
+| `WRONG_CREDENTIALS_ERROR` | Senha errada, e-mail sem conta ou usuário que não pode entrar (PENDING, INACTIVE ou excluído)                            |
+| `GENERAL_ERROR`           | E-mail bloqueado por tentativas ([bloqueio do login](#bloqueio-do-login-por-tentativas)). O campo `message` traz o texto |
+| `FIELD_ERROR`             | E-mail fora do formato. O campo `formFields` traz o erro de cada campo                                                   |
 
 O erro é o mesmo nos três casos de `WRONG_CREDENTIALS_ERROR` de propósito: assim a resposta não revela se o e-mail tem conta (RN09).
 
@@ -146,13 +148,45 @@ O `user` da resposta é o usuário do SuperTokens (id, e-mail e método de login
 
 ## O que foi customizado
 
-As regras do projeto entram no SuperTokens por três pontos, todos em [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts):
+As regras do projeto entram no SuperTokens por quatro pontos, todos em [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts):
 
 1. **Quem pode entrar (RN09).** Depois de o SuperTokens conferir a senha, a função `signIn` consulta o usuário no MySQL (`AuthorizeSignInUseCase`). Se ele não estiver ACTIVE, tiver sido excluído ou não existir na aplicação, o resultado vira `WRONG_CREDENTIALS_ERROR`. Se puder entrar, o `last_login_at` é atualizado. O override fica na função `signIn`, e não na API `signInPOST`, porque a sessão só é criada depois dela: um login recusado não chega a gerar tokens.
 2. **Política de senha (RN08).** De 8 a 128 caracteres, com pelo menos uma letra e um número. A regra mora no value object [`Password`](../src/modules/users/domain/value-objects/password.ts), aplicado em todas as rotas que definem senha (cadastro do Client, aceite do convite, troca de senha e seed). O validador do campo `password` no SuperTokens usa a mesma regra, para ela valer também nas rotas nativas, caso alguma seja reativada. O login não valida a política: uma senha antiga pode não seguir a regra atual.
 3. **Rotas desativadas (RN16).** As APIs de sign-up, de e-mail existente e de reset de senha são definidas como `undefined`. O middleware deixa de atendê-las, e a requisição cai no 404 do Nest.
+4. **Bloqueio por tentativas (RN17 e RN19).** A API `signInPOST` confere se o e-mail está bloqueado antes de a senha ser conferida e registra a tentativa depois ([bloqueio do login](#bloqueio-do-login-por-tentativas)). Este override fica na API, e não na função `signIn`, porque só a API tem a requisição (IP e user agent) e é chamada uma única vez por login, com conta ou não.
 
 O MFA fica fora desta sprint. O ponto de entrada da segunda etapa já existe: é o resultado do `AuthorizeSignInUseCase`, que hoje só diz se o login é permitido.
+
+## Bloqueio do login por tentativas
+
+Com `LOGIN_MAX_FAILED_ATTEMPTS` falhas de login para o mesmo e-mail nos últimos `LOGIN_LOCK_WINDOW_MINUTES` minutos, contadas desde o último login com sucesso, o login desse e-mail fica bloqueado até uma das falhas sair da janela (RN17). Por padrão, são 5 falhas em 15 minutos. Durante o bloqueio, a resposta é esta, sem a senha ser conferida:
+
+```json
+{ "status": "GENERAL_ERROR", "message": "Muitas tentativas. Tente novamente em alguns minutos." }
+```
+
+```mermaid
+flowchart TD
+    A[POST /api/auth/signin] --> B{E-mail bloqueado?}
+    B -- sim --> C[GENERAL_ERROR<br/>a tentativa não é registrada]
+    B -- não --> D[SuperTokens confere a senha<br/>e a RN09]
+    D --> E[A tentativa é registrada<br/>em login_attempts]
+    E --> F[OK ou WRONG_CREDENTIALS_ERROR]
+```
+
+- **O que conta como falha.** Toda resposta que não abre a sessão: senha errada, e-mail sem conta e o login recusado pela RN09 (PENDING, INACTIVE ou excluído). Um login com sucesso zera a conta.
+- **Por e-mail, com conta ou não.** A conta é pelo e-mail informado, com `trim` e em minúsculas. Um e-mail sem conta recebe a mesma sequência de respostas de um e-mail com conta, então o bloqueio não revela quais e-mails existem.
+- **Durante o bloqueio.** Nem a senha correta entra, e as tentativas recusadas não são registradas. Se fossem, o bloqueio se renovaria sozinho enquanto alguém continuasse tentando.
+- **Registro (RN19).** Cada tentativa respondida vira uma linha em `login_attempts`, com o e-mail, o IP, o user agent e o resultado. A senha nunca é gravada. O IP é o `request.ip` do Express, que segue o `TRUST_PROXY` ([limite por IP](#limite-de-requisições-por-ip)).
+- **O que não gera registro.** O e-mail fora do formato (`FIELD_ERROR`), que o SuperTokens recusa antes do override, e o e-mail que o SuperTokens aceita mas o [`Email`](../src/modules/users/domain/value-objects/email.ts) da aplicação recusa (ex.: mais de 254 caracteres). Como nenhuma conta tem um e-mail assim, esse login responde sempre `WRONG_CREDENTIALS_ERROR`.
+- **Retenção (RN19).** As linhas com mais de 30 dias são apagadas pelo [`LoginAttemptRetentionScheduler`](../src/modules/users/infra/scheduling/login-attempt-retention.scheduler.ts), quando a API sobe e, depois, uma vez por dia. As tentativas do e-mail de uma conta são apagadas junto com ela, na exclusão (RN11).
+- **Zerar o bloqueio.** O `LoginLockService.clear(email)` apaga as falhas que estão na conta. É o que a redefinição de senha vai usar (RN21).
+- **Onde ficam as regras.** No módulo `users`: o [`LoginLockService`](../src/modules/users/application/services/login-lock.service.ts) conta as falhas, e os casos de uso `CheckLoginLockUseCase` e `RecordLoginAttemptUseCase` são chamados pelo override por meio do `SuperTokensHooks`, como o `AuthorizeSignInUseCase`.
+
+Dois limites conhecidos:
+
+- **Dá para travar o login de outra pessoa.** Quem conhece o e-mail de alguém pode errar a senha de propósito. O bloqueio dura no máximo a janela, e a redefinição de senha o zera.
+- **Tentativas simultâneas.** O bloqueio é conferido antes da senha, e a falha é registrada depois. Várias requisições ao mesmo tempo para o mesmo e-mail podem passar pela conferência antes de a falha que atinge o limite ser gravada. Quem segura esse caso é o limite por IP.
 
 ## Limite de requisições por IP
 
@@ -346,16 +380,16 @@ stateDiagram-v2
 
 Só o usuário ACTIVE e não excluído faz login e acessa a API. Uma transição fora do diagrama responde 422. Cada operação grava nos dois lados:
 
-| Operação                                           | MySQL                                                                                                                                                    | SuperTokens                                                    |
-| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Seed do SuperAdm                                   | `users` ACTIVE, com `email_verified_at`                                                                                                                  | Cria os três papéis, a credencial e atribui o papel            |
-| Autocadastro do Client                             | `users` ACTIVE e `client_profiles`, na mesma transação                                                                                                   | Cria a credencial e atribui o papel                            |
-| Convite de ADM                                     | `users` PENDING e o convite em `user_tokens`                                                                                                             | Cria a credencial com uma senha aleatória, que ninguém conhece |
-| Aceite do convite                                  | `users` ACTIVE, com `email_verified_at`, e o convite marcado como usado                                                                                  | Grava a senha escolhida pelo ADM                               |
-| Inativação                                         | `status` INACTIVE                                                                                                                                        | Revoga todas as sessões                                        |
-| Reativação                                         | `status` ACTIVE                                                                                                                                          | Nada: o usuário faz login de novo                              |
-| Troca de senha                                     | Nada                                                                                                                                                     | Confere a senha atual, grava a nova e revoga as outras sessões |
-| Exclusão (ADM pelo SuperAdm, Client por ele mesmo) | `deleted_at` e e-mail anonimizado. No Client, também o nome, e o `client_profiles` é apagado ([DATABASE.md](DATABASE.md#exclusão-lógica-e-anonimização)) | Remove o usuário, com as credenciais, as sessões e os papéis   |
+| Operação                                           | MySQL                                                                                                                                                                                                   | SuperTokens                                                    |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Seed do SuperAdm                                   | `users` ACTIVE, com `email_verified_at`                                                                                                                                                                 | Cria os três papéis, a credencial e atribui o papel            |
+| Autocadastro do Client                             | `users` ACTIVE e `client_profiles`, na mesma transação                                                                                                                                                  | Cria a credencial e atribui o papel                            |
+| Convite de ADM                                     | `users` PENDING e o convite em `user_tokens`                                                                                                                                                            | Cria a credencial com uma senha aleatória, que ninguém conhece |
+| Aceite do convite                                  | `users` ACTIVE, com `email_verified_at`, e o convite marcado como usado                                                                                                                                 | Grava a senha escolhida pelo ADM                               |
+| Inativação                                         | `status` INACTIVE                                                                                                                                                                                       | Revoga todas as sessões                                        |
+| Reativação                                         | `status` ACTIVE                                                                                                                                                                                         | Nada: o usuário faz login de novo                              |
+| Troca de senha                                     | Nada                                                                                                                                                                                                    | Confere a senha atual, grava a nova e revoga as outras sessões |
+| Exclusão (ADM pelo SuperAdm, Client por ele mesmo) | `deleted_at` e e-mail anonimizado. No Client, também o nome, e o `client_profiles` é apagado. As tentativas de login do e-mail são apagadas ([DATABASE.md](DATABASE.md#exclusão-lógica-e-anonimização)) | Remove o usuário, com as credenciais, as sessões e os papéis   |
 
 Como não existe transação entre os dois bancos, a ordem das gravações é escolhida para uma falha no meio não deixar o usuário num estado ruim:
 
@@ -397,6 +431,7 @@ O convite não usa o reset de senha do SuperTokens: lá, a validade do token é 
 | ------------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------- |
 | Rotas da aplicação                                | 400, 401, 403, 404, 409, 422 | `{ "statusCode", "error", "message", "details" }` ([ARCHITECTURE.md](ARCHITECTURE.md#erros))    |
 | Login (`/api/auth/signin`)                        | 200                          | `{ "status": "WRONG_CREDENTIALS_ERROR" }` ou `{ "status": "FIELD_ERROR", "formFields": [...] }` |
+| Login de um e-mail bloqueado por tentativas       | 200                          | `{ "status": "GENERAL_ERROR", "message": "Muitas tentativas. ..." }`                            |
 | Limite por IP, inclusive no login                 | 429                          | `{ "statusCode", "error", "message" }`, com o header `Retry-After`                              |
 | Sessão ausente, expirada ou roubada (SuperTokens) | 401                          | `{ "message": "unauthorised" }`, `"try refresh token"` ou `"token theft detected"`              |
 

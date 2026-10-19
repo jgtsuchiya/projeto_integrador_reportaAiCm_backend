@@ -27,6 +27,10 @@ export const envSchema = z.object({
   // Validade do link de convite do ADM (RN06).
   INVITATION_EXPIRES_IN_HOURS: z.coerce.number().int().positive().default(48),
 
+  // Bloqueio temporário do login: falhas por e-mail, contadas dentro da janela (RN17).
+  LOGIN_MAX_FAILED_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  LOGIN_LOCK_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
+
   // Limite de requisições por IP em cada rota pública limitada (RN18).
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(20),
   RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),

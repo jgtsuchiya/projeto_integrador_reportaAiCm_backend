@@ -10,12 +10,14 @@ import {
   AdminInvitationConfig,
   AdminInvitationService,
 } from './application/services/admin-invitation.service';
+import { LoginLockConfig, LoginLockService } from './application/services/login-lock.service';
 import { UserMailConfig, UserMailService } from './application/services/user-mail.service';
 import { AcceptInvitationUseCase } from './application/use-cases/accept-invitation.use-case';
 import { AuthorizeSignInUseCase } from './application/use-cases/authorize-sign-in.use-case';
 import { ChangeAdminStatusUseCase } from './application/use-cases/change-admin-status.use-case';
 import { ChangeClientStatusUseCase } from './application/use-cases/change-client-status.use-case';
 import { ChangePasswordUseCase } from './application/use-cases/change-password.use-case';
+import { CheckLoginLockUseCase } from './application/use-cases/check-login-lock.use-case';
 import { CheckPasswordPolicyUseCase } from './application/use-cases/check-password-policy.use-case';
 import { CreateSuperAdminUseCase } from './application/use-cases/create-super-admin.use-case';
 import { DeleteAdminUseCase } from './application/use-cases/delete-admin.use-case';
@@ -27,11 +29,14 @@ import { GetProfileUseCase } from './application/use-cases/get-profile.use-case'
 import { InviteAdminUseCase } from './application/use-cases/invite-admin.use-case';
 import { ListAdminsUseCase } from './application/use-cases/list-admins.use-case';
 import { ListClientsUseCase } from './application/use-cases/list-clients.use-case';
+import { PurgeLoginAttemptsUseCase } from './application/use-cases/purge-login-attempts.use-case';
+import { RecordLoginAttemptUseCase } from './application/use-cases/record-login-attempt.use-case';
 import { RegisterClientUseCase } from './application/use-cases/register-client.use-case';
 import { ResendAdminInvitationUseCase } from './application/use-cases/resend-admin-invitation.use-case';
 import { UpdateAdminUseCase } from './application/use-cases/update-admin.use-case';
 import { UpdateProfileUseCase } from './application/use-cases/update-profile.use-case';
 import { ClientProfileRepository } from './domain/repositories/client-profile.repository';
+import { LoginAttemptRepository } from './domain/repositories/login-attempt.repository';
 import { UserRepository } from './domain/repositories/user.repository';
 import { UserTokenRepository } from './domain/repositories/user-token.repository';
 import { ClientProfileOrmEntity } from './infra/database/entities/client-profile.orm-entity';
@@ -40,9 +45,11 @@ import { RoleOrmEntity } from './infra/database/entities/role.orm-entity';
 import { UserTokenOrmEntity } from './infra/database/entities/user-token.orm-entity';
 import { UserOrmEntity } from './infra/database/entities/user.orm-entity';
 import { TypeOrmClientProfileRepository } from './infra/database/repositories/typeorm-client-profile.repository';
+import { TypeOrmLoginAttemptRepository } from './infra/database/repositories/typeorm-login-attempt.repository';
 import { TypeOrmUserTokenRepository } from './infra/database/repositories/typeorm-user-token.repository';
 import { TypeOrmUserRepository } from './infra/database/repositories/typeorm-user.repository';
 import { SuperTokensIdentityProvider } from './infra/identity/supertokens-identity-provider';
+import { LoginAttemptRetentionScheduler } from './infra/scheduling/login-attempt-retention.scheduler';
 import { AdminsController } from './presentation/controllers/admins.controller';
 import { ClientsController } from './presentation/controllers/clients.controller';
 import { InvitationsController } from './presentation/controllers/invitations.controller';
@@ -84,9 +91,15 @@ import { ProfileController } from './presentation/controllers/profile.controller
     AuthorizeSignInUseCase,
     GetAuthenticatedUserUseCase,
     CheckPasswordPolicyUseCase,
+    LoginLockService,
+    CheckLoginLockUseCase,
+    RecordLoginAttemptUseCase,
+    PurgeLoginAttemptsUseCase,
+    LoginAttemptRetentionScheduler,
     { provide: UserRepository, useClass: TypeOrmUserRepository },
     { provide: ClientProfileRepository, useClass: TypeOrmClientProfileRepository },
     { provide: UserTokenRepository, useClass: TypeOrmUserTokenRepository },
+    { provide: LoginAttemptRepository, useClass: TypeOrmLoginAttemptRepository },
     { provide: IdentityProvider, useClass: SuperTokensIdentityProvider },
     {
       provide: UserMailConfig,
@@ -102,12 +115,22 @@ import { ProfileController } from './presentation/controllers/profile.controller
         expiresInHours: config.get('INVITATION_EXPIRES_IN_HOURS', { infer: true }),
       }),
     },
+    {
+      provide: LoginLockConfig,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>): LoginLockConfig => ({
+        maxFailedAttempts: config.get('LOGIN_MAX_FAILED_ATTEMPTS', { infer: true }),
+        windowMinutes: config.get('LOGIN_LOCK_WINDOW_MINUTES', { infer: true }),
+      }),
+    },
   ],
   exports: [
     // Usado pelo seed (src/seed.ts).
     CreateSuperAdminUseCase,
-    // Usados pelo AuthModule: override do sign-in, guard de autenticação e validador de senha.
+    // Usados pelo AuthModule: overrides do sign-in, guard de autenticação e validador de senha.
     AuthorizeSignInUseCase,
+    CheckLoginLockUseCase,
+    RecordLoginAttemptUseCase,
     GetAuthenticatedUserUseCase,
     CheckPasswordPolicyUseCase,
   ],

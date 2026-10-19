@@ -147,7 +147,7 @@ erDiagram
 
 As FKs de `client_profiles` e `user_tokens` usam `ON DELETE CASCADE`, porque esses registros não existem sem o usuário. As de `users` (`role_id` e `created_by_id`) usam `RESTRICT`. Na prática, os usuários não são apagados fisicamente: a exclusão é lógica.
 
-`login_attempts` não tem FK para `users` de propósito: o bloqueio do login conta as tentativas de qualquer e-mail informado, com conta ou não.
+`login_attempts` não tem FK para `users` de propósito: o bloqueio do login conta as tentativas de qualquer e-mail informado, com conta ou não ([AUTH.md](AUTH.md#bloqueio-do-login-por-tentativas)). Como a tabela guarda dado pessoal (e-mail e IP), as linhas têm prazo: as com mais de 30 dias são apagadas quando a API sobe e, depois, uma vez por dia (RN19).
 
 As credenciais e as sessões ficam no PostgreSQL do SuperTokens, criado e mantido pelo próprio Core, fora das nossas migrations. O modelo completo e as regras de negócio estão em [sprints/sprint-2-usuarios.md](sprints/sprint-2-usuarios.md). Os tipos de token e a tabela `login_attempts` vêm do plano de login, em [sprints/sprint-3-login.md](sprints/sprint-3-login.md#3-modelagem-mysql).
 
@@ -169,6 +169,7 @@ A linha de `users` nunca é apagada. Na exclusão (RN11):
 - `email` vira `deleted+<id>@reportaai.invalid`. Como a coluna é `UNIQUE`, é isso que libera o endereço original para um novo cadastro.
 - No **ADMIN**, o nome é mantido, para auditoria, e os convites dele em `user_tokens` são apagados.
 - No **CLIENT**, o nome vira `Usuário excluído` e a linha de `client_profiles` é apagada, com o CPF, o telefone e a data de nascimento (LGPD). O CPF também fica livre para um novo cadastro.
+- As linhas de `login_attempts` com o e-mail original são apagadas (RN19). Elas não têm FK para `users`, então saem por um `DELETE` próprio, e não por cascata.
 - No SuperTokens, o usuário é removido, com as credenciais e as sessões.
 
 ## Migrations

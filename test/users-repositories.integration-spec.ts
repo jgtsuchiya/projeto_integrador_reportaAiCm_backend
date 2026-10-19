@@ -5,6 +5,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 
 import { envSchema } from '@config/env.schema';
 import { ClientProfile } from '@modules/users/domain/entities/client-profile.entity';
+import { LoginAttempt } from '@modules/users/domain/entities/login-attempt.entity';
 import { UserToken, UserTokenProps } from '@modules/users/domain/entities/user-token.entity';
 import { User } from '@modules/users/domain/entities/user.entity';
 import { CpfAlreadyInUseError } from '@modules/users/domain/errors/cpf-already-in-use.error';
@@ -17,10 +18,12 @@ import { Role } from '@modules/users/domain/value-objects/role';
 import { UserStatus } from '@modules/users/domain/value-objects/user-status';
 import { UserTokenType } from '@modules/users/domain/value-objects/user-token-type';
 import { ClientProfileOrmEntity } from '@modules/users/infra/database/entities/client-profile.orm-entity';
+import { LoginAttemptOrmEntity } from '@modules/users/infra/database/entities/login-attempt.orm-entity';
 import { RoleOrmEntity } from '@modules/users/infra/database/entities/role.orm-entity';
 import { UserTokenOrmEntity } from '@modules/users/infra/database/entities/user-token.orm-entity';
 import { UserOrmEntity } from '@modules/users/infra/database/entities/user.orm-entity';
 import { TypeOrmClientProfileRepository } from '@modules/users/infra/database/repositories/typeorm-client-profile.repository';
+import { TypeOrmLoginAttemptRepository } from '@modules/users/infra/database/repositories/typeorm-login-attempt.repository';
 import { TypeOrmUserTokenRepository } from '@modules/users/infra/database/repositories/typeorm-user-token.repository';
 import { TypeOrmUserRepository } from '@modules/users/infra/database/repositories/typeorm-user.repository';
 import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
@@ -32,6 +35,7 @@ describe('Repositórios de usuários (integração)', () => {
   let users: TypeOrmUserRepository;
   let profiles: TypeOrmClientProfileRepository;
   let tokens: TypeOrmUserTokenRepository;
+  let loginAttempts: TypeOrmLoginAttemptRepository;
 
   beforeAll(async () => {
     // Proteção: os testes de integração alteram o schema; nunca rode contra o banco de desenvolvimento.
@@ -41,7 +45,13 @@ describe('Repositórios de usuários (integração)', () => {
 
     dataSource = new DataSource({
       ...buildDataSourceOptions(env),
-      entities: [RoleOrmEntity, UserOrmEntity, ClientProfileOrmEntity, UserTokenOrmEntity],
+      entities: [
+        RoleOrmEntity,
+        UserOrmEntity,
+        ClientProfileOrmEntity,
+        UserTokenOrmEntity,
+        LoginAttemptOrmEntity,
+      ],
       migrations: [
         join(__dirname, '..', 'src', 'shared', 'infra', 'database', 'migrations', '*.ts'),
       ],
@@ -63,6 +73,9 @@ describe('Repositórios de usuários (integração)', () => {
       queryRunner.manager.getRepository(ClientProfileOrmEntity),
     );
     tokens = new TypeOrmUserTokenRepository(queryRunner.manager.getRepository(UserTokenOrmEntity));
+    loginAttempts = new TypeOrmLoginAttemptRepository(
+      queryRunner.manager.getRepository(LoginAttemptOrmEntity),
+    );
   });
 
   afterEach(async () => {
@@ -559,6 +572,145 @@ describe('Repositórios de usuários (integração)', () => {
         expect(found?.matchesCode(secret)).toBe(true);
         expect(found?.isUsable()).toBe(false);
       });
+    });
+  });
+
+  describe('TypeOrmLoginAttemptRepository', () => {
+    const NOW = new Date('2026-10-06T12:00:00.000Z');
+    const MINUTE_IN_MS = 60 * 1000;
+    let email: Email;
+    let otherEmail: Email;
+
+    beforeEach(() => {
+      email = Email.create(`maria.${randomUUID()}@example.com`);
+      otherEmail = Email.create(`joao.${randomUUID()}@example.com`);
+    });
+
+    /** Grava a tentativa com o horário escolhido pelo teste, em minutos antes de `NOW`. */
+    async function insertAttempt(
+      address: Email,
+      minutesAgo: number,
+      succeeded: boolean,
+    ): Promise<string> {
+      const id = randomUUID();
+      await queryRunner.manager.insert(LoginAttemptOrmEntity, {
+        id,
+        email: address.value,
+        ipAddress: '203.0.113.10',
+        userAgent: null,
+        succeeded,
+        createdAt: new Date(NOW.getTime() - minutesAgo * MINUTE_IN_MS),
+      });
+
+      return id;
+    }
+
+    function minutesAgo(minutes: number): Date {
+      return new Date(NOW.getTime() - minutes * MINUTE_IN_MS);
+    }
+
+    async function listIds(): Promise<string[]> {
+      const rows = await queryRunner.manager.find(LoginAttemptOrmEntity, {
+        where: [{ email: email.value }, { email: otherEmail.value }],
+        order: { createdAt: 'ASC' },
+      });
+
+      return rows.map((row) => row.id);
+    }
+
+    it('deve gravar a tentativa de login', async () => {
+      const attempt = LoginAttempt.record({
+        email,
+        ipAddress: '2001:db8:85a3::8a2e:370:7334',
+        userAgent: 'Mozilla/5.0 (Linux; Android 16)',
+        succeeded: false,
+      });
+
+      await loginAttempts.save(attempt);
+
+      const row = await queryRunner.manager.findOneByOrFail(LoginAttemptOrmEntity, {
+        id: attempt.id,
+      });
+      expect(row).toEqual({
+        id: attempt.id,
+        email: email.value,
+        ipAddress: '2001:db8:85a3::8a2e:370:7334',
+        userAgent: 'Mozilla/5.0 (Linux; Android 16)',
+        succeeded: false,
+        createdAt: attempt.createdAt,
+      });
+    });
+
+    describe('countRecentFailures', () => {
+      it('deve contar as falhas do e-mail depois da data informada', async () => {
+        await insertAttempt(email, 16, false);
+        await insertAttempt(email, 15, false);
+        await insertAttempt(email, 14, false);
+        await insertAttempt(email, 1, false);
+        await insertAttempt(otherEmail, 1, false);
+
+        await expect(loginAttempts.countRecentFailures(email, minutesAgo(15))).resolves.toBe(2);
+      });
+
+      it('deve contar só as falhas depois do último login com sucesso', async () => {
+        await insertAttempt(email, 10, false);
+        await insertAttempt(email, 9, false);
+        await insertAttempt(email, 8, true);
+        await insertAttempt(email, 7, false);
+        await insertAttempt(email, 6, true);
+        await insertAttempt(email, 5, false);
+        await insertAttempt(email, 4, false);
+        await insertAttempt(email, 3, false);
+
+        await expect(loginAttempts.countRecentFailures(email, minutesAgo(15))).resolves.toBe(3);
+      });
+
+      it('deve ignorar o login com sucesso de outro e-mail e o anterior à data informada', async () => {
+        await insertAttempt(email, 20, true);
+        await insertAttempt(email, 10, false);
+        await insertAttempt(otherEmail, 5, true);
+        await insertAttempt(email, 2, false);
+
+        await expect(loginAttempts.countRecentFailures(email, minutesAgo(15))).resolves.toBe(2);
+      });
+
+      it('deve retornar zero para um e-mail sem tentativas', async () => {
+        await expect(loginAttempts.countRecentFailures(email, minutesAgo(15))).resolves.toBe(0);
+      });
+    });
+
+    it('deve apagar só as falhas do e-mail depois da data informada', async () => {
+      const oldFailure = await insertAttempt(email, 20, false);
+      const success = await insertAttempt(email, 10, true);
+      await insertAttempt(email, 5, false);
+      await insertAttempt(email, 4, false);
+      const otherFailure = await insertAttempt(otherEmail, 3, false);
+
+      await loginAttempts.deleteFailuresSince(email, minutesAgo(15));
+
+      await expect(listIds()).resolves.toEqual([oldFailure, success, otherFailure]);
+      await expect(loginAttempts.countRecentFailures(email, minutesAgo(15))).resolves.toBe(0);
+    });
+
+    it('deve apagar todas as tentativas do e-mail e manter as dos outros (RN19)', async () => {
+      await insertAttempt(email, 60 * 24 * 10, false);
+      await insertAttempt(email, 5, true);
+      const other = await insertAttempt(otherEmail, 3, false);
+
+      await loginAttempts.deleteByEmail(email);
+
+      await expect(listIds()).resolves.toEqual([other]);
+    });
+
+    it('deve apagar as tentativas anteriores à data informada, de qualquer e-mail (RN19)', async () => {
+      await insertAttempt(email, 60 * 24 * 31, false);
+      await insertAttempt(otherEmail, 60 * 24 * 30 + 1, true);
+      const onTheLimit = await insertAttempt(email, 60 * 24 * 30, false);
+      const recent = await insertAttempt(otherEmail, 1, true);
+
+      await loginAttempts.deleteOlderThan(minutesAgo(60 * 24 * 30));
+
+      await expect(listIds()).resolves.toEqual([onTheLimit, recent]);
     });
   });
 

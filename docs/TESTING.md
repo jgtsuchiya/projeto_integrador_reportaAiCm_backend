@@ -83,6 +83,15 @@ expect(mailSender.messages).toHaveLength(1);
 
 Os fakes de um único módulo ficam em `src/modules/<feature>/testing`, também fora do build. No módulo `users`, o [`in-memory-users.ts`](../src/modules/users/testing/in-memory-users.ts) traz os repositórios em memória (que compartilham um `InMemoryUsersDatabase`, como as tabelas do MySQL) e o `FakeIdentityProvider`, no lugar do SuperTokens.
 
+## Testes que fazem login
+
+Todo login pela API grava uma linha em `login_attempts`, e 5 falhas seguidas para o mesmo e-mail o bloqueiam por 15 minutos ([AUTH.md](AUTH.md#bloqueio-do-login-por-tentativas)). Como o banco de teste é o mesmo entre uma execução e outra, o teste de integração que faz login:
+
+- usa um **e-mail novo a cada execução** (`randomUUID()`), inclusive para o login que deve falhar. Com um e-mail fixo, as falhas de execuções seguidas se somariam até o bloqueio;
+- **apaga as tentativas** dos e-mails que usou, no `afterAll`, com o [`deleteLoginAttempts`](../test/support/login-attempts.ts).
+
+O bloqueio em si é testado no `test/login-lock.integration-spec.ts`. Para simular a passagem do tempo, ele recua o `created_at` da falha mais antiga.
+
 ## Testes e2e
 
 Os e2e sobem a API inteira e a chamam por HTTP com o **supertest**, contra o MySQL de teste e o SuperTokens Core. O único fake é o `FakeMailSender`, no lugar do SMTP. Eles cobrem os fluxos de ponta a ponta e as permissões. Os detalhes de cada rota (validação, erros e casos de borda) ficam nos testes de integração.
@@ -127,7 +136,7 @@ describe('Perfil (e2e)', () => {
 });
 ```
 
-- **Banco de teste:** o script carrega o `.env.test` e usa a mesma proteção dos testes de integração (aborta se o banco não terminar em `_test`). Cada arquivo começa e termina **apagando todos os usuários** do banco de teste e as credenciais deles no SuperTokens.
+- **Banco de teste:** o script carrega o `.env.test` e usa a mesma proteção dos testes de integração (aborta se o banco não terminar em `_test`). Cada arquivo começa e termina **apagando todos os usuários** do banco de teste, as credenciais deles no SuperTokens e as tentativas de login.
 - **Contas:** são criadas pelos mesmos caminhos da aplicação: `seedSuperAdmin()` (o caso de uso do `npm run seed`), `createAdmin()` (convite e aceite) e `registerClient()` (autocadastro). É o seed que cria os papéis no SuperTokens, então ele vem antes de qualquer cadastro, como em produção.
 - **Login:** no modo header (`st-auth-mode: header`), como o app mobile. O access token vai no `Authorization: Bearer`.
 - **Rota nova:** toda rota protegida entra na matriz do `permissions.e2e-spec.ts`, com os papéis permitidos e o status de sucesso.

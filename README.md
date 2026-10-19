@@ -201,6 +201,8 @@ O modelo está em [.env.example](.env.example). As variáveis são validadas qua
 | `API_DOMAIN`                  | sim         | (nenhum)      | URL pública da API, usada pelo SuperTokens                                                                        |
 | `WEB_APP_URL`                 | sim         | (nenhum)      | URL do painel web, usada pelo SuperTokens, pelo CORS e no link do convite de ADM                                  |
 | `INVITATION_EXPIRES_IN_HOURS` | não         | `48`          | Validade, em horas, do link de convite de ADM                                                                     |
+| `LOGIN_MAX_FAILED_ATTEMPTS`   | não         | `5`           | Falhas de login por e-mail que causam o bloqueio ([detalhes](docs/AUTH.md#bloqueio-do-login-por-tentativas))      |
+| `LOGIN_LOCK_WINDOW_MINUTES`   | não         | `15`          | Janela, em minutos, em que as falhas de login são contadas                                                        |
 | `RATE_LIMIT_MAX_REQUESTS`     | não         | `20`          | Requisições por IP em cada rota limitada, por janela ([detalhes](docs/AUTH.md#limite-de-requisições-por-ip))      |
 | `RATE_LIMIT_WINDOW_SECONDS`   | não         | `60`          | Duração, em segundos, da janela do limite por IP                                                                  |
 | `TRUST_PROXY`                 | não         | `0`           | Quantidade de proxies reversos na frente da API. Define de onde o IP do cliente é lido                            |

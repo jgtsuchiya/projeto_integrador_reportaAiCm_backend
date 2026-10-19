@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { IncomingHttpHeaders, request } from 'node:http';
 
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { DataSource } from 'typeorm';
 
 import { Env, envSchema } from '@config/env.schema';
 import {
@@ -12,17 +14,29 @@ import {
 
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
+import { deleteLoginAttempts } from './support/login-attempts';
 
 /** Limite baixo, só deste arquivo. O `.env.test` deixa o limite alto para os outros testes. */
 const LIMIT = 3;
 
-/** Credenciais sem conta: o login responde WRONG_CREDENTIALS_ERROR, e as outras rotas, 400. */
-const BODY = JSON.stringify({
-  formFields: [
-    { id: 'email', value: 'ninguem@reportaai.invalid' },
-    { id: 'password', value: 'senha-qualquer-1' },
-  ],
-});
+/** E-mails usados nos logins, para apagar as tentativas registradas no final. */
+const emails: string[] = [];
+
+/**
+ * Credenciais sem conta: o login responde WRONG_CREDENTIALS_ERROR, e as outras rotas, 400. O
+ * e-mail é novo a cada requisição, para as falhas não se somarem até o bloqueio por tentativas.
+ */
+function buildBody(): string {
+  const email = `ratelimit.${randomUUID()}@reportaai.invalid`;
+  emails.push(email);
+
+  return JSON.stringify({
+    formFields: [
+      { id: 'email', value: email },
+      { id: 'password', value: 'senha-qualquer-1' },
+    ],
+  });
+}
 
 interface ApiResponse {
   status: number;
@@ -35,7 +49,7 @@ interface TestApp {
   send: (method: string, path: string, headers?: Record<string, string>) => Promise<ApiResponse>;
 }
 
-/** Sobe a API com o limite baixo. Nenhum teste deste arquivo grava no banco. */
+/** Sobe a API com o limite baixo. O banco só recebe as tentativas de login, apagadas no final. */
 async function startApp(trustProxy: number): Promise<TestApp> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   const app = moduleRef.createNestApplication({ logger: false });
@@ -74,7 +88,7 @@ async function startApp(trustProxy: number): Promise<TestApp> {
         },
       );
       clientRequest.on('error', reject);
-      clientRequest.end(method === 'POST' ? BODY : undefined);
+      clientRequest.end(method === 'POST' ? buildBody() : undefined);
     });
   }
 
@@ -93,6 +107,7 @@ describe('Limite de requisições por IP (integração)', () => {
     });
 
     afterAll(async () => {
+      await deleteLoginAttempts(api?.app.get(DataSource), emails);
       await api?.app.close();
     });
 

@@ -20,6 +20,7 @@ import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
 
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
+import { deleteLoginAttempts } from './support/login-attempts';
 
 const TENANT_ID = 'public';
 const PASSWORD = 'senha-forte-1';
@@ -80,6 +81,7 @@ describe('Autocadastro de Client (integração)', () => {
     // O client_profiles é removido junto (ON DELETE CASCADE).
     await dataSource?.getRepository(UserOrmEntity).delete({ email: In(emails) });
     await Promise.all(ids.map((id) => supertokens.deleteUser(id)));
+    await deleteLoginAttempts(dataSource, emails);
     await dataSource?.destroy();
     await app?.close();
   });
