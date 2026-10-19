@@ -106,11 +106,11 @@ expect(response.status).toBe(204);
 expect(mailSender.messages).toHaveLength(1);
 ```
 
-O `test/password-reset.integration-spec.ts` segue esse padrão. Para simular a passagem do intervalo de 1 minuto entre dois e-mails, ele recua o `created_at` do token. O `E2eApp` espera as tarefas no `close()`, antes de apagar os dados.
+O `test/password-reset.integration-spec.ts` segue esse padrão. Para simular a passagem do intervalo de 1 minuto entre dois e-mails, ele recua o `created_at` do token. Nos e2e, o teste espera com o `e2e.waitForBackgroundTasks()`, e o `E2eApp` também espera as tarefas no `close()`, antes de apagar os dados.
 
 ## Testes de rotas que enviam link por e-mail
 
-O token de um link só existe no e-mail: o banco guarda o hash. O teste lê o token da mensagem que o `FakeMailSender` guardou, pelo caminho da página (`/verificar-email?token=...`), e segue o fluxo com ele.
+O token de um link só existe no e-mail: o banco guarda o hash. O teste lê o token da mensagem que o `FakeMailSender` guardou, pelo caminho da página (`/verificar-email?token=...`), e segue o fluxo com ele. Nos e2e, o `e2e.lastLinkToken(email, page)` lê o token do último link para a página (`/convite`, `/redefinir-senha` ou `/verificar-email`) enviado ao endereço.
 
 A mesma conta recebe no máximo um e-mail do mesmo tipo por minuto, e o cadastro do Client já envia o link de verificação. Por isso, o reenvio logo depois do cadastro responde 422. Para simular a passagem do intervalo, o teste recua o `created_at` do token:
 
@@ -125,7 +125,7 @@ Para conferir que um segredo (a senha, o token de um link ou o código da segund
 
 O código da segunda etapa também só existe no e-mail. No texto da mensagem, ele fica sozinho numa linha, e o teste o lê com `/^\d{6}$/m` ([AUTH.md](AUTH.md#verificação-em-duas-etapas)).
 
-- **Ligar a verificação em duas etapas.** A rota de ativação (`PATCH /api/users/me/mfa`) tem os próprios testes, no `test/profile.integration-spec.ts`. Os testes da segunda etapa ligam o `users.mfa_enabled` direto no banco, porque a rota exige o e-mail verificado e revoga as outras sessões da conta. O `test/mfa.integration-spec.ts` cria o usuário já com ele ligado. Nos e2e, o `e2e.logInPending(account)` o liga só durante o login e devolve os tokens da sessão pendente: os outros logins da conta continuam completos.
+- **Ligar a verificação em duas etapas.** A rota de ativação (`PATCH /api/users/me/mfa`) tem os próprios testes, no `test/profile.integration-spec.ts`. Os testes da segunda etapa ligam o `users.mfa_enabled` direto no banco, porque a rota exige o e-mail verificado e revoga as outras sessões da conta. O `test/mfa.integration-spec.ts` cria o usuário já com ele ligado. Nos e2e, o `e2e.logInPending(account)` o liga só durante o login e devolve os tokens da sessão pendente: os outros logins da conta continuam completos. O fluxo que precisa da conta com a verificação ativa de verdade usa o `e2e.registerClientWithMfa()`, que passa pela rota.
 - **Ler o código.** Nos e2e, com o `e2e.lastLoginCode(email)`. Um login feito menos de 1 minuto depois de outro não envia um código novo, e o helper devolve o do e-mail anterior, que continua valendo.
 - **Código sorteado.** O teste que precisa de um código conhecido (ex.: o código de outra conta, que tem de ser diferente) troca o `token_hash` no banco, como o `setCode` do `test/mfa.integration-spec.ts`. Comparar dois códigos sorteados falharia uma vez em um milhão.
 - **Intervalo de 1 minuto.** Vale o mesmo recuo do `created_at` dos links: o login já envia um código, então o reenvio logo em seguida responde 422.
@@ -135,12 +135,17 @@ O código da segunda etapa também só existe no e-mail. No texto da mensagem, e
 
 Os e2e sobem a API inteira e a chamam por HTTP com o **supertest**, contra o MySQL de teste e o SuperTokens Core. O único fake é o `FakeMailSender`, no lugar do SMTP. Eles cobrem os fluxos de ponta a ponta e as permissões. Os detalhes de cada rota (validação, erros e casos de borda) ficam nos testes de integração.
 
-| Arquivo                         | O que cobre                                                                                                                                 |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test/client-flow.e2e-spec.ts`  | Fluxo do Client: cadastro → login → `/users/me` → refresh → signout                                                                         |
-| `test/admin-flow.e2e-spec.ts`   | Fluxo do ADM: seed do SuperAdm → convite → aceite → login                                                                                   |
-| `test/inactivation.e2e-spec.ts` | O usuário inativado perde o acesso na requisição seguinte                                                                                   |
-| `test/permissions.e2e-spec.ts`  | Matriz de permissões: cada rota protegida sem sessão (401), com cada papel (sucesso ou 403) e com uma sessão pendente (403 `invalid claim`) |
+| Arquivo                               | O que cobre                                                                                                                                          |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/client-flow.e2e-spec.ts`        | Fluxo do Client: cadastro → login → `/users/me` → refresh → signout                                                                                  |
+| `test/admin-flow.e2e-spec.ts`         | Fluxo do ADM: seed do SuperAdm → convite → aceite → login                                                                                            |
+| `test/inactivation.e2e-spec.ts`       | O usuário inativado perde o acesso na requisição seguinte                                                                                            |
+| `test/permissions.e2e-spec.ts`        | Matriz de permissões: cada rota protegida sem sessão (401), com cada papel (sucesso ou 403) e com uma sessão pendente (403 `invalid claim`)          |
+| `test/password-reset.e2e-spec.ts`     | Recuperação de senha: pedido → e-mail → redefinição → login com a senha nova, com as sessões antigas encerradas                                      |
+| `test/email-verification.e2e-spec.ts` | Verificação de e-mail: cadastro → e-mail → confirmação → `emailVerifiedAt` preenchido. O reenvio invalida o link anterior                            |
+| `test/login-lock.e2e-spec.ts`         | Bloqueio por tentativas: 5 falhas → bloqueio → liberação pela redefinição de senha                                                                   |
+| `test/sessions.e2e-spec.ts`           | Sessões: dois logins → listagem → encerrar a outra → ela não renova mais. Também o encerramento de todas as outras e a sessão de outro usuário (404) |
+| `test/mfa.e2e-spec.ts`                | Verificação em duas etapas: ativação → login → 403 com a sessão pendente → código → acesso liberado. Também o reenvio do código e a desativação      |
 
 ```bash
 npm run db:up
@@ -180,6 +185,8 @@ describe('Perfil (e2e)', () => {
 - **Login:** no modo header (`st-auth-mode: header`), como o app mobile. O access token vai no `Authorization: Bearer`.
 - **Sessões:** o `currentSessionId(tokens)` devolve o id da sessão dos tokens, como o `GET /api/users/me/sessions` a identifica. O teste que encerra uma sessão abre uma só para isso, com o `logIn`: a sessão que os outros testes compartilham continua valendo.
 - **Sessão pendente:** o `logInPending(account)` abre a sessão de quem já passou pela senha e ainda não conferiu o código da segunda etapa, e o `lastLoginCode(email)` lê o código do e-mail ([testes da segunda etapa](#testes-da-segunda-etapa-do-login)).
+- **Conta com a verificação em duas etapas:** o `registerClientWithMfa()` cadastra um Client, confirma o e-mail pelo link e ativa a verificação pelo `PATCH /api/users/me/mfa`. Devolve a sessão que ativou, que continua completa. Os logins seguintes abrem sessões pendentes.
+- **E-mails:** o `lastLinkToken(email, page)` lê o token do último link enviado ao endereço ([links por e-mail](#testes-de-rotas-que-enviam-link-por-e-mail)). O pedido de redefinição de senha envia o e-mail depois de responder, então o teste chama o `waitForBackgroundTasks()` antes de ler o link.
 - **Rota nova:** toda rota protegida entra na matriz do `permissions.e2e-spec.ts`, com os papéis permitidos e o status de sucesso. Quando um papel permitido para numa regra da própria rota, o status dela vai em `refused`: é o caso do reenvio da verificação de e-mail, que responde 422 ao ADM e ao SuperAdm, já verificados. A matriz também chama cada rota com uma sessão pendente e espera o 403 `invalid claim`. Só as rotas marcadas com `acceptsPending` ficam de fora: o signout e as de `/api/mfa`.
 
 ## Comandos
