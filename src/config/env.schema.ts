@@ -27,6 +27,12 @@ export const envSchema = z.object({
   // Validade do link de convite do ADM (RN06).
   INVITATION_EXPIRES_IN_HOURS: z.coerce.number().int().positive().default(48),
 
+  // Limite de requisições por IP em cada rota pública limitada (RN18).
+  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(20),
+  RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+  // Quantidade de proxies reversos na frente da API. Com 0, o IP do cliente é o da conexão.
+  TRUST_PROXY: z.coerce.number().int().nonnegative().default(0),
+
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
   // true para TLS direto (porta 465). Com false, o STARTTLS é usado se o servidor oferecer.
