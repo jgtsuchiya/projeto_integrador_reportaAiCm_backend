@@ -151,6 +151,23 @@ As FKs de `client_profiles` e `user_tokens` usam `ON DELETE CASCADE`, porque ess
 
 As credenciais e as sessões ficam no PostgreSQL do SuperTokens, criado e mantido pelo próprio Core, fora das nossas migrations. O modelo completo e as regras de negócio estão em [sprints/sprint-2-usuarios.md](sprints/sprint-2-usuarios.md). Os tipos de token e a tabela `login_attempts` vêm do plano de login, em [sprints/sprint-3-login.md](sprints/sprint-3-login.md#3-modelagem-mysql).
 
+### Tokens de uso único
+
+`user_tokens` guarda os segredos que a API envia por e-mail. O banco guarda só o SHA-256 de cada um: o segredo puro existe apenas no e-mail, e quem lê o banco não consegue montar um link válido.
+
+| `type`               | Formato             | Validade (variável)                              | Como é localizado        |
+| -------------------- | ------------------- | ------------------------------------------------ | ------------------------ |
+| `INVITATION`         | Link, 256 bits      | 48 horas (`INVITATION_EXPIRES_IN_HOURS`)         | Pelo hash do link        |
+| `PASSWORD_RESET`     | Link, 256 bits      | 60 minutos (`PASSWORD_RESET_EXPIRES_IN_MINUTES`) | Pelo hash do link        |
+| `EMAIL_VERIFICATION` | Link, 256 bits      | 24 horas (`EMAIL_VERIFICATION_EXPIRES_IN_HOURS`) | Pelo hash do link        |
+| `LOGIN_CODE`         | Código de 6 dígitos | 10 minutos (`MFA_CODE_EXPIRES_IN_MINUTES`)       | Pelo usuário e pelo tipo |
+
+- **Um token vigente por usuário e tipo.** Um token novo apaga os anteriores do mesmo usuário e tipo, na mesma transação. É assim que o reenvio invalida os links antigos.
+- **O código de 6 dígitos** tem só um milhão de valores, e duas contas podem recebê-lo ao mesmo tempo. Como o `token_hash` é `UNIQUE`, o hash do código é calculado junto com o id do usuário, e o código é buscado pelo usuário da sessão, não pelo hash. Pelo mesmo motivo, ele vale pouco tempo e aceita 5 erros, contados em `attempts`.
+- **O uso** fica em `used_at`. O token usado continua na tabela até ser substituído por um novo do mesmo tipo ou, no ADM, até a exclusão da conta.
+
+As regras de cada fluxo estão no [AUTH.md](AUTH.md): [convite](AUTH.md#convite-de-adm), [recuperação de senha](AUTH.md#recuperação-de-senha), [verificação de e-mail](AUTH.md#verificação-de-e-mail) e [verificação em duas etapas](AUTH.md#verificação-em-duas-etapas).
+
 ### Status do usuário
 
 `users.status` é um `ENUM` com três valores. As transições e o que cada uma faz no SuperTokens estão no [AUTH.md](AUTH.md#ciclo-de-vida-das-contas).
@@ -167,8 +184,8 @@ A linha de `users` nunca é apagada. Na exclusão (RN11):
 
 - `deleted_at` é preenchido. A coluna é um `@DeleteDateColumn`, então as consultas do TypeORM já ignoram o usuário excluído.
 - `email` vira `deleted+<id>@reportaai.invalid`. Como a coluna é `UNIQUE`, é isso que libera o endereço original para um novo cadastro.
-- No **ADMIN**, o nome é mantido, para auditoria, e os convites dele em `user_tokens` são apagados.
-- No **CLIENT**, o nome vira `Usuário excluído` e a linha de `client_profiles` é apagada, com o CPF, o telefone e a data de nascimento (LGPD). O CPF também fica livre para um novo cadastro.
+- No **ADMIN**, o nome é mantido, para auditoria, e os tokens dele em `user_tokens` são apagados, inclusive o convite pendente.
+- No **CLIENT**, o nome vira `Usuário excluído` e a linha de `client_profiles` é apagada, com o CPF, o telefone e a data de nascimento (LGPD). O CPF também fica livre para um novo cadastro. Os tokens dele continuam em `user_tokens`, mas nenhum vale mais: os fluxos não encontram a conta excluída e recusam o token.
 - As linhas de `login_attempts` com o e-mail original são apagadas (RN19). Elas não têm FK para `users`, então saem por um `DELETE` próprio, e não por cascata.
 - No SuperTokens, o usuário é removido, com as credenciais e as sessões.
 

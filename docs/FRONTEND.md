@@ -9,6 +9,7 @@ Como o painel web e o app fazem login e chamam a API do ReportaAi Cm. O funciona
 - **Use o SDK do SuperTokens.** Ele guarda os tokens, os envia nas requisições e renova a sessão sozinho quando o access token expira (a cada 15 minutos).
 - Depois do login, chame o `GET /api/users/me` para saber **quem entrou e com qual papel**.
 - Quem tem a verificação em duas etapas ativa ainda digita um código depois da senha ([verificação em duas etapas](#verificação-em-duas-etapas)).
+- Os links dos e-mails da API (convite, redefinição de senha e verificação de e-mail) abrem páginas do painel web, inclusive para o Client, no navegador do celular ([páginas dos links](#páginas-abertas-pelos-links-dos-e-mails)).
 
 |                      | Painel web                                | App mobile                                  |
 | -------------------- | ----------------------------------------- | ------------------------------------------- |
@@ -67,6 +68,8 @@ try {
 } catch (error) {
   if (error.isSuperTokensGeneralError === true) {
     // GENERAL_ERROR: e-mail bloqueado por tentativas. Mostre o error.message.
+  } else if (error instanceof Response && error.status === 429) {
+    // Limite por IP: error.headers.get('Retry-After') traz os segundos de espera.
   } else {
     throw error;
   }
@@ -76,6 +79,8 @@ try {
 O `WRONG_CREDENTIALS_ERROR` também é a resposta para um usuário inativado, excluído ou com o convite pendente. A API não diferencia os casos, para não revelar se o e-mail tem conta.
 
 **Bloqueio por tentativas.** Depois de 5 falhas de login para o mesmo e-mail em 15 minutos, a API responde `{ "status": "GENERAL_ERROR", "message": "Muitas tentativas. Tente novamente em alguns minutos." }` até uma das falhas sair da janela, mesmo com a senha correta. O `supertokens-web-js` não devolve esse status no `response`: ele lança um erro com `isSuperTokensGeneralError` e a `message` da API, como no `catch` acima. A resposta é a mesma para um e-mail sem conta.
+
+**Limite por IP.** Acima de 20 tentativas de login por minuto do mesmo IP, a resposta é 429 ([erros](#erros)). O SDK também não devolve esse caso no `response`: para qualquer status HTTP a partir de 300, ele lança a própria `Response` do `fetch`, sem ler o corpo. Por isso o `catch` acima confere o `error.status`.
 
 **Chamadas à API.** Depois do `init`, o SDK intercepta o `fetch` e o `XMLHttpRequest` (o axios funciona sem configuração extra). Nas requisições para o `apiDomain`, ele envia os cookies, renova a sessão quando recebe 401 e repete a chamada:
 
@@ -94,6 +99,23 @@ await Session.signOut(); // encerra a sessão na API e limpa os cookies
 ```
 
 **Em dev**, o painel precisa rodar na origem configurada no `WEB_APP_URL` da API (`http://localhost:5173` no `.env.example`): é a única que o CORS libera. Use `localhost` na API e no painel, sem misturar com `127.0.0.1`, senão o navegador não envia os cookies.
+
+### Páginas abertas pelos links dos e-mails
+
+Os e-mails da API levam a três páginas do painel. Os caminhos são fixos na API (`WEB_APP_URL` + caminho): se o painel mudar um deles, o backend precisa mudar junto.
+
+| Página                           | E-mail que leva até ela                     | Rota chamada pela página                | Detalhes                                        |
+| -------------------------------- | ------------------------------------------- | --------------------------------------- | ----------------------------------------------- |
+| `/convite?token=<token>`         | Convite de ADM                              | `POST /api/invitations/accept`          | [Aceite do convite](#aceite-do-convite-de-adm)  |
+| `/redefinir-senha?token=<token>` | "Esqueci minha senha", dos três papéis      | `POST /api/password-resets/confirm`     | [Esqueci minha senha](#esqueci-minha-senha)     |
+| `/verificar-email?token=<token>` | Cadastro do Client e reenvio da verificação | `POST /api/email-verifications/confirm` | [Verificação de e-mail](#verificação-de-e-mail) |
+
+Valem para as três:
+
+- **São públicas.** Abrem sem sessão: o Client abre o link no navegador do celular, onde não tem a sessão do app. Não redirecione para o login.
+- **Leia o `token` da URL** com `new URLSearchParams(window.location.search).get('token')`. Sem ele, mostre direto que o link é inválido, sem chamar a API.
+- **O token é um segredo**: quem o tem redefine a senha ou ativa a conta. Não o envie para ferramentas de analytics nem para o log do front, e não deixe o navegador repassá-lo a outros sites no header `Referer` (`<meta name="referrer" content="no-referrer">` na página).
+- **Cada link vale uma vez.** Depois do uso, a mesma chamada responde 422. Chame a rota uma única vez por envio do formulário (ou, na verificação de e-mail, por abertura da página).
 
 ### Aceite do convite de ADM
 
@@ -157,18 +179,23 @@ const response = await fetch(`${API_URL}/api/auth/signin`, {
     ],
   }),
 });
-const result = await response.json();
 
-if (result.status === 'OK') {
-  // Sessão criada: o SDK já guardou os tokens.
-} else if (result.status === 'GENERAL_ERROR') {
-  // E-mail bloqueado por tentativas: mostre o result.message.
+if (response.status === 429) {
+  // Limite por IP: o header Retry-After traz os segundos de espera.
 } else {
-  // WRONG_CREDENTIALS_ERROR ou FIELD_ERROR (o status HTTP é 200 em todos os casos).
+  const result = await response.json();
+
+  if (result.status === 'OK') {
+    // Sessão criada: o SDK já guardou os tokens.
+  } else if (result.status === 'GENERAL_ERROR') {
+    // E-mail bloqueado por tentativas: mostre o result.message.
+  } else {
+    // WRONG_CREDENTIALS_ERROR ou FIELD_ERROR (o status HTTP é 200 nos dois casos).
+  }
 }
 ```
 
-O `GENERAL_ERROR` aparece depois de 5 falhas de login para o mesmo e-mail em 15 minutos e dura até uma delas sair da janela, mesmo com a senha correta.
+O `GENERAL_ERROR` aparece depois de 5 falhas de login para o mesmo e-mail em 15 minutos e dura até uma delas sair da janela, mesmo com a senha correta. O 429 vem do limite por IP, acima de 20 tentativas por minuto, e tem o corpo no [formato de erro da aplicação](#erros), sem o campo `status`: confira o status HTTP antes de ler o resultado.
 
 O SDK intercepta o `fetch` das requisições para o `apiDomain`: pede os tokens por header (`st-auth-mode: header`), guarda os que voltam na resposta, envia o access token no `Authorization` das chamadas seguintes e renova a sessão quando recebe 401. Com o axios, registre o interceptor uma vez: `SuperTokens.addAxiosInterceptors(axios)`.
 
@@ -206,6 +233,29 @@ const response = await fetch(`${API_URL}/api/password-resets`, {
 2. Envie o `POST /api/password-resets/confirm` com `{ "token": "...", "password": "..." }`. A rota é pública.
 3. Com o 204, leve o ADM ou o SuperAdm para a tela de login. Para o Client, mostre que a senha foi alterada e peça para ele voltar ao app. A página não sabe o papel de quem redefiniu, então uma mensagem só serve aos dois casos.
 
+```ts
+const token = new URLSearchParams(window.location.search).get('token');
+
+const response = await fetch(`${API_URL}/api/password-resets/confirm`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ token, password }),
+});
+
+if (response.status === 204) {
+  // "Sua senha foi alterada. Entre com a senha nova no painel ou no app."
+} else if (response.status === 400) {
+  const { details } = await response.json(); // [{ field: 'password', message: '...' }]
+  // Senha fora da regra: mostre a message do campo. O link continua valendo.
+} else if (response.status === 422) {
+  // Link inválido ou expirado: ofereça pedir outro, na tela "Esqueci minha senha".
+} else if (response.status === 429) {
+  // Muitas tentativas do mesmo IP: o header Retry-After traz os segundos de espera.
+}
+```
+
+Valide a senha no formulário com a [regra do campo](#regras-dos-campos) antes de enviar, para evitar uma ida à API.
+
 | Rota                                | Resposta | Significado                                                                                                 |
 | ----------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------- |
 | `POST /api/password-resets`         | 204      | Pedido recebido. Não diz se o e-mail tem conta                                                              |
@@ -235,9 +285,31 @@ const response = await fetch(`${API_URL}/api/users/me/email-verification`, { met
 
 **2. Página `/verificar-email` (painel web).** O e-mail leva o Client para **`<WEB_APP_URL>/verificar-email?token=<token>`**, que abre no navegador do celular:
 
-1. Leia o `token` da URL e envie o `POST /api/email-verifications/confirm` com `{ "token": "..." }`. A rota é pública: no navegador, o Client não tem a sessão do app.
+1. Leia o `token` da URL e envie o `POST /api/email-verifications/confirm` com `{ "token": "..." }`, sozinho, quando a página abre. A rota é pública: no navegador, o Client não tem a sessão do app.
 2. Com o 204, mostre que o e-mail foi confirmado e peça para ele voltar ao app.
 3. Com o 422, mostre que o link não vale mais e oriente a pedir outro pelo app.
+
+```ts
+const token = new URLSearchParams(window.location.search).get('token');
+
+const response = await fetch(`${API_URL}/api/email-verifications/confirm`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ token }),
+});
+
+if (response.status === 204) {
+  // "E-mail confirmado. Pode voltar ao app."
+} else if (response.status === 429) {
+  // Muitas tentativas do mesmo IP: o header Retry-After traz os segundos de espera.
+} else {
+  // 422 (ou 400, para um token vazio): "Este link não vale mais. Se você já confirmou o
+  // e-mail, não precisa fazer nada. Se não, peça outro link pelo app."
+}
+```
+
+- **Chame a rota uma vez só.** O link é de uso único: uma segunda chamada com o mesmo token responde 422, mesmo com o e-mail já confirmado. Cuidado com o React em modo estrito (`StrictMode`), que roda os efeitos duas vezes em dev.
+- Pelo mesmo motivo, a mensagem do 422 não deve afirmar que o e-mail não foi confirmado: quem abre de novo um link que já usou também recebe 422.
 
 | Rota                                    | Resposta | Significado                                                                                             |
 | --------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------- |

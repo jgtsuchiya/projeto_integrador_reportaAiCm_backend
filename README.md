@@ -2,7 +2,7 @@
 
 API do **ReportaAi Cm**, plataforma para que os moradores de **Campo Mourão (PR)** reportem buracos no asfalto e para que a prefeitura acompanhe e analise esses reportes.
 
-> **Status:** em desenvolvimento (Projeto Integrador). A base do projeto e a gestão de usuários, com autenticação e controle de acesso, estão prontas. Os reportes entram nas próximas sprints.
+> **Status:** em desenvolvimento (Projeto Integrador). A base do projeto, a gestão de usuários e o login completo (com recuperação de senha, verificação de e-mail, proteção contra força bruta e verificação em duas etapas) estão prontos. Os reportes entram nas próximas sprints.
 
 ## Sumário
 
@@ -139,13 +139,16 @@ Para testar as outras rotas, abra a coleção [docs/api.http](docs/api.http) no 
 
 ### Problemas comuns
 
-| Sintoma                                                              | Causa                                                                                                                   | Solução                                                                      |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| A API não inicia, ou o seed mostra "Variáveis de ambiente inválidas" | O `.env` é antigo e não tem as variáveis novas                                                                          | Compare o `.env` com o [.env.example](.env.example) e copie o que falta      |
-| O login responde `{"status":"WRONG_CREDENTIALS_ERROR"}`              | O seed não rodou, ou o e-mail e a senha não são os do `.env` na hora do seed (ele não altera um SuperAdm que já existe) | Rode o `npm run seed`. Se a senha do SuperAdm se perdeu, zere o ambiente     |
-| O `POST /api/clients` ou o `POST /api/admins` responde 500           | Os papéis de acesso ainda não existem no SuperTokens: é o seed que os cria                                              | Rode o `npm run seed`                                                        |
-| O seed responde "E-mail já cadastrado"                               | O MySQL foi zerado sem o SuperTokens, que ainda guarda a credencial do SuperAdm                                         | Zere o ambiente: os dois bancos precisam andar juntos                        |
-| O `npm run db:up` falha com porta em uso                             | Outro processo usa a 3307, a 3567, a 1025 ou a 8025                                                                     | Pare o outro processo. A porta do MySQL também pode ser trocada no `DB_PORT` |
+| Sintoma                                                                        | Causa                                                                                                                   | Solução                                                                                                         |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| A API não inicia, ou o seed mostra "Variáveis de ambiente inválidas"           | O `.env` é antigo e não tem as variáveis novas                                                                          | Compare o `.env` com o [.env.example](.env.example) e copie o que falta                                         |
+| O login responde `{"status":"WRONG_CREDENTIALS_ERROR"}`                        | O seed não rodou, ou o e-mail e a senha não são os do `.env` na hora do seed (ele não altera um SuperAdm que já existe) | Rode o `npm run seed`. Se a senha do SuperAdm se perdeu, zere o ambiente                                        |
+| O `POST /api/clients` ou o `POST /api/admins` responde 500                     | Os papéis de acesso ainda não existem no SuperTokens: é o seed que os cria                                              | Rode o `npm run seed`                                                                                           |
+| O seed responde "E-mail já cadastrado"                                         | O MySQL foi zerado sem o SuperTokens, que ainda guarda a credencial do SuperAdm                                         | Zere o ambiente: os dois bancos precisam andar juntos                                                           |
+| O login responde `{"status":"GENERAL_ERROR","message":"Muitas tentativas..."}` | 5 senhas erradas para o mesmo e-mail em 15 minutos: o login desse e-mail fica bloqueado, mesmo com a senha certa        | Espere 15 minutos ou redefina a senha pelo link do e-mail, que zera o bloqueio                                  |
+| Uma rota pública (login, cadastro, redefinição de senha) responde 429          | Mais de 20 requisições por minuto do mesmo IP na mesma rota, como num script de teste                                   | Espere os segundos do header `Retry-After` ou reinicie a API: a contagem fica em memória                        |
+| Depois do login, as rotas respondem 403 `{"message":"invalid claim",...}`      | A conta tem a verificação em duas etapas ativa, e a sessão ainda espera o código                                        | Copie o código do e-mail, no Mailpit, e envie no `POST /api/mfa/verify` (seção 10 do [api.http](docs/api.http)) |
+| O `npm run db:up` falha com porta em uso                                       | Outro processo usa a 3307, a 3567, a 1025 ou a 8025                                                                     | Pare o outro processo. A porta do MySQL também pode ser trocada no `DB_PORT`                                    |
 
 Para **zerar o ambiente**, apague os volumes e repita os passos 4 e 5. Isso remove todos os dados do MySQL e do SuperTokens:
 
@@ -180,11 +183,20 @@ A autenticação é feita pelo **SuperTokens**: ele guarda as credenciais e as s
 | Verificação de e-mail  | `POST /api/email-verifications/confirm` e `POST /api/users/me/email-verification`                                      | A confirmação é pública (o link abre no navegador). O reenvio exige sessão |
 | Segunda etapa do login | `POST /api/mfa/verify` e `POST /api/mfa/code`                                                                          | Só a sessão pendente, de quem tem a verificação em duas etapas ativa       |
 
+Em volta do login, a API protege e recupera o acesso:
+
+- **Recuperação de senha:** o usuário que esqueceu a senha recebe um link por e-mail e define uma nova, sem depender de ninguém.
+- **Verificação de e-mail:** o Client confirma, por um link, que o e-mail do cadastro é dele.
+- **Verificação em duas etapas:** opcional, para qualquer papel. Quem a ativa digita um código enviado por e-mail depois da senha.
+- **Sessões abertas:** o usuário vê onde a conta está aberta e encerra o acesso de outros aparelhos.
+- **Força bruta:** depois de 5 senhas erradas para o mesmo e-mail em 15 minutos, o login desse e-mail fica bloqueado por um tempo, e as rotas públicas aceitam 20 requisições por minuto por IP.
+
 Onde continuar:
 
-- [docs/AUTH.md](docs/AUTH.md): como o SuperTokens está integrado, a matriz de permissões e como proteger uma rota nova.
-- [docs/FRONTEND.md](docs/FRONTEND.md): guia rápido de login para o painel web e para o app.
+- [docs/AUTH.md](docs/AUTH.md): como o SuperTokens está integrado, como funciona cada fluxo de login, a matriz de permissões e como proteger uma rota nova.
+- [docs/FRONTEND.md](docs/FRONTEND.md): guia para o painel web e para o app: login, páginas dos links de e-mail, segunda etapa e erros.
 - [docs/api.http](docs/api.http): requisições prontas de todas as rotas.
+- [docs/sprints/sprint-3-login.md](docs/sprints/sprint-3-login.md): plano do login, com as decisões e as regras de negócio (RN17 a RN25).
 
 ## Variáveis de ambiente
 
@@ -300,16 +312,17 @@ Cada funcionalidade é um módulo independente, dividido em camadas. As regras d
 
 ## Documentação
 
-| Documento                                                              | Conteúdo                                                                                        |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                           | Camadas, regras de dependência, nomenclatura, aliases, envio de e-mail e como criar uma feature |
-| [docs/AUTH.md](docs/AUTH.md)                                           | Integração com o SuperTokens, sessão, matriz de permissões e como proteger uma rota             |
-| [docs/FRONTEND.md](docs/FRONTEND.md)                                   | Guia rápido para os times web e mobile: SDKs, login, sessão e formato dos erros                 |
-| [docs/DATABASE.md](docs/DATABASE.md)                                   | Banco local, PostgreSQL do SuperTokens, tabelas, migrations e seed                              |
-| [docs/TESTING.md](docs/TESTING.md)                                     | Tipos de teste, o que testar em cada camada e convenções                                        |
-| [docs/api.http](docs/api.http)                                         | Coleção de requisições com todas as rotas, para a extensão REST Client do VS Code               |
-| [docs/sprints/sprint-2-usuarios.md](docs/sprints/sprint-2-usuarios.md) | Plano da sprint 2: decisões, modelagem e regras de negócio (RN01 a RN16)                        |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                                     | Git Flow, padrão de commits, Pull Requests e releases                                           |
+| Documento                                                              | Conteúdo                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                           | Camadas, regras de dependência, nomenclatura, aliases, envio de e-mail e como criar uma feature                                                                                                           |
+| [docs/AUTH.md](docs/AUTH.md)                                           | Integração com o SuperTokens, sessão, bloqueio e limite do login, recuperação de senha, verificação de e-mail, sessões abertas, verificação em duas etapas, matriz de permissões e como proteger uma rota |
+| [docs/FRONTEND.md](docs/FRONTEND.md)                                   | Guia para os times web e mobile: SDKs, login, páginas dos links de e-mail, segunda etapa, sessões e formato dos erros                                                                                     |
+| [docs/DATABASE.md](docs/DATABASE.md)                                   | Banco local, PostgreSQL do SuperTokens, tabelas, tokens de uso único, migrations e seed                                                                                                                   |
+| [docs/TESTING.md](docs/TESTING.md)                                     | Tipos de teste, o que testar em cada camada e convenções                                                                                                                                                  |
+| [docs/api.http](docs/api.http)                                         | Coleção de requisições com todas as rotas, para a extensão REST Client do VS Code                                                                                                                         |
+| [docs/sprints/sprint-2-usuarios.md](docs/sprints/sprint-2-usuarios.md) | Plano da sprint 2: decisões, modelagem e regras de negócio (RN01 a RN16)                                                                                                                                  |
+| [docs/sprints/sprint-3-login.md](docs/sprints/sprint-3-login.md)       | Plano da sprint 3 (login e segurança de acesso): decisões, modelagem e regras de negócio (RN17 a RN25)                                                                                                    |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                                     | Git Flow, padrão de commits, Pull Requests e releases                                                                                                                                                     |
 
 ## Contribuindo
 

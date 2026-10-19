@@ -41,10 +41,10 @@ flowchart LR
     C --> DB[(MySQL<br/>users, roles, client_profiles...)]
 ```
 
-| Onde                                  | O que guarda                                                                                                    |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| SuperTokens Core (PostgreSQL próprio) | Credenciais (e-mail e hash da senha, em argon2), sessões e uma cópia do papel de cada usuário                   |
-| MySQL                                 | `users`, `roles`, `client_profiles` e `user_tokens`. É a **fonte da verdade** de papel, status e dados pessoais |
+| Onde                                  | O que guarda                                                                                                                      |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| SuperTokens Core (PostgreSQL próprio) | Credenciais (e-mail e hash da senha, em argon2), sessões (com a origem do login) e uma cópia do papel de cada usuário             |
+| MySQL                                 | `users`, `roles`, `client_profiles`, `user_tokens` e `login_attempts`. É a **fonte da verdade** de papel, status e dados pessoais |
 
 Três pontos valem para todo o resto do documento:
 
@@ -697,4 +697,14 @@ Nas rotas da aplicação: 400 para validação (com a lista de campos em `detail
 
 ## Fora do escopo
 
-Ainda não existem a troca de e-mail e, na verificação em duas etapas, o aplicativo autenticador (TOTP) e a obrigatoriedade por papel ([pontos em aberto da sprint 3](sprints/sprint-3-login.md#10-pontos-em-aberto)). Os pontos em aberto (custo do MFA no SuperTokens, validade do refresh token, hospedagem do Core em produção) estão no fim do [plano da sprint 2](sprints/sprint-2-usuarios.md#10-pontos-em-aberto), que também traz as regras de negócio RN01 a RN16 citadas neste documento. As regras RN17 a RN25 estão no [plano da sprint 3](sprints/sprint-3-login.md#4-regras-de-negócio).
+Ainda não existem:
+
+- a troca de e-mail;
+- o login social;
+- na verificação em duas etapas, o aplicativo autenticador (TOTP), a obrigatoriedade por papel e o "lembrar este aparelho";
+- a abertura do app pelos links dos e-mails (deep link): eles abrem as páginas do painel web, no navegador do celular;
+- as restrições para o Client que não verificou o e-mail. Hoje, ele só não ativa a verificação em duas etapas, e as outras restrições entram com os reportes.
+
+Os pontos em aberto estão no fim dos planos das sprints. No da [sprint 3](sprints/sprint-3-login.md#10-pontos-em-aberto): a verificação em duas etapas obrigatória para o painel, o código por e-mail como segundo fator fraco, o bloqueio que permite travar o login de outra pessoa, o limite por IP em memória, o encerramento de sessão que não derruba o acesso na hora, a validade do refresh token e a entrega dos e-mails em produção. No da [sprint 2](sprints/sprint-2-usuarios.md#10-pontos-em-aberto): a hospedagem do Core em produção. O custo do MFA no SuperTokens, ponto em aberto da sprint 2, foi resolvido com a segunda etapa própria da aplicação.
+
+As regras de negócio citadas neste documento estão nos planos: RN01 a RN16 no da [sprint 2](sprints/sprint-2-usuarios.md#4-regras-de-negócio) e RN17 a RN25 no da [sprint 3](sprints/sprint-3-login.md#4-regras-de-negócio).
