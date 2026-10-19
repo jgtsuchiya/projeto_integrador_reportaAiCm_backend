@@ -18,6 +18,7 @@ import {
 import { Email } from '../../../domain/value-objects/email';
 import { Role } from '../../../domain/value-objects/role';
 import { ClientProfileOrmEntity } from '../entities/client-profile.orm-entity';
+import { UserTokenOrmEntity } from '../entities/user-token.orm-entity';
 import { UserOrmEntity } from '../entities/user.orm-entity';
 import { ClientProfileMapper } from '../mappers/client-profile.mapper';
 import { UserTokenMapper } from '../mappers/user-token.mapper';
@@ -124,11 +125,13 @@ export class TypeOrmUserRepository implements UserRepository {
     await this.repository.save(UserMapper.toPersistence(user));
   }
 
-  async saveClient(user: User, profile: ClientProfile): Promise<void> {
+  async saveClient(user: User, profile: ClientProfile, token: UserToken): Promise<void> {
     try {
       await this.repository.manager.transaction(async (manager) => {
+        // O perfil e o token referenciam o usuário (FK), então o usuário é gravado primeiro.
         await manager.insert(UserOrmEntity, UserMapper.toPersistence(user));
         await manager.insert(ClientProfileOrmEntity, ClientProfileMapper.toPersistence(profile));
+        await manager.insert(UserTokenOrmEntity, UserTokenMapper.toPersistence(token));
       });
     } catch (error) {
       throw toUniqueConstraintError(error) ?? error;

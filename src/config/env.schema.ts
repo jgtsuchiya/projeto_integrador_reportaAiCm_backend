@@ -28,6 +28,8 @@ export const envSchema = z.object({
   INVITATION_EXPIRES_IN_HOURS: z.coerce.number().int().positive().default(48),
   // Validade do link de redefinição de senha (RN20).
   PASSWORD_RESET_EXPIRES_IN_MINUTES: z.coerce.number().int().positive().default(60),
+  // Validade do link de verificação de e-mail do Client (RN22).
+  EMAIL_VERIFICATION_EXPIRES_IN_HOURS: z.coerce.number().int().positive().default(24),
 
   // Bloqueio temporário do login: falhas por e-mail, contadas dentro da janela (RN17).
   LOGIN_MAX_FAILED_ATTEMPTS: z.coerce.number().int().positive().default(5),

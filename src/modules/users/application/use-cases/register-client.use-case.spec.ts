@@ -1,6 +1,9 @@
+import { MailDeliveryError } from '@shared/application/ports/mail-sender';
 import type { Page } from '@shared/domain/pagination';
+import { FakeMailSender } from '@shared/testing/fake-mail-sender';
 
 import { ClientProfile } from '../../domain/entities/client-profile.entity';
+import { UserToken } from '../../domain/entities/user-token.entity';
 import { User } from '../../domain/entities/user.entity';
 import { CpfAlreadyInUseError } from '../../domain/errors/cpf-already-in-use.error';
 import { EmailAlreadyInUseError } from '../../domain/errors/email-already-in-use.error';
@@ -18,13 +21,22 @@ import { Password } from '../../domain/value-objects/password';
 import { Phone } from '../../domain/value-objects/phone';
 import { Role } from '../../domain/value-objects/role';
 import { UserStatus } from '../../domain/value-objects/user-status';
+import { UserTokenType } from '../../domain/value-objects/user-token-type';
 import { IdentityProvider } from '../ports/identity-provider';
+import {
+  EMAIL_VERIFICATION_MAIL_SUBJECT,
+  EmailVerificationService,
+} from '../services/email-verification.service';
+import { UserMailService } from '../services/user-mail.service';
 import { RegisterClientInput, RegisterClientUseCase } from './register-client.use-case';
 
-/** Guarda usuários e perfis juntos, como as tabelas `users` e `client_profiles`. */
+const HOUR_IN_MS = 60 * 60 * 1000;
+
+/** Guarda usuários, perfis e tokens juntos, como as tabelas do MySQL. */
 class InMemoryUsersDatabase {
   readonly users: User[] = [];
   readonly profiles: ClientProfile[] = [];
+  readonly tokens: UserToken[] = [];
 }
 
 class InMemoryUserRepository extends UserRepository {
@@ -60,9 +72,10 @@ class InMemoryUserRepository extends UserRepository {
     this.database.users.push(user);
   }
 
-  async saveClient(user: User, profile: ClientProfile): Promise<void> {
+  async saveClient(user: User, profile: ClientProfile, token: UserToken): Promise<void> {
     this.database.users.push(user);
     this.database.profiles.push(profile);
+    this.database.tokens.push(token);
   }
 
   async updateClient(): Promise<void> {
@@ -151,18 +164,35 @@ describe('RegisterClientUseCase', () => {
   let database: InMemoryUsersDatabase;
   let userRepository: InMemoryUserRepository;
   let identityProvider: FakeIdentityProvider;
+  let mailSender: FakeMailSender;
   let sut: RegisterClientUseCase;
 
   beforeEach(() => {
     database = new InMemoryUsersDatabase();
     userRepository = new InMemoryUserRepository(database);
     identityProvider = new FakeIdentityProvider();
+    mailSender = new FakeMailSender();
     sut = new RegisterClientUseCase(
       userRepository,
       new InMemoryClientProfileRepository(database),
       identityProvider,
+      new EmailVerificationService(
+        new UserMailService(mailSender, { webAppUrl: 'http://localhost:5173' }),
+        { expiresInHours: 24 },
+      ),
     );
   });
+
+  /** Segredo do link de verificação do último e-mail enviado. */
+  function lastSecret(): string {
+    const match = /\/verificar-email\?token=([\w-]+)/.exec(mailSender.messages.at(-1)?.text ?? '');
+
+    if (!match) {
+      throw new Error('Nenhum link de verificação foi enviado.');
+    }
+
+    return match[1];
+  }
 
   function seedClient(overrides: { email?: string; cpf?: string } = {}): void {
     const user = User.createClient({
@@ -228,6 +258,44 @@ describe('RegisterClientUseCase', () => {
     expect(JSON.stringify(result)).not.toContain(input.password);
   });
 
+  it('deve gravar o token de verificação e enviar o link para o e-mail do cadastro (RN22)', async () => {
+    await sut.execute(input);
+
+    expect(mailSender.messages).toHaveLength(1);
+    expect(mailSender.messages[0]).toMatchObject({
+      to: 'maria@example.com',
+      subject: EMAIL_VERIFICATION_MAIL_SUBJECT,
+    });
+    expect(database.tokens).toHaveLength(1);
+    const [token] = database.tokens;
+    expect(token.userId).toBe('user-1');
+    expect(token.type).toBe(UserTokenType.EMAIL_VERIFICATION);
+    expect(token.tokenHash).toBe(UserToken.hash(lastSecret()));
+    expect(token.expiresAt.getTime() - token.createdAt.getTime()).toBe(24 * HOUR_IN_MS);
+    expect(token.isUsable()).toBe(true);
+  });
+
+  it('deve concluir o cadastro quando o envio do e-mail de verificação falha', async () => {
+    jest.spyOn(mailSender, 'send').mockRejectedValue(new MailDeliveryError());
+
+    const result = await sut.execute(input);
+
+    expect(result).toMatchObject({ id: 'user-1', email: 'maria@example.com' });
+    expect(identityProvider.credentials.size).toBe(1);
+    expect(database.users).toHaveLength(1);
+    expect(database.tokens).toHaveLength(1);
+  });
+
+  it('não deve remover a credencial quando o envio do e-mail lança outro erro', async () => {
+    const failure = new Error('Bug no template.');
+    jest.spyOn(mailSender, 'send').mockRejectedValue(failure);
+
+    await expect(sut.execute(input)).rejects.toBe(failure);
+    // A conta já está gravada no MySQL: sem a credencial, ela ficaria sem login.
+    expect(identityProvider.credentials.size).toBe(1);
+    expect(database.users).toHaveLength(1);
+  });
+
   it('deve recusar um e-mail já cadastrado, sem criar a credencial (RN02)', async () => {
     seedClient({ email: 'MARIA@example.com' });
 
@@ -270,6 +338,7 @@ describe('RegisterClientUseCase', () => {
     await expect(sut.execute(input)).rejects.toBe(failure);
     expect(identityProvider.credentials.size).toBe(0);
     expect(identityProvider.userRoles.size).toBe(0);
+    expect(mailSender.messages).toHaveLength(0);
   });
 
   it('deve remover a credencial quando a atribuição do papel falha', async () => {

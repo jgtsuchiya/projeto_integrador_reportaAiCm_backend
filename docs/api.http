@@ -13,7 +13,7 @@
 # O painel web usa cookies, que o SDK dele controla (ver docs/AUTH.md e docs/FRONTEND.md).
 #
 # O único passo manual são os tokens dos links, que só existem nos e-mails: o do convite do ADM
-# (seção 3) e o da redefinição de senha (seção 5).
+# (seção 3), o da verificação de e-mail (seção 5) e o da redefinição de senha (seção 6).
 
 @baseUrl = http://localhost:3000/api
 
@@ -34,8 +34,12 @@
 # Token do link de convite (.../convite?token=<token>), copiado do e-mail (seção 3).
 @invitationToken = cole-aqui-o-token-do-convite
 
-# Token do link de redefinição de senha (.../redefinir-senha?token=<token>), copiado do e-mail
+# Token do link de verificação de e-mail (.../verificar-email?token=<token>), copiado do e-mail
 # (seção 5).
+@emailVerificationToken = cole-aqui-o-token-da-verificacao
+
+# Token do link de redefinição de senha (.../redefinir-senha?token=<token>), copiado do e-mail
+# (seção 6).
 @passwordResetToken = cole-aqui-o-token-da-redefinicao
 
 ###
@@ -141,6 +145,7 @@ st-auth-mode: header
 # ==============================================================================================
 
 ### Cadastra o Client: CPF e telefone aceitam máscara e são salvos só com dígitos
+# O Client nasce com o e-mail não verificado e recebe o link de verificação (seção 5).
 # Resposta: 201, com o perfil (sem a senha). Dados inválidos: 400, com a lista de campos.
 # E-mail ou CPF já cadastrado: 409.
 # @name registerClient
@@ -162,7 +167,52 @@ Content-Type: application/json
 
 ###
 # ==============================================================================================
-# 5. Recuperação de senha (público, igual para os três papéis)
+# 5. Verificação de e-mail do Client
+# ==============================================================================================
+
+### Login do Client recém-cadastrado: o login não depende da verificação
+# Resposta: 200, com { "status": "OK", ... }.
+# @name loginUnverifiedClient
+POST {{baseUrl}}/auth/signin
+Content-Type: application/json
+st-auth-mode: header
+
+{
+  "formFields": [
+    { "id": "email", "value": "{{clientEmail}}" },
+    { "id": "password", "value": "{{clientPassword}}" }
+  ]
+}
+
+###
+
+@unverifiedClientToken = {{loginUnverifiedClient.response.headers.st-access-token}}
+
+### Reenvia o link de verificação (opcional: o cadastro já enviou um)
+# O link novo invalida os anteriores. A mesma conta recebe no máximo um e-mail por minuto,
+# contando o do cadastro: espere 1 minuto depois da seção 4.
+# Resposta: 204. Antes de 1 minuto, ou com o e-mail já verificado: 422.
+POST {{baseUrl}}/users/me/email-verification
+Authorization: Bearer {{unverifiedClientToken}}
+
+### Lê o último e-mail capturado pelo Mailpit (não é rota da API)
+# Copie o token do link (.../verificar-email?token=<token>) para a variável
+# @emailVerificationToken, no topo do arquivo.
+GET http://localhost:8025/view/latest.txt
+
+### Confirma o e-mail com o token do link (público)
+# Depois disso, o emailVerifiedAt do GET /users/me vem preenchido.
+# Resposta: 204. Token inválido, expirado, já usado ou substituído por um reenvio: 422.
+POST {{baseUrl}}/email-verifications/confirm
+Content-Type: application/json
+
+{
+  "token": "{{emailVerificationToken}}"
+}
+
+###
+# ==============================================================================================
+# 6. Recuperação de senha (público, igual para os três papéis)
 # ==============================================================================================
 
 ### Pede o link de redefinição: "esqueci minha senha"
@@ -198,7 +248,7 @@ Content-Type: application/json
 
 ###
 # ==============================================================================================
-# 6. Gestão de Clients pelo painel (ADMIN e SUPER_ADMIN)
+# 7. Gestão de Clients pelo painel (ADMIN e SUPER_ADMIN)
 # ==============================================================================================
 
 ### Lista os Clients: paginação, filtro por status e busca
@@ -235,7 +285,7 @@ Authorization: Bearer {{adminToken}}
 
 ###
 # ==============================================================================================
-# 7. Perfil do usuário logado (qualquer papel; aqui, o Client)
+# 8. Perfil do usuário logado (qualquer papel; aqui, o Client)
 # ==============================================================================================
 
 ### Login do Client
@@ -299,7 +349,7 @@ Authorization: Bearer {{clientToken}}
 
 ###
 # ==============================================================================================
-# 8. Gestão de ADMs (só o SUPER_ADMIN)
+# 9. Gestão de ADMs (só o SUPER_ADMIN)
 # ==============================================================================================
 
 ### Lista os ADMs: paginação e filtro por status (PENDING, ACTIVE ou INACTIVE)
@@ -351,7 +401,7 @@ Authorization: Bearer {{superAdminToken}}
 
 ###
 # ==============================================================================================
-# 9. Renovar e encerrar a sessão (rotas nativas do SuperTokens)
+# 10. Renovar e encerrar a sessão (rotas nativas do SuperTokens)
 # ==============================================================================================
 
 ### Renova a sessão: o refresh token vai no lugar do access token
@@ -370,7 +420,7 @@ Authorization: Bearer {{refreshSuperAdmin.response.headers.st-access-token}}
 
 ###
 # ==============================================================================================
-# 10. Rotas nativas desativadas (RN16)
+# 11. Rotas nativas desativadas (RN16)
 # ==============================================================================================
 
 ### Sign-up nativo: desativado, o cadastro é pelo POST /clients
@@ -389,7 +439,7 @@ Content-Type: application/json
 # Resposta: 404.
 GET {{baseUrl}}/auth/emailpassword/email/exists?email={{clientEmail}}
 
-### Reset de senha nativo: desativado, a recuperação é pelo POST /password-resets (seção 5)
+### Reset de senha nativo: desativado, a recuperação é pelo POST /password-resets (seção 6)
 # Resposta: 404.
 POST {{baseUrl}}/auth/user/password/reset/token
 Content-Type: application/json

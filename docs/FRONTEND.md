@@ -216,6 +216,38 @@ const response = await fetch(`${API_URL}/api/password-resets`, {
 
 Depois da redefinição, **todas as sessões do usuário são encerradas**, em todos os aparelhos, e ele recebe o e-mail "Sua senha foi alterada". O mesmo aviso sai na troca de senha pelo perfil. A redefinição também libera o login de um e-mail [bloqueado por tentativas](AUTH.md#bloqueio-do-login-por-tentativas).
 
+## Verificação de e-mail
+
+O Client nasce com o e-mail **não verificado** e recebe, no cadastro, um e-mail com o link de confirmação. O login não depende disso: ele entra no app normalmente. O ADM e o SuperAdm já nascem verificados, então isto vale só para o app e para uma página do painel.
+
+**1. No app: situação e reenvio.** O `emailVerifiedAt` do `GET /api/users/me` é `null` enquanto o e-mail não for confirmado. Mostre um aviso ("Confirme o seu e-mail") com a opção de reenviar o link:
+
+```ts
+// Com a sessão do Client (o SDK envia os tokens).
+const response = await fetch(`${API_URL}/api/users/me/email-verification`, { method: 'POST' });
+// 204: mostre "Enviamos um novo link para o seu e-mail".
+```
+
+- O link novo **invalida os anteriores**.
+- A mesma conta recebe **um e-mail por minuto**, contando o do cadastro. Antes disso, a rota responde 422 e o link que já foi continua valendo. Deixe o botão de reenviar desativado por 1 minuto, inclusive logo depois do cadastro.
+- Para saber que o e-mail foi confirmado, chame o `GET /api/users/me` de novo, por exemplo quando o app volta para o primeiro plano.
+
+**2. Página `/verificar-email` (painel web).** O e-mail leva o Client para **`<WEB_APP_URL>/verificar-email?token=<token>`**, que abre no navegador do celular:
+
+1. Leia o `token` da URL e envie o `POST /api/email-verifications/confirm` com `{ "token": "..." }`. A rota é pública: no navegador, o Client não tem a sessão do app.
+2. Com o 204, mostre que o e-mail foi confirmado e peça para ele voltar ao app.
+3. Com o 422, mostre que o link não vale mais e oriente a pedir outro pelo app.
+
+| Rota                                    | Resposta | Significado                                                                                             |
+| --------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------- |
+| `POST /api/email-verifications/confirm` | 204      | E-mail confirmado                                                                                       |
+| `POST /api/email-verifications/confirm` | 422      | Link inválido, expirado (24 horas), já usado ou substituído por um reenvio. O Client pede outro link    |
+| `POST /api/email-verifications/confirm` | 429      | Muitas requisições do mesmo IP ([erros](#erros))                                                        |
+| `POST /api/users/me/email-verification` | 204      | Link novo enviado                                                                                       |
+| `POST /api/users/me/email-verification` | 422      | O e-mail já foi verificado, ou o último e-mail saiu há menos de 1 minuto. A `message` diz qual dos dois |
+
+Se o e-mail do cadastro não chegar (o servidor de e-mail pode falhar), o cadastro vale do mesmo jeito: o Client pede o reenvio.
+
 ## Depois do login: perfil e papel
 
 ```http
@@ -240,6 +272,7 @@ GET /api/users/me
 ```
 
 - `role` é `SUPER_ADMIN`, `ADMIN` ou `CLIENT`, e não muda depois que a conta é criada.
+- `emailVerifiedAt` é `null` até o Client confirmar o e-mail ([verificação de e-mail](#verificação-de-e-mail)). No ADM e no SuperAdm, vem sempre preenchido.
 - `cpf`, `phone` e `birthDate` só existem para o Client. CPF e telefone vêm só com dígitos: a máscara é por conta do front.
 - No painel, o CPF dos Clients vem sempre mascarado (`***.982.247-**`) nas rotas de `/api/clients`.
 
@@ -266,18 +299,20 @@ function onHandleEvent(event: { action: string }) {
 
 ## Rotas de cada front
 
-| Rota                                                                        | Painel web | App | Observação                                                  |
-| --------------------------------------------------------------------------- | :--------: | :-: | ----------------------------------------------------------- |
-| `POST /api/auth/signin`, `/session/refresh` e `/signout`                    |     ✔      |  ✔  | Pelo SDK                                                    |
-| `GET` e `PATCH /api/users/me`                                               |     ✔      |  ✔  | O Client também edita `phone` e `birthDate`                 |
-| `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 401 |
-| `POST /api/password-resets`                                                 |     ✔      |  ✔  | "Esqueci minha senha", sem sessão. Responde sempre 204      |
-| `POST /api/password-resets/confirm`                                         |     ✔      |     | Página `/redefinir-senha`, sem sessão                       |
-| `POST /api/clients`                                                         |            |  ✔  | Autocadastro, sem sessão                                    |
-| `DELETE /api/users/me`                                                      |            |  ✔  | `{ password }`. Exclui e anonimiza a conta do Client        |
-| `POST /api/invitations/accept`                                              |     ✔      |     | Página `/convite`, sem sessão                               |
-| `GET /api/clients`, `GET /api/clients/:id`, `PATCH /api/clients/:id/status` |     ✔      |     | `ADMIN` e `SUPER_ADMIN`                                     |
-| `/api/admins` (convite, listagem, edição, status, reenvio, exclusão)        |     ✔      |     | Só o `SUPER_ADMIN`                                          |
+| Rota                                                                        | Painel web | App | Observação                                                      |
+| --------------------------------------------------------------------------- | :--------: | :-: | --------------------------------------------------------------- |
+| `POST /api/auth/signin`, `/session/refresh` e `/signout`                    |     ✔      |  ✔  | Pelo SDK                                                        |
+| `GET` e `PATCH /api/users/me`                                               |     ✔      |  ✔  | O Client também edita `phone` e `birthDate`                     |
+| `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 401     |
+| `POST /api/password-resets`                                                 |     ✔      |  ✔  | "Esqueci minha senha", sem sessão. Responde sempre 204          |
+| `POST /api/password-resets/confirm`                                         |     ✔      |     | Página `/redefinir-senha`, sem sessão                           |
+| `POST /api/clients`                                                         |            |  ✔  | Autocadastro, sem sessão. Envia o link de verificação de e-mail |
+| `POST /api/users/me/email-verification`                                     |            |  ✔  | Reenvia o link de verificação. Só para quem ainda não verificou |
+| `POST /api/email-verifications/confirm`                                     |     ✔      |     | Página `/verificar-email`, sem sessão                           |
+| `DELETE /api/users/me`                                                      |            |  ✔  | `{ password }`. Exclui e anonimiza a conta do Client            |
+| `POST /api/invitations/accept`                                              |     ✔      |     | Página `/convite`, sem sessão                                   |
+| `GET /api/clients`, `GET /api/clients/:id`, `PATCH /api/clients/:id/status` |     ✔      |     | `ADMIN` e `SUPER_ADMIN`                                         |
+| `/api/admins` (convite, listagem, edição, status, reenvio, exclusão)        |     ✔      |     | Só o `SUPER_ADMIN`                                              |
 
 As listagens recebem `?page=1&pageSize=20` (até 100 por página) e respondem `{ items, page, pageSize, total }`. O corpo e a resposta de cada rota estão na coleção [api.http](api.http), e quem pode chamar cada uma, na [matriz de permissões](AUTH.md#matriz-de-permissões).
 
@@ -320,7 +355,7 @@ As rotas da aplicação respondem os erros sempre no mesmo formato, com a `messa
 | 422    | Regra de negócio (ex.: link expirado)       | Depende da regra                                              |
 | 429    | Muitas requisições do mesmo IP (ver abaixo) | (ausente)                                                     |
 
-O 429 vem do limite por IP do login, do cadastro do Client, do aceite do convite e das duas rotas da redefinição de senha: cada uma dessas rotas aceita 20 requisições por minuto por IP. A resposta traz o header `Retry-After`, com os segundos que faltam para a próxima tentativa.
+O 429 vem do limite por IP do login, do cadastro do Client, do aceite do convite, das duas rotas da redefinição de senha e da confirmação do e-mail: cada uma dessas rotas aceita 20 requisições por minuto por IP. A resposta traz o header `Retry-After`, com os segundos que faltam para a próxima tentativa.
 
 As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 com o resultado em `status`, e a falta de sessão responde 401 com `{ "message": "unauthorised" }`. A exceção é o 429, que tem o formato acima também no login.
 
@@ -329,5 +364,5 @@ As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 co
 ## Testando sem o front
 
 - [api.http](api.http) tem todas as rotas prontas para executar no VS Code, na ordem de um fluxo completo.
-- Em dev, os e-mails (convite, redefinição de senha e aviso de troca de senha) não saem para a internet: eles aparecem no Mailpit, em http://localhost:8025.
+- Em dev, os e-mails (convite, redefinição de senha, aviso de troca de senha e verificação de e-mail) não saem para a internet: eles aparecem no Mailpit, em http://localhost:8025.
 - O SuperAdm de dev é criado pelo `npm run seed`, com o e-mail e a senha das variáveis `SUPER_ADMIN_*` do `.env` ([README](../README.md#primeiro-login)).

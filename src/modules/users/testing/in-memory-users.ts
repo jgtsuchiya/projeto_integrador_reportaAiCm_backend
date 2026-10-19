@@ -99,13 +99,14 @@ export class InMemoryUserRepository extends UserRepository {
     this.database.users.set(user.id, user);
   }
 
-  async saveClient(user: User, profile: ClientProfile): Promise<void> {
-    this.database.users.set(user.id, user);
-    this.database.profiles.set(profile.userId, profile);
+  async saveClient(user: User, profile: ClientProfile, token: UserToken): Promise<void> {
+    await this.updateClient(user, profile);
+    this.database.tokens.set(token.id, token);
   }
 
   async updateClient(user: User, profile: ClientProfile): Promise<void> {
-    await this.saveClient(user, profile);
+    this.database.users.set(user.id, user);
+    this.database.profiles.set(profile.userId, profile);
   }
 
   async deleteClient(user: User): Promise<void> {

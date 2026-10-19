@@ -215,6 +215,7 @@ describe('Limite de requisições por IP (integração)', () => {
       ['/api/Invitations/Accept?origem=email', '/api/invitations/accept'],
       ['/API/Password-Resets/', '/api/password-resets'],
       ['/api/password-resets/confirm?origem=email', '/api/password-resets/confirm'],
+      ['/API/Email-Verifications/Confirm/', '/api/email-verifications/confirm'],
     ])('deve contar %s na mesma rota de %s', async (variation, path) => {
       const ip = newIp();
 
@@ -232,6 +233,7 @@ describe('Limite de requisições por IP (integração)', () => {
       ['GET', '/api/users/me', 401],
       ['POST', '/api/auth/session/refresh', 401],
       ['POST', '/api/auth/signout', 401],
+      ['POST', '/api/users/me/email-verification', 401],
     ])('não deve limitar %s %s', async (method, path, status) => {
       const statuses = await sendTimes(LIMIT + 2, method, path, newIp());
 
