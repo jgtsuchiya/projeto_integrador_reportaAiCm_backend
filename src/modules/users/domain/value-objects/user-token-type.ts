@@ -4,6 +4,9 @@
  */
 export const UserTokenType = {
   INVITATION: 'INVITATION',
+  PASSWORD_RESET: 'PASSWORD_RESET',
+  EMAIL_VERIFICATION: 'EMAIL_VERIFICATION',
+  LOGIN_CODE: 'LOGIN_CODE',
 } as const;
 
 export type UserTokenType = (typeof UserTokenType)[keyof typeof UserTokenType];

@@ -34,6 +34,7 @@ import { ClientProfileRepository } from './domain/repositories/client-profile.re
 import { UserRepository } from './domain/repositories/user.repository';
 import { UserTokenRepository } from './domain/repositories/user-token.repository';
 import { ClientProfileOrmEntity } from './infra/database/entities/client-profile.orm-entity';
+import { LoginAttemptOrmEntity } from './infra/database/entities/login-attempt.orm-entity';
 import { RoleOrmEntity } from './infra/database/entities/role.orm-entity';
 import { UserTokenOrmEntity } from './infra/database/entities/user-token.orm-entity';
 import { UserOrmEntity } from './infra/database/entities/user.orm-entity';
@@ -53,6 +54,7 @@ import { ProfileController } from './presentation/controllers/profile.controller
       UserOrmEntity,
       ClientProfileOrmEntity,
       UserTokenOrmEntity,
+      LoginAttemptOrmEntity,
     ]),
     // Envio do convite do ADMIN.
     MailModule,
