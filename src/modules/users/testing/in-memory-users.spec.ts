@@ -56,14 +56,14 @@ describe('InMemoryUserTokenRepository', () => {
     });
   });
 
-  describe('saveAttempts', () => {
+  describe('saveFailedAttempt', () => {
     it('deve recusar o código certo depois de 5 erros gravados (RN25)', async () => {
       const { token, secret } = UserToken.issueCode({ userId: 'user-1', validForMinutes: 10 });
       await sut.replace(token);
 
       for (let attempt = 1; attempt <= 5; attempt++) {
         token.registerFailedAttempt();
-        await sut.saveAttempts(token);
+        await sut.saveFailedAttempt(token);
       }
 
       const found = await sut.findLatest('user-1', UserTokenType.LOGIN_CODE);
@@ -79,9 +79,35 @@ describe('InMemoryUserTokenRepository', () => {
       await sut.replace(second);
 
       first.registerFailedAttempt();
-      await sut.saveAttempts(first);
+      await sut.saveFailedAttempt(first);
 
       expect([...database.tokens.values()]).toEqual([second]);
+    });
+  });
+
+  describe('consume', () => {
+    it('deve confirmar o uso do código vigente', async () => {
+      const { token } = UserToken.issueCode({ userId: 'user-1', validForMinutes: 10 });
+      await sut.replace(token);
+      token.use();
+
+      await expect(sut.consume(token)).resolves.toBe(true);
+
+      const found = await sut.findLatest('user-1', UserTokenType.LOGIN_CODE);
+      expect(found?.usedAt).toBeInstanceOf(Date);
+    });
+
+    it('não deve consumir um código substituído por um reenvio', async () => {
+      const first = UserToken.issueCode({ userId: 'user-1', validForMinutes: 10 }).token;
+      const second = UserToken.issueCode({ userId: 'user-1', validForMinutes: 10 }).token;
+      await sut.replace(first);
+      await sut.replace(second);
+      first.use();
+
+      await expect(sut.consume(first)).resolves.toBe(false);
+
+      expect([...database.tokens.values()]).toEqual([second]);
+      expect(second.usedAt).toBeNull();
     });
   });
 });

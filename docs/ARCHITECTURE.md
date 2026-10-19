@@ -87,6 +87,8 @@ Assim, o caso de uso depende apenas de `ReportRepository`. Os testes unitários 
 
 Os serviços externos seguem o mesmo padrão, com a porta em `application/ports/`. No módulo `users`, o [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts) (criar credencial, conferir e trocar senha, remover o usuário, listar e revogar sessões, criar e atribuir papéis) é implementado pelo [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts). Só a infra importa o `supertokens-node`. As portas usadas por mais de um módulo, como a de [envio de e-mail](#envio-de-e-mail), ficam em `shared/application/ports/`.
 
+A porta também resolve o caso em que a `infra` e a `presentation` precisam da mesma peça de uma biblioteca, já que uma não importa a outra. No módulo `auth`, a claim de sessão da segunda etapa do login é gravada pela configuração do SuperTokens (`infra`) e conferida pelo `AuthGuard` (`presentation`): ela fica na `infra`, e o guard fala com ela pela porta [`SessionSecondFactor`](../src/modules/auth/application/ports/session-second-factor.ts).
+
 ### Entidades e value objects
 
 - **Entidades** estendem [`Entity`](../src/shared/domain/entity.ts) e protegem as próprias regras: os dados só mudam por métodos com nome de negócio (`user.deactivate()`, `user.delete()`), nunca por setters. Cada entidade tem uma fábrica para os dados novos (`User.createClient(...)`), que valida, e um `restore(...)` para os dados já persistidos, usado pelos mappers.
@@ -167,7 +169,7 @@ const listClientsQuerySchema = pageRequestSchema.extend({
 
 ## Autenticação e autorização
 
-Toda rota da aplicação exige uma sessão do SuperTokens (cookie no painel web, header no app). Quem garante isso é o [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts) global, registrado no `AppModule`. A cada requisição, ele carrega o usuário no MySQL e bloqueia quem não estiver ACTIVE ou tiver sido excluído, mesmo com o token ainda válido. O papel conferido é o do MySQL, não o do token.
+Toda rota da aplicação exige uma sessão do SuperTokens (cookie no painel web, header no app). Quem garante isso é o [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts) global, registrado no `AppModule`. A cada requisição, ele carrega o usuário no MySQL e bloqueia quem não estiver ACTIVE ou tiver sido excluído, mesmo com o token ainda válido. Ele também recusa a sessão de quem ainda não conferiu o código da verificação em duas etapas (403 `invalid claim`). O papel conferido é o do MySQL, não o do token.
 
 Os decorators ficam em [`modules/auth/presentation/decorators`](../src/modules/auth/presentation/decorators) e podem ser importados pelos controllers de qualquer módulo:
 

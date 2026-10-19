@@ -1,6 +1,7 @@
 import supertokens from 'supertokens-node';
 import type { RecipeInterface } from 'supertokens-node/recipe/session/types';
 
+import { setSecondFactorRequired } from './second-factor.claim';
 import { overrideSessionFunctions } from './session.overrides';
 
 jest.mock('supertokens-node', () => ({
@@ -38,14 +39,25 @@ describe('overrideSessionFunctions', () => {
     );
   }
 
-  function buildInput(sessionDataInDatabase?: unknown): CreateNewSessionInput {
+  function buildInput(
+    sessionDataInDatabase?: unknown,
+    context: CreateNewSessionInput['userContext'] = userContext,
+  ): CreateNewSessionInput {
     return {
       userId: 'user-1',
       tenantId: 'public',
       accessTokenPayload: { claim: 'valor' },
       sessionDataInDatabase,
-      userContext,
+      userContext: context,
     } as CreateNewSessionInput;
+  }
+
+  /** Contexto de uma requisição de login, com a decisão que o override do `signIn` deixou. */
+  function signInContext(secondFactorRequired: boolean): CreateNewSessionInput['userContext'] {
+    const context = { _default: {} } as unknown as CreateNewSessionInput['userContext'];
+    setSecondFactorRequired(context, secondFactorRequired);
+
+    return context;
   }
 
   it('deve manter as demais funções da receita', () => {
@@ -88,6 +100,49 @@ describe('overrideSessionFunctions', () => {
 
     expect(original.createNewSession.mock.calls[0][0].accessTokenPayload).toEqual({
       claim: 'valor',
+    });
+  });
+
+  it.each([
+    ['pendente (false) quando o login pede a segunda etapa', true, false],
+    ['completa (true) quando o login não pede a segunda etapa', false, true],
+  ])(
+    'deve gravar a claim mfa-verified %s (RN25)',
+    async (_case, secondFactorRequired, verified) => {
+      mockRequest({ ip: '203.0.113.10', userAgent: 'Mozilla/5.0' });
+      const startedAt = Date.now();
+
+      await sut.createNewSession(buildInput(undefined, signInContext(secondFactorRequired)));
+
+      expect(original.createNewSession.mock.calls[0][0].accessTokenPayload).toEqual({
+        claim: 'valor',
+        'mfa-verified': { v: verified, t: expect.any(Number) as number },
+      });
+      const payload = original.createNewSession.mock.calls[0][0].accessTokenPayload as {
+        'mfa-verified': { t: number };
+      };
+      expect(payload['mfa-verified'].t).toBeGreaterThanOrEqual(startedAt);
+    },
+  );
+
+  it('deve criar sem a claim a sessão aberta fora do login por senha', async () => {
+    mockRequest(undefined);
+
+    await sut.createNewSession(buildInput());
+
+    expect(original.createNewSession.mock.calls[0][0].accessTokenPayload).toEqual({
+      claim: 'valor',
+    });
+  });
+
+  it('não deve colocar a claim nos dados da sessão no Core', async () => {
+    mockRequest({ ip: '203.0.113.10', userAgent: 'Mozilla/5.0' });
+
+    await sut.createNewSession(buildInput(undefined, signInContext(true)));
+
+    expect(original.createNewSession.mock.calls[0][0].sessionDataInDatabase).toEqual({
+      ipAddress: '203.0.113.10',
+      userAgent: 'Mozilla/5.0',
     });
   });
 

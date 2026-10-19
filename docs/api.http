@@ -1,4 +1,4 @@
-# Coleção de requisições da API do ReportaAi Cm: usuários e autenticação (sprint 2).
+# Coleção de requisições da API do ReportaAi Cm: usuários e autenticação (sprints 2 e 3).
 #
 # Como usar
 #   1. Instale a extensão "REST Client" do VS Code (humao.rest-client, já recomendada em
@@ -12,8 +12,9 @@
 # nos headers da resposta e o access token vai no Authorization das chamadas seguintes.
 # O painel web usa cookies, que o SDK dele controla (ver docs/AUTH.md e docs/FRONTEND.md).
 #
-# O único passo manual são os tokens dos links, que só existem nos e-mails: o do convite do ADM
-# (seção 3), o da verificação de e-mail (seção 5) e o da redefinição de senha (seção 6).
+# Os passos manuais são os segredos que só existem nos e-mails: o token do convite do ADM
+# (seção 3), o da verificação de e-mail (seção 5), o da redefinição de senha (seção 6) e o código
+# da segunda etapa do login (seção 10).
 
 @baseUrl = http://localhost:3000/api
 
@@ -41,6 +42,9 @@
 # Token do link de redefinição de senha (.../redefinir-senha?token=<token>), copiado do e-mail
 # (seção 6).
 @passwordResetToken = cole-aqui-o-token-da-redefinicao
+
+# Código de 6 dígitos da segunda etapa do login, copiado do e-mail (seção 10).
+@mfaCode = 000000
 
 ###
 # ==============================================================================================
@@ -439,7 +443,73 @@ Authorization: Bearer {{superAdminToken}}
 
 ###
 # ==============================================================================================
-# 10. Renovar e encerrar a sessão (rotas nativas do SuperTokens)
+# 10. Segunda etapa do login (verificação em duas etapas; aqui, com o SuperAdm)
+# ==============================================================================================
+#
+# A rota que ativa a verificação em duas etapas ainda não existe. Para testar, ligue-a direto no
+# banco, e desligue no final (mfa_enabled = 0), para o login das outras seções voltar ao normal:
+#
+#   docker compose exec mysql sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" \
+#     -e "UPDATE users SET mfa_enabled = 1 WHERE email = \"superadmin@reportaai.local\""'
+
+### Login com a verificação em duas etapas ativa: a sessão nasce pendente
+# O código de 6 dígitos vai para o e-mail do usuário.
+# Resposta: 200, com { "status": "OK", ... } e os tokens da sessão pendente nos headers.
+# @name loginPending
+POST {{baseUrl}}/auth/signin
+Content-Type: application/json
+st-auth-mode: header
+
+{
+  "formFields": [
+    { "id": "email", "value": "{{superAdminEmail}}" },
+    { "id": "password", "value": "{{superAdminPassword}}" }
+  ]
+}
+
+###
+
+@pendingToken = {{loginPending.response.headers.st-access-token}}
+
+### A sessão pendente só acessa as rotas de /mfa, o refresh e o signout
+# Resposta: 403, com { "message": "invalid claim", "claimValidationErrors": [{ "id":
+# "mfa-verified", ... }] }.
+GET {{baseUrl}}/users/me
+Authorization: Bearer {{pendingToken}}
+
+### Lê o último e-mail capturado pelo Mailpit (não é rota da API)
+# Copie o código de 6 dígitos para a variável @mfaCode, no topo do arquivo.
+GET http://localhost:8025/view/latest.txt
+
+### (Opcional) Reenvia o código: o anterior deixa de valer
+# Resposta: 204. Menos de 1 minuto depois do último código: 422. Sessão que não está pendente: 422.
+POST {{baseUrl}}/mfa/code
+Authorization: Bearer {{pendingToken}}
+
+### Confere o código e conclui o login
+# Resposta: 204, com o access token atualizado no header st-access-token. Código errado, vencido
+# (10 min) ou já usado: 422. No 5º erro, o código deixa de valer. Código fora do formato: 400.
+# @name verifyMfa
+POST {{baseUrl}}/mfa/verify
+Content-Type: application/json
+Authorization: Bearer {{pendingToken}}
+
+{
+  "code": "{{mfaCode}}"
+}
+
+###
+
+@verifiedToken = {{verifyMfa.response.headers.st-access-token}}
+
+### Com o access token atualizado, a sessão está completa
+# Resposta: 200. O token antigo (@pendingToken) continua respondendo 403 até expirar.
+GET {{baseUrl}}/users/me
+Authorization: Bearer {{verifiedToken}}
+
+###
+# ==============================================================================================
+# 11. Renovar e encerrar a sessão (rotas nativas do SuperTokens)
 # ==============================================================================================
 
 ### Renova a sessão: o refresh token vai no lugar do access token
@@ -458,7 +528,7 @@ Authorization: Bearer {{refreshSuperAdmin.response.headers.st-access-token}}
 
 ###
 # ==============================================================================================
-# 11. Rotas nativas desativadas (RN16)
+# 12. Rotas nativas desativadas (RN16)
 # ==============================================================================================
 
 ### Sign-up nativo: desativado, o cadastro é pelo POST /clients

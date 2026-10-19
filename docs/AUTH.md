@@ -21,6 +21,7 @@ A autenticação é feita pelo **SuperTokens** self-hosted, integrado pelo SDK `
 - [Recuperação de senha](#recuperação-de-senha)
 - [Verificação de e-mail](#verificação-de-e-mail)
 - [Sessões ativas](#sessões-ativas)
+- [Verificação em duas etapas](#verificação-em-duas-etapas)
 - [Formato dos erros](#formato-dos-erros)
 - [Fora do escopo](#fora-do-escopo)
 
@@ -87,23 +88,29 @@ O SDK (`supertokens-node` 24.0.3) e o Core (12.2.0) conversam pela versão 5.4 d
 
 Tudo o que toca o SDK fica no módulo [`auth`](../src/modules/auth) e no adapter de identidade do módulo `users`:
 
-| Peça                                                                                                     | Papel                                                                                                                                    |
-| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| [`SuperTokensService`](../src/modules/auth/infra/supertokens/supertokens.service.ts)                     | Chama o `supertokens.init`. Roda no construtor, para o SDK já estar pronto quando o `configureApp` monta o CORS                          |
-| [`supertokens.config.ts`](../src/modules/auth/infra/supertokens/supertokens.config.ts)                   | Configuração do `init`: `apiBasePath: '/api/auth'` e as receitas EmailPassword, Session e UserRoles                                      |
-| [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts)       | As regras do projeto aplicadas ao SuperTokens ([o que foi customizado](#o-que-foi-customizado))                                          |
-| [`session.overrides.ts`](../src/modules/auth/infra/supertokens/session.overrides.ts)                     | Guarda o IP e o user agent do login nos dados da sessão ([sessões ativas](#sessões-ativas))                                              |
-| [`SuperTokensMiddleware`](../src/modules/auth/presentation/middlewares/supertokens.middleware.ts)        | Atende as rotas nativas em `/api/auth`. As outras requisições seguem para os controllers                                                 |
-| [`rate-limit.middleware.ts`](../src/modules/auth/presentation/middlewares/rate-limit.middleware.ts)      | Limita as requisições por IP nas rotas públicas, como o login e o cadastro ([limite por IP](#limite-de-requisições-por-ip))              |
-| [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts)                                     | Guard global: exige a sessão, carrega o usuário no MySQL e confere o papel                                                               |
-| [`SuperTokensExceptionFilter`](../src/modules/auth/presentation/filters/supertokens-exception.filter.ts) | Responde os erros do SDK (sessão ausente ou expirada) no formato que os SDKs de front esperam                                            |
-| [`configureApp`](../src/configure-app.ts)                                                                | Prefixo `/api`, CORS, `trust proxy` e limite por IP. O `main.ts` e os testes que sobem a API usam a mesma configuração                   |
-| [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts)                        | Porta do módulo `users`: criar credencial, conferir e trocar senha, remover o usuário, listar e revogar sessões, criar e atribuir papéis |
-| [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts)    | Implementação da porta com o SDK                                                                                                         |
+| Peça                                                                                                           | Papel                                                                                                                                    |
+| -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| [`SuperTokensService`](../src/modules/auth/infra/supertokens/supertokens.service.ts)                           | Chama o `supertokens.init`. Roda no construtor, para o SDK já estar pronto quando o `configureApp` monta o CORS                          |
+| [`supertokens.config.ts`](../src/modules/auth/infra/supertokens/supertokens.config.ts)                         | Configuração do `init`: `apiBasePath: '/api/auth'` e as receitas EmailPassword, Session e UserRoles                                      |
+| [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts)             | As regras do projeto aplicadas ao SuperTokens ([o que foi customizado](#o-que-foi-customizado))                                          |
+| [`session.overrides.ts`](../src/modules/auth/infra/supertokens/session.overrides.ts)                           | Guarda o IP e o user agent do login nos dados da sessão ([sessões ativas](#sessões-ativas)) e grava a claim da segunda etapa             |
+| [`second-factor.claim.ts`](../src/modules/auth/infra/supertokens/second-factor.claim.ts)                       | A claim de sessão `mfa-verified` e o validador que recusa a sessão pendente ([verificação em duas etapas](#verificação-em-duas-etapas))  |
+| [`SessionSecondFactor`](../src/modules/auth/application/ports/session-second-factor.ts)                        | Porta do módulo `auth`: saber se a sessão da requisição está pendente, recusá-la e marcá-la como completa                                |
+| [`SuperTokensSessionSecondFactor`](../src/modules/auth/infra/supertokens/supertokens-session-second-factor.ts) | Implementação da porta com a claim                                                                                                       |
+| [`SuperTokensMiddleware`](../src/modules/auth/presentation/middlewares/supertokens.middleware.ts)              | Atende as rotas nativas em `/api/auth`. As outras requisições seguem para os controllers                                                 |
+| [`rate-limit.middleware.ts`](../src/modules/auth/presentation/middlewares/rate-limit.middleware.ts)            | Limita as requisições por IP nas rotas públicas, como o login e o cadastro ([limite por IP](#limite-de-requisições-por-ip))              |
+| [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts)                                           | Guard global: exige a sessão, carrega o usuário no MySQL, recusa a sessão pendente e confere o papel                                     |
+| [`MfaController`](../src/modules/auth/presentation/controllers/mfa.controller.ts)                              | Rotas da segunda etapa do login: `POST /api/mfa/verify` e `POST /api/mfa/code`                                                           |
+| [`SuperTokensExceptionFilter`](../src/modules/auth/presentation/filters/supertokens-exception.filter.ts)       | Responde os erros do SDK (sessão ausente, expirada ou pendente) no formato que os SDKs de front esperam                                  |
+| [`configureApp`](../src/configure-app.ts)                                                                      | Prefixo `/api`, CORS, `trust proxy` e limite por IP. O `main.ts` e os testes que sobem a API usam a mesma configuração                   |
+| [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts)                              | Porta do módulo `users`: criar credencial, conferir e trocar senha, remover o usuário, listar e revogar sessões, criar e atribuir papéis |
+| [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts)          | Implementação da porta com o SDK                                                                                                         |
 
-O `AuthModule` importa o `UsersModule`, que exporta os casos de uso consultados pela autenticação: `CheckLoginLockUseCase`, `RecordLoginAttemptUseCase` e `AuthorizeSignInUseCase` (login), `GetAuthenticatedUserUseCase` (guard) e `CheckPasswordPolicyUseCase` (política de senha).
+O `AuthModule` importa o `UsersModule`, que exporta os casos de uso consultados pela autenticação: `CheckLoginLockUseCase`, `RecordLoginAttemptUseCase` e `AuthorizeSignInUseCase` (login), `VerifyLoginCodeUseCase` e `ResendLoginCodeUseCase` (segunda etapa), `GetAuthenticatedUserUseCase` (guard) e `CheckPasswordPolicyUseCase` (política de senha).
 
 O `supertokens-node` não entra no `domain` nem na `application` de nenhum módulo: o ESLint barra o import. Os casos de uso usam a porta `IdentityProvider`, e os testes unitários a trocam pelo `FakeIdentityProvider` ([TESTING.md](TESTING.md#fakes-compartilhados)).
+
+O ESLint também impede a `presentation` de importar a `infra`. Por isso a claim da segunda etapa, que a configuração do SDK grava e o guard confere, fica na `infra`, e o guard e o `MfaController` falam com ela pela porta `SessionSecondFactor`. A porta é genérica no tipo da sessão: a `application` não conhece o `SessionContainer` do SDK.
 
 ## Rotas nativas do SuperTokens
 
@@ -141,7 +148,7 @@ A resposta é **sempre 200**, e o resultado vem no campo `status`. A única exce
 
 | `status`                  | Quando acontece                                                                                                          |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `OK`                      | Login feito. Os tokens vêm nos cookies ou nos headers ([cookie ou header](#sessão-cookie-ou-header))                     |
+| `OK`                      | Senha conferida. Os tokens vêm nos cookies ou nos headers ([cookie ou header](#sessão-cookie-ou-header))                 |
 | `WRONG_CREDENTIALS_ERROR` | Senha errada, e-mail sem conta ou usuário que não pode entrar (PENDING, INACTIVE ou excluído)                            |
 | `GENERAL_ERROR`           | E-mail bloqueado por tentativas ([bloqueio do login](#bloqueio-do-login-por-tentativas)). O campo `message` traz o texto |
 | `FIELD_ERROR`             | E-mail fora do formato. O campo `formFields` traz o erro de cada campo                                                   |
@@ -150,17 +157,18 @@ O erro é o mesmo nos três casos de `WRONG_CREDENTIALS_ERROR` de propósito: as
 
 O `user` da resposta é o usuário do SuperTokens (id, e-mail e método de login), sem papel nem nome. O perfil e o papel vêm do `GET /api/users/me`.
 
+Para quem tem a [verificação em duas etapas](#verificação-em-duas-etapas) ativa, o `OK` ainda não é o fim do login: a sessão nasce **pendente**, e as rotas da aplicação respondem 403 até o código enviado por e-mail ser conferido.
+
 ## O que foi customizado
 
-As regras do projeto entram no SuperTokens por cinco pontos. Os quatro primeiros ficam em [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts), e o quinto, em [`session.overrides.ts`](../src/modules/auth/infra/supertokens/session.overrides.ts):
+As regras do projeto entram no SuperTokens por seis pontos. Os quatro primeiros ficam em [`email-password.overrides.ts`](../src/modules/auth/infra/supertokens/email-password.overrides.ts), e os dois últimos, em [`session.overrides.ts`](../src/modules/auth/infra/supertokens/session.overrides.ts):
 
-1. **Quem pode entrar (RN09).** Depois de o SuperTokens conferir a senha, a função `signIn` consulta o usuário no MySQL (`AuthorizeSignInUseCase`). Se ele não estiver ACTIVE, tiver sido excluído ou não existir na aplicação, o resultado vira `WRONG_CREDENTIALS_ERROR`. Se puder entrar, o `last_login_at` é atualizado. O override fica na função `signIn`, e não na API `signInPOST`, porque a sessão só é criada depois dela: um login recusado não chega a gerar tokens.
+1. **Quem pode entrar (RN09).** Depois de o SuperTokens conferir a senha, a função `signIn` consulta o usuário no MySQL (`AuthorizeSignInUseCase`). Se ele não estiver ACTIVE, tiver sido excluído ou não existir na aplicação, o resultado vira `WRONG_CREDENTIALS_ERROR`. Se puder entrar, o caso de uso diz se falta a segunda etapa. Sem ela, o `last_login_at` é atualizado. O override fica na função `signIn`, e não na API `signInPOST`, porque a sessão só é criada depois dela: um login recusado não chega a gerar tokens.
 2. **Política de senha (RN08).** De 8 a 128 caracteres, com pelo menos uma letra e um número. A regra mora no value object [`Password`](../src/modules/users/domain/value-objects/password.ts), aplicado em todas as rotas que definem senha (cadastro do Client, aceite do convite, troca e redefinição de senha e seed). O validador do campo `password` no SuperTokens usa a mesma regra, para ela valer também nas rotas nativas, caso alguma seja reativada. O login não valida a política: uma senha antiga pode não seguir a regra atual.
 3. **Rotas desativadas (RN16).** As APIs de sign-up, de e-mail existente e de reset de senha são definidas como `undefined`. O middleware deixa de atendê-las, e a requisição cai no 404 do Nest. A [recuperação de senha](#recuperação-de-senha) tem rotas próprias.
 4. **Bloqueio por tentativas (RN17 e RN19).** A API `signInPOST` confere se o e-mail está bloqueado antes de a senha ser conferida e registra a tentativa depois ([bloqueio do login](#bloqueio-do-login-por-tentativas)). Este override fica na API, e não na função `signIn`, porque só a API tem a requisição (IP e user agent) e é chamada uma única vez por login, com conta ou não.
 5. **Origem do login (RN23).** A função `createNewSession`, da receita Session, guarda o IP e o user agent da requisição nos dados da sessão no Core (`sessionDataInDatabase`), para o usuário reconhecer cada sessão na [listagem](#sessões-ativas). O override fica na função porque toda sessão nova passa por ela, e a requisição vem do contexto que o SuperTokens monta ao atender a rota.
-
-O MFA fica fora desta sprint. O ponto de entrada da segunda etapa já existe: é o resultado do `AuthorizeSignInUseCase`, que hoje só diz se o login é permitido.
+6. **Segunda etapa (RN25).** A mesma função `createNewSession` grava a claim `mfa-verified` no access token: `false` (sessão pendente) quando o login pediu a segunda etapa e `true` quando não pediu. A decisão vem do ponto 1, pelo contexto que o SuperTokens leva por toda a requisição do login (`userContext`). Os detalhes estão em [verificação em duas etapas](#verificação-em-duas-etapas).
 
 ## Bloqueio do login por tentativas
 
@@ -179,7 +187,7 @@ flowchart TD
     E --> F[OK ou WRONG_CREDENTIALS_ERROR]
 ```
 
-- **O que conta como falha.** Toda resposta que não abre a sessão: senha errada, e-mail sem conta e o login recusado pela RN09 (PENDING, INACTIVE ou excluído). Um login com sucesso zera a conta.
+- **O que conta como falha.** Toda resposta que não abre a sessão: senha errada, e-mail sem conta e o login recusado pela RN09 (PENDING, INACTIVE ou excluído). Um login com sucesso zera a conta. O login que abre uma sessão pendente, da [verificação em duas etapas](#verificação-em-duas-etapas), conta como sucesso: o bloqueio protege a senha, e o código tem o próprio limite de erros.
 - **Por e-mail, com conta ou não.** A conta é pelo e-mail informado, com `trim` e em minúsculas. Um e-mail sem conta recebe a mesma sequência de respostas de um e-mail com conta, então o bloqueio não revela quais e-mails existem.
 - **Durante o bloqueio.** Nem a senha correta entra, e as tentativas recusadas não são registradas. Se fossem, o bloqueio se renovaria sozinho enquanto alguém continuasse tentando.
 - **Registro (RN19).** Cada tentativa respondida vira uma linha em `login_attempts`, com o e-mail, o IP, o user agent e o resultado. A senha nunca é gravada. O IP é o `request.ip` do Express, que segue o `TRUST_PROXY` ([limite por IP](#limite-de-requisições-por-ip)).
@@ -275,16 +283,20 @@ O [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts) é global
 
 1. Verifica a sessão do SuperTokens, no cookie ou no header.
 2. Carrega o usuário no MySQL. Se ele não estiver ACTIVE ou tiver sido excluído, a sessão é revogada e a resposta é 401, mesmo com o token ainda válido. É isso que faz a inativação valer na hora (RN10).
-3. Confere o papel **do MySQL** contra o `@Roles(...)` da rota.
+3. Recusa a **sessão pendente**, de quem ainda não conferiu o código da [segunda etapa](#verificação-em-duas-etapas), exceto nas rotas marcadas com `@AllowPendingSecondFactor()` (RN25).
+4. Confere o papel **do MySQL** contra o `@Roles(...)` da rota.
 
 | Situação                                                  | Resposta                                                                                                          |
 | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Sem sessão ou com token inválido                          | 401 `{ "message": "unauthorised" }`                                                                               |
 | Access token expirado                                     | 401 `{ "message": "try refresh token" }` (o SDK de front renova e repete)                                         |
 | Sessão válida de um usuário INACTIVE, PENDING ou excluído | 401 `{ "statusCode": 401, "error": "Unauthorized", "message": "Sessão inválida. Faça login novamente." }`         |
+| Sessão pendente fora das rotas da segunda etapa           | 403 `{ "message": "invalid claim", "claimValidationErrors": [{ "id": "mfa-verified", "reason": { ... } }] }`      |
 | Papel fora do `@Roles(...)`                               | 403 `{ "statusCode": 403, "error": "Forbidden", "message": "Você não tem permissão para acessar este recurso." }` |
 
-As duas primeiras respostas vêm do SDK, pelo `SuperTokensExceptionFilter`, com o corpo e os headers que os SDKs de front usam para renovar a sessão. No terceiro caso, a API também manda o front descartar os tokens (`front-token: remove`), para o SDK não ficar renovando a sessão de quem perdeu o acesso.
+As duas primeiras respostas e a da sessão pendente vêm do SDK, pelo `SuperTokensExceptionFilter`, com o corpo e os headers que os SDKs de front esperam. No terceiro caso, a API também manda o front descartar os tokens (`front-token: remove`), para o SDK não ficar renovando a sessão de quem perdeu o acesso.
+
+Os dois 403 têm corpos diferentes de propósito: o da sessão pendente segue o formato do SuperTokens, e o front o reconhece pelo `claimValidationErrors` para pedir o código, em vez de mostrar "sem permissão".
 
 O passo 2 custa uma consulta ao MySQL por requisição autenticada. É o preço de o bloqueio não depender da expiração do access token.
 
@@ -308,6 +320,8 @@ O passo 2 custa uma consulta ao MySQL por requisição autenticada. É o preço 
 | `GET /api/users/me/sessions`            |      ✔      |   ✔   |   ✔    |            |
 | `DELETE /api/users/me/sessions/:id`     |      ✔      |   ✔   |   ✔    |            |
 | `DELETE /api/users/me/sessions`         |      ✔      |   ✔   |   ✔    |            |
+| `POST /api/mfa/verify`                  |     ✔³      |  ✔³   |   ✔³   |            |
+| `POST /api/mfa/code`                    |     ✔³      |  ✔³   |   ✔³   |            |
 | `DELETE /api/users/me`                  |             |       |   ✔    |            |
 | `GET /api/clients`                      |      ✔      |   ✔   |        |            |
 | `GET /api/clients/:id`                  |      ✔      |   ✔   |        |            |
@@ -324,7 +338,9 @@ O passo 2 custa uma consulta ao MySQL por requisição autenticada. É o preço 
 
 ² O ADM e o SuperAdm passam pela permissão, mas já nascem com o e-mail verificado: para eles, a resposta é sempre 422 ([verificação de e-mail](#verificação-de-e-mail)).
 
-Sem sessão, as rotas protegidas respondem 401. Com um papel fora da lista, 403. Além do papel, valem estas regras:
+³ Só com a **sessão pendente**: a senha já foi conferida, e o código da segunda etapa ainda não. A sessão completa recebe 422 ([verificação em duas etapas](#verificação-em-duas-etapas)).
+
+Sem sessão, as rotas protegidas respondem 401. Com um papel fora da lista, 403. A sessão pendente só acessa as duas rotas de `/api/mfa`, o refresh e o signout: em todas as outras rotas protegidas, de qualquer papel, a resposta é o 403 `invalid claim`. Além do papel, valem estas regras:
 
 - **Ninguém gerencia um SUPER_ADMIN** (RN03). Não existe rota que o crie, edite, inative ou exclua.
 - **Só o SUPER_ADMIN gerencia ADMINs** (RN04). Nas rotas de `/api/admins`, o id de um SuperAdm ou de um Client responde 404.
@@ -332,17 +348,19 @@ Sem sessão, as rotas protegidas respondem 401. Com um papel fora da lista, 403.
 - **Só o Client vê o próprio CPF completo**, no `GET /api/users/me`.
 - **Cada usuário só vê e encerra as próprias sessões** (RN23). Nas rotas de `/api/users/me/sessions`, o id da sessão de outro usuário responde 404.
 
-A matriz é testada rota a rota no [`permissions.e2e-spec.ts`](../test/permissions.e2e-spec.ts): sem sessão e com cada um dos três papéis.
+A matriz é testada rota a rota no [`permissions.e2e-spec.ts`](../test/permissions.e2e-spec.ts): sem sessão, com cada um dos três papéis e com uma sessão pendente.
 
 ## Como proteger uma rota nova
 
 Uma rota nova já nasce protegida: sem nenhum decorator, ela exige sessão e aceita qualquer papel. Os decorators ficam em [`modules/auth/presentation/decorators`](../src/modules/auth/presentation/decorators) e podem ser importados pelos controllers de qualquer módulo:
 
-| Decorator        | Efeito                                                                                                                         |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `@Public()`      | Libera a rota sem sessão                                                                                                       |
-| `@Roles(...)`    | Restringe aos papéis informados (403 para os outros)                                                                           |
-| `@CurrentUser()` | Injeta o usuário da sessão: `{ id, role, sessionHandle }`. Só funciona em rota autenticada (numa rota `@Public()`, lança erro) |
+| Decorator                     | Efeito                                                                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `@Public()`                   | Libera a rota sem sessão                                                                                                       |
+| `@Roles(...)`                 | Restringe aos papéis informados (403 para os outros)                                                                           |
+| `@CurrentUser()`              | Injeta o usuário da sessão: `{ id, role, sessionHandle }`. Só funciona em rota autenticada (numa rota `@Public()`, lança erro) |
+| `@AllowPendingSecondFactor()` | Libera a rota para a sessão pendente da segunda etapa. É só para as rotas de `/api/mfa`                                        |
+| `@CurrentSession()`           | Injeta a sessão do SuperTokens da requisição, para a rota que altera a própria sessão. Hoje, só as de `/api/mfa`               |
 
 ```ts
 import { CurrentUser } from '@modules/auth/presentation/decorators/current-user.decorator';
@@ -373,7 +391,7 @@ export class ReportsController {
 
 Ao criar a rota:
 
-1. Deixe sem decorator se qualquer usuário logado pode acessar. Use `@Roles(...)` para restringir por papel e `@Public()` só quando a rota precisa mesmo funcionar sem login.
+1. Deixe sem decorator se qualquer usuário logado pode acessar. Use `@Roles(...)` para restringir por papel e `@Public()` só quando a rota precisa mesmo funcionar sem login. Uma rota nova já nasce fechada para a sessão pendente: não use o `@AllowPendingSecondFactor()` fora da segunda etapa do login.
 2. Use o `@CurrentUser()` para saber quem está chamando. Nunca receba o id do usuário logado pelo corpo ou pela URL.
 3. Regras que dependem do **alvo**, e não só do papel (ex.: o Client só altera o próprio reporte), ficam no caso de uso, com um erro de domínio: `ForbiddenError` (403) ou `NotFoundError` (404), quando a resposta não deve revelar que o recurso existe ([ARCHITECTURE.md](ARCHITECTURE.md#erros)).
 4. Inclua a rota na matriz do [`permissions.e2e-spec.ts`](../test/permissions.e2e-spec.ts), com os papéis permitidos e o status de sucesso, e na tabela da [matriz de permissões](#matriz-de-permissões).
@@ -411,6 +429,8 @@ Só o usuário ACTIVE e não excluído faz login e acessa a API. Uma transição
 | Redefinição de senha                               | O token marcado como usado, o `email_verified_at` preenchido (se estava vazio) e as falhas de login do e-mail apagadas                                                                                  | Grava a senha nova e revoga todas as sessões                   |
 | Reenvio da verificação de e-mail                   | O token em `user_tokens`, no lugar dos anteriores do mesmo tipo                                                                                                                                         | Nada                                                           |
 | Confirmação do e-mail                              | O `email_verified_at` preenchido e o token marcado como usado                                                                                                                                           | Nada                                                           |
+| Login com a verificação em duas etapas             | O código da segunda etapa em `user_tokens`, no lugar do anterior                                                                                                                                        | Abre a sessão pendente (claim `mfa-verified` em `false`)       |
+| Conferência do código da segunda etapa             | O código marcado como usado e o `last_login_at` preenchido                                                                                                                                              | Marca a sessão como completa (claim em `true`)                 |
 | Exclusão (ADM pelo SuperAdm, Client por ele mesmo) | `deleted_at` e e-mail anonimizado. No Client, também o nome, e o `client_profiles` é apagado. As tentativas de login do e-mail são apagadas ([DATABASE.md](DATABASE.md#exclusão-lógica-e-anonimização)) | Remove o usuário, com as credenciais, as sessões e os papéis   |
 
 Como não existe transação entre os dois bancos, a ordem das gravações é escolhida para uma falha no meio não deixar o usuário num estado ruim:
@@ -580,6 +600,75 @@ Um limite conhecido:
 
 - **Uma consulta ao Core por sessão.** A listagem busca os ids das sessões e, depois, os dados de cada uma. Com poucas sessões por usuário, o custo é pequeno.
 
+## Verificação em duas etapas
+
+Quem tem a verificação em duas etapas ativa (`users.mfa_enabled`) conclui o login com um código de 6 dígitos enviado por e-mail (RN25). A receita de MFA do SuperTokens é paga, então a segunda etapa é da aplicação: o código fica em `user_tokens`, e o estado da sessão, numa claim customizada.
+
+> A rota que liga e desliga o `mfa_enabled` (`PATCH /api/users/me/mfa`, RN24) ainda não existe. Até lá, nenhuma conta passa pela segunda etapa fora dos testes.
+
+```mermaid
+sequenceDiagram
+    actor U as Usuário
+    participant F as App ou painel
+    participant API
+    participant E as E-mail
+
+    U->>F: e-mail e senha
+    F->>API: POST /api/auth/signin
+    API->>E: código de 6 dígitos
+    API-->>F: OK, sessão pendente (mfa-verified: false)
+    F->>API: GET /api/users/me
+    API-->>F: 403 invalid claim
+    E->>U: e-mail com o código
+    U->>F: digita o código
+    F->>API: POST /api/mfa/verify { code }
+    API-->>F: 204, access token novo (mfa-verified: true)
+    F->>API: GET /api/users/me
+    API-->>F: 200
+```
+
+**Login (`POST /api/auth/signin`).**
+
+- Depois de a senha ser conferida, o `AuthorizeSignInUseCase` vê que a conta tem a verificação em duas etapas, grava o código e o envia por e-mail. A resposta é o mesmo `OK`, com os tokens de uma **sessão pendente**.
+- O `last_login_at` só é gravado quando o código é conferido.
+- **Um código por minuto.** Um login feito menos de 1 minuto depois do último código não envia outro: vale o que já foi enviado. A exceção é o código já usado, para quem acabou de entrar num aparelho conseguir entrar em outro sem esperar.
+- Uma falha no envio do e-mail não impede o login: a sessão fica pendente, e o usuário pede o reenvio.
+
+**A sessão pendente.**
+
+- É uma sessão normal do SuperTokens, com a claim `mfa-verified` em `false` no access token. Para quem não tem a verificação em duas etapas, a claim nasce `true`.
+- Ela só acessa as rotas de `/api/mfa`, o refresh e o signout. Nas outras, o `AuthGuard` responde o 403 `invalid claim` ([o que o AuthGuard faz](#o-que-o-authguard-faz-a-cada-requisição)). A renovação mantém a claim: a sessão pendente continua pendente, e a completa continua completa.
+- **A claim não tem validade.** O valor inicial vem da decisão do login, e só a conferência do código o muda para `true`. Por isso ela nunca é buscada de novo: fora do login, não há de onde tirar o valor.
+- **Sessões sem a claim.** As sessões abertas antes de a claim existir não a têm e continuam valendo como completas.
+
+**Conferência (`POST /api/mfa/verify`).** Recebe `{ "code": "123456" }` e responde 204.
+
+- O código certo é marcado como usado, o `last_login_at` é gravado e a claim passa para `true`. A claim é alterada pela sessão da requisição (`session.setClaimValue`), e não pelo id dela: assim o **access token atualizado já volta nesta resposta**, nos cookies ou nos headers. O access token antigo continua dizendo que a sessão está pendente até expirar, então o front precisa usar o novo, o que os SDKs fazem sozinhos.
+- O código errado, vencido, já usado ou de outra conta responde sempre o mesmo 422 (`Código inválido ou expirado.`). O código fora do formato (6 dígitos) responde 400 e não conta como erro.
+- **Cinco erros invalidam o código**, mesmo que a tentativa seguinte esteja certa. O usuário pede outro.
+- A sessão que não está pendente recebe 422: assim ela não gasta o código de outro aparelho.
+
+**Reenvio (`POST /api/mfa/code`).** Gera e envia um código novo, que invalida o anterior, e responde 204.
+
+- Menos de 1 minuto depois do último código, a resposta é 422, e o código que já foi continua valendo. O intervalo conta também a partir do código enviado no login.
+- Uma falha no envio do e-mail não vira erro: a resposta é 204, e o motivo fica no log.
+- A sessão que não está pendente recebe 422, e nenhum e-mail é enviado.
+
+**O código.**
+
+- Tem 6 dígitos, sorteados com `crypto.randomInt`, e vale `MFA_CODE_EXPIRES_IN_MINUTES` (10 por padrão). O banco guarda só o SHA-256 dele, calculado junto com o id do usuário, porque duas contas podem receber o mesmo código ao mesmo tempo ([DATABASE.md](DATABASE.md)). O código nunca vai para o log nem para o assunto do e-mail.
+- É buscado pelo usuário da sessão, e não pelo hash: o código de uma conta nunca vale para outra.
+- **O limite de erros vale também para tentativas simultâneas.** O erro é somado no banco (`attempts = attempts + 1`), e o uso é gravado com condição (`used_at` vazio e menos de 5 erros). Sem isso, várias conferências ao mesmo tempo leriam o mesmo contador, e quem tem a senha testaria muito mais do que 5 códigos. O intervalo de 1 minuto fecha o outro caminho: um código novo zera os erros, e quem tem a senha não consegue trocar de código a cada 5 tentativas.
+
+**Onde ficam as regras.** O código é do módulo `users`: o [`LoginCodeService`](../src/modules/users/application/services/login-code.service.ts) emite e envia, e os casos de uso `VerifyLoginCodeUseCase` e `ResendLoginCodeUseCase` conferem e reenviam. A sessão é do módulo `auth`: o [`MfaController`](../src/modules/auth/presentation/controllers/mfa.controller.ts) chama o caso de uso e, em seguida, marca a sessão pela porta `SessionSecondFactor`. As rotas não entram no [limite por IP](#limite-de-requisições-por-ip), que é das rotas públicas: aqui, quem segura as tentativas é o limite de erros do código.
+
+Limites conhecidos:
+
+- **Código por e-mail é um segundo fator fraco.** Ele usa o mesmo canal da recuperação de senha: quem invade a caixa de e-mail passa pelas duas barreiras.
+- **Logins simultâneos.** Dois logins ao mesmo tempo para a mesma conta podem passar juntos pela conferência do intervalo de 1 minuto e enviar dois códigos. Só o mais recente vale.
+- **Código conferido e sessão não marcada.** Se a chamada ao Core falhar depois de o código ser usado, a sessão continua pendente, e o usuário pede outro código.
+- **Quem tem a senha consegue atrapalhar o login do dono.** O código é da conta, e não da sessão: quem abre uma sessão pendente pode gastar os 5 erros de cada código. Ele não passa da segunda etapa, e o e-mail do código orienta o dono a redefinir a senha, o que encerra todas as sessões.
+
 ## Formato dos erros
 
 | Origem                                            | Status HTTP                  | Corpo                                                                                           |
@@ -589,6 +678,7 @@ Um limite conhecido:
 | Login de um e-mail bloqueado por tentativas       | 200                          | `{ "status": "GENERAL_ERROR", "message": "Muitas tentativas. ..." }`                            |
 | Limite por IP, inclusive no login                 | 429                          | `{ "statusCode", "error", "message" }`, com o header `Retry-After`                              |
 | Sessão ausente, expirada ou roubada (SuperTokens) | 401                          | `{ "message": "unauthorised" }`, `"try refresh token"` ou `"token theft detected"`              |
+| Sessão pendente da segunda etapa (SuperTokens)    | 403                          | `{ "message": "invalid claim", "claimValidationErrors": [{ "id": "mfa-verified", ... }] }`      |
 
 Nas rotas da aplicação: 400 para validação (com a lista de campos em `details`), 401 para senha incorreta, 403 para papel sem permissão, 404 para recurso inexistente, 409 para e-mail ou CPF já cadastrado e 422 para regra de negócio violada.
 
@@ -596,4 +686,4 @@ Nas rotas da aplicação: 400 para validação (com a lista de campos em `detail
 
 ## Fora do escopo
 
-Ainda não existem: MFA e troca de e-mail. Os pontos em aberto (custo do MFA no SuperTokens, validade do refresh token, hospedagem do Core em produção) estão no fim do [plano da sprint 2](sprints/sprint-2-usuarios.md#10-pontos-em-aberto), que também traz as regras de negócio RN01 a RN16 citadas neste documento. As regras RN17 a RN25 estão no [plano da sprint 3](sprints/sprint-3-login.md#4-regras-de-negócio).
+Ainda não existem: a rota para ativar e desativar a verificação em duas etapas (a segunda etapa do login já funciona, mas o `mfa_enabled` ainda não tem rota) e a troca de e-mail. Os pontos em aberto (custo do MFA no SuperTokens, validade do refresh token, hospedagem do Core em produção) estão no fim do [plano da sprint 2](sprints/sprint-2-usuarios.md#10-pontos-em-aberto), que também traz as regras de negócio RN01 a RN16 citadas neste documento. As regras RN17 a RN25 estão no [plano da sprint 3](sprints/sprint-3-login.md#4-regras-de-negócio).

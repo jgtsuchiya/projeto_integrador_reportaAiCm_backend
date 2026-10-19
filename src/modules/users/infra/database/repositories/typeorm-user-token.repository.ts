@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, LessThan, Repository } from 'typeorm';
 
-import { UserToken } from '../../../domain/entities/user-token.entity';
+import { LOGIN_CODE_MAX_ATTEMPTS, UserToken } from '../../../domain/entities/user-token.entity';
 import { UserTokenRepository } from '../../../domain/repositories/user-token.repository';
 import { UserTokenType } from '../../../domain/value-objects/user-token-type';
 import { UserTokenOrmEntity } from '../entities/user-token.orm-entity';
@@ -37,8 +37,22 @@ export class TypeOrmUserTokenRepository implements UserTokenRepository {
     });
   }
 
-  async saveAttempts(token: UserToken): Promise<void> {
-    await this.repository.update({ id: token.id }, { attempts: token.attempts });
+  async saveFailedAttempt(token: UserToken): Promise<void> {
+    // Um UPDATE só (`attempts = attempts + 1`), que o banco aplica em fila para a mesma linha.
+    await this.repository.increment(
+      { id: token.id, attempts: LessThan(LOGIN_CODE_MAX_ATTEMPTS) },
+      'attempts',
+      1,
+    );
+  }
+
+  async consume(token: UserToken): Promise<boolean> {
+    const result = await this.repository.update(
+      { id: token.id, usedAt: IsNull(), attempts: LessThan(LOGIN_CODE_MAX_ATTEMPTS) },
+      { usedAt: token.usedAt },
+    );
+
+    return result.affected === 1;
   }
 
   async deleteByUserId(userId: string): Promise<void> {

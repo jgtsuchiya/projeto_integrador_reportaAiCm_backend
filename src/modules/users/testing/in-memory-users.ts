@@ -175,11 +175,18 @@ export class InMemoryUserTokenRepository extends UserTokenRepository {
     this.database.tokens.set(token.id, token);
   }
 
-  async saveAttempts(token: UserToken): Promise<void> {
+  async saveFailedAttempt(token: UserToken): Promise<void> {
     // Como o UPDATE do banco: um token já removido (ex.: por um reenvio) não volta.
     if (this.database.tokens.has(token.id)) {
       this.database.tokens.set(token.id, token);
     }
+  }
+
+  async consume(token: UserToken): Promise<boolean> {
+    // O uso feito por `use()` já aparece no "banco", que guarda a entidade por referência.
+    // Como no UPDATE do banco, o código substituído por um reenvio não é consumido. A disputa
+    // entre duas conferências simultâneas é coberta pelo teste de integração.
+    return this.database.tokens.has(token.id);
   }
 
   async deleteByUserId(userId: string): Promise<void> {

@@ -6,14 +6,16 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import Session from 'supertokens-node/recipe/session';
+import Session, { type SessionContainer } from 'supertokens-node/recipe/session';
 
 import {
   AuthenticatedUser,
   GetAuthenticatedUserUseCase,
 } from '@modules/users/application/use-cases/get-authenticated-user.use-case';
 
+import type { SessionSecondFactor } from '../../application/ports/session-second-factor';
 import type { AuthenticatedRequest } from '../authenticated-request';
+import { AllowPendingSecondFactor } from '../decorators/allow-pending-second-factor.decorator';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { AuthGuard, FORBIDDEN_ROLE_MESSAGE, INVALID_SESSION_MESSAGE } from './auth.guard';
@@ -47,6 +49,17 @@ class PublicController {
   open(): void {}
 }
 
+@AllowPendingSecondFactor()
+@Controller('second-factor-probe')
+class SecondFactorController {
+  @Get()
+  verify(): void {}
+
+  @Roles('SUPER_ADMIN')
+  @Get('panel')
+  panel(): void {}
+}
+
 @Roles('SUPER_ADMIN')
 @Controller('admin-probe')
 class AdminController {
@@ -77,6 +90,7 @@ describe('AuthGuard', () => {
   let request: AuthenticatedRequest;
   let session: { getUserId: jest.Mock; getHandle: jest.Mock; revokeSession: jest.Mock };
   let getAuthenticatedUser: jest.Mocked<Pick<GetAuthenticatedUserUseCase, 'execute'>>;
+  let sessionSecondFactor: jest.Mocked<SessionSecondFactor<SessionContainer>>;
   let sut: AuthGuard;
 
   beforeEach(() => {
@@ -90,11 +104,25 @@ describe('AuthGuard', () => {
       .mocked(Session.getSession)
       .mockResolvedValue(session as unknown as Awaited<ReturnType<typeof Session.getSession>>);
     getAuthenticatedUser = { execute: jest.fn() };
+    sessionSecondFactor = {
+      isPending: jest.fn(),
+      assertCompleted: jest.fn().mockResolvedValue(undefined),
+      complete: jest.fn(),
+    };
     sut = new AuthGuard(
       new Reflector(),
       getAuthenticatedUser as unknown as GetAuthenticatedUserUseCase,
+      sessionSecondFactor,
     );
   });
+
+  /** A sessão ainda não passou pela segunda etapa: a porta lança o erro do SuperTokens. */
+  function pendingSecondFactor(): Error {
+    const failure = new Error('INVALID_CLAIMS');
+    sessionSecondFactor.assertCompleted.mockRejectedValue(failure);
+
+    return failure;
+  }
 
   function authenticateAs(role: AuthenticatedUser['role']): AuthenticatedUser {
     const user = { id: USER_ID, role, sessionHandle: SESSION_HANDLE };
@@ -134,6 +162,14 @@ describe('AuthGuard', () => {
     expect(request.user).toEqual(user);
   });
 
+  it('deve anexar a sessão do SuperTokens à requisição', async () => {
+    authenticateAs('CLIENT');
+
+    await sut.canActivate(createContext(probe, 'authenticated', request));
+
+    expect(request.session).toBe(session);
+  });
+
   it('deve revogar a sessão e responder 401 quando o usuário perdeu o acesso', async () => {
     getAuthenticatedUser.execute.mockResolvedValue(null);
 
@@ -142,6 +178,61 @@ describe('AuthGuard', () => {
     );
     expect(session.revokeSession).toHaveBeenCalled();
     expect(request.user).toBeUndefined();
+    expect(sessionSecondFactor.assertCompleted).not.toHaveBeenCalled();
+  });
+
+  it('deve conferir se a sessão concluiu a segunda etapa (RN25)', async () => {
+    authenticateAs('CLIENT');
+
+    await expect(sut.canActivate(createContext(probe, 'authenticated', request))).resolves.toBe(
+      true,
+    );
+    expect(sessionSecondFactor.assertCompleted).toHaveBeenCalledWith(session);
+  });
+
+  it('deve propagar o erro do SuperTokens quando a sessão está pendente', async () => {
+    authenticateAs('CLIENT');
+    const failure = pendingSecondFactor();
+
+    await expect(sut.canActivate(createContext(probe, 'authenticated', request))).rejects.toBe(
+      failure,
+    );
+  });
+
+  it('deve recusar a sessão pendente antes de conferir o papel', async () => {
+    authenticateAs('CLIENT');
+    const failure = pendingSecondFactor();
+
+    await expect(sut.canActivate(createContext(probe, 'panel', request))).rejects.toBe(failure);
+  });
+
+  it('deve liberar a sessão pendente na rota @AllowPendingSecondFactor()', async () => {
+    const user = authenticateAs('CLIENT');
+    pendingSecondFactor();
+
+    await expect(
+      sut.canActivate(createContext(new SecondFactorController(), 'verify', request)),
+    ).resolves.toBe(true);
+    expect(sessionSecondFactor.assertCompleted).not.toHaveBeenCalled();
+    expect(request.user).toEqual(user);
+    expect(request.session).toBe(session);
+  });
+
+  it('deve continuar exigindo a sessão na rota @AllowPendingSecondFactor()', async () => {
+    const failure = new Error('UNAUTHORISED');
+    jest.mocked(Session.getSession).mockRejectedValue(failure);
+
+    await expect(
+      sut.canActivate(createContext(new SecondFactorController(), 'verify', request)),
+    ).rejects.toBe(failure);
+  });
+
+  it('deve continuar conferindo o papel na rota @AllowPendingSecondFactor()', async () => {
+    authenticateAs('CLIENT');
+
+    await expect(
+      sut.canActivate(createContext(new SecondFactorController(), 'panel', request)),
+    ).rejects.toThrow(new ForbiddenException(FORBIDDEN_ROLE_MESSAGE));
   });
 
   it('deve liberar quando o papel está entre os do @Roles()', async () => {

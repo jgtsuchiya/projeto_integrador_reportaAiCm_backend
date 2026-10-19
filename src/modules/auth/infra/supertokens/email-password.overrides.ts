@@ -6,6 +6,8 @@ import type {
   TypeInput,
 } from 'supertokens-node/recipe/emailpassword/types';
 
+import { setSecondFactorRequired } from './second-factor.claim';
+
 type SignInPostInput = Parameters<NonNullable<APIInterface['signInPOST']>>[0];
 
 /** Resposta do login enquanto o e-mail está bloqueado por tentativas (RN17). */
@@ -19,6 +21,15 @@ export interface SignInAttempt {
   succeeded: boolean;
 }
 
+/** Decisão sobre o login de quem acertou a senha. */
+export type SignInAuthorization =
+  | { allowed: false }
+  | {
+      allowed: true;
+      /** A sessão nasce pendente até o código da segunda etapa ser conferido (RN25). */
+      secondFactorRequired: boolean;
+    };
+
 /** Regras da aplicação que o SuperTokens precisa consultar. Vêm do módulo `users`. */
 export interface SuperTokensHooks {
   /**
@@ -29,10 +40,10 @@ export interface SuperTokensHooks {
   /** Chamado depois de o login ser respondido, com sucesso ou não, para registrá-lo (RN19). */
   recordLoginAttempt(attempt: SignInAttempt): Promise<void>;
   /**
-   * Chamado depois de a senha ser conferida. Retornar false recusa o login (RN09).
-   * Também é o ponto de entrada da segunda etapa, quando o MFA existir.
+   * Chamado depois de a senha ser conferida. Pode recusar o login (RN09) ou pedir a segunda
+   * etapa (RN25), que deixa a sessão pendente.
    */
-  authorizeSignIn(userId: string): Promise<boolean>;
+  authorizeSignIn(userId: string): Promise<SignInAuthorization>;
   /** Retorna a mensagem da violação da política de senha (RN08), ou null quando ela é válida. */
   checkPasswordPolicy(password: string): Promise<string | null>;
 }
@@ -116,6 +127,9 @@ function readClientIp(options: APIOptions): string | null {
  * (INACTIVE, PENDING, excluído ou sem cadastro na aplicação). A resposta é a mesma da senha
  * incorreta, para não revelar se o e-mail existe (RN09).
  *
+ * Quando o login pede a segunda etapa (RN25), a decisão vai para o contexto da requisição, de
+ * onde o `createNewSession` a lê para abrir a sessão pendente.
+ *
  * O override fica na função `signIn`, e não na API `signInPOST`, porque a sessão só é criada
  * depois dela: um login recusado aqui não chega a gerar tokens.
  */
@@ -131,9 +145,13 @@ export function overrideEmailPasswordFunctions(
         return result;
       }
 
-      if (!(await hooks.authorizeSignIn(result.user.id))) {
+      const authorization = await hooks.authorizeSignIn(result.user.id);
+
+      if (!authorization.allowed) {
         return { status: 'WRONG_CREDENTIALS_ERROR' };
       }
+
+      setSecondFactorRequired(input.userContext, authorization.secondFactorRequired);
 
       return result;
     },

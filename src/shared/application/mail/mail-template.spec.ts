@@ -56,13 +56,35 @@ describe('renderMailTemplate', () => {
     expect(text).toContain('<script>alert("x")</script>');
   });
 
-  it('deve omitir o botão e a observação quando não são informados', () => {
+  it('deve destacar o código, depois dos parágrafos, no HTML e no texto puro', () => {
+    const { html, text } = renderMailTemplate({
+      title: 'Seu código de acesso',
+      paragraphs: ['Use o código abaixo para concluir o seu login.'],
+      code: '042137',
+      note: 'O código vale por 10 minutos.',
+    });
+
+    expect(html).toContain('letter-spacing:6px">042137</p>');
+    expect(html.indexOf('>042137</p>')).toBeGreaterThan(html.indexOf('Use o código abaixo'));
+    expect(text).toBe(
+      [
+        'Seu código de acesso',
+        'Use o código abaixo para concluir o seu login.',
+        '042137',
+        'O código vale por 10 minutos.',
+        FOOTER,
+      ].join('\n\n'),
+    );
+  });
+
+  it('deve omitir o código, o botão e a observação quando não são informados', () => {
     const { html, text } = renderMailTemplate({
       title: 'Conta reativada',
       paragraphs: ['Seu acesso foi liberado de novo.'],
     });
 
     expect(html).not.toContain('<a ');
+    expect(html).not.toContain('letter-spacing');
     expect(text).toBe(['Conta reativada', 'Seu acesso foi liberado de novo.', FOOTER].join('\n\n'));
   });
 });

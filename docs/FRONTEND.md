@@ -8,6 +8,7 @@ Como o painel web e o app fazem login e chamam a API do ReportaAi Cm. O funciona
 - O login é o mesmo para os três papéis: e-mail e senha no `POST /api/auth/signin`.
 - **Use o SDK do SuperTokens.** Ele guarda os tokens, os envia nas requisições e renova a sessão sozinho quando o access token expira (a cada 15 minutos).
 - Depois do login, chame o `GET /api/users/me` para saber **quem entrou e com qual papel**.
+- Quem tem a verificação em duas etapas ativa ainda digita um código depois da senha ([verificação em duas etapas](#verificação-em-duas-etapas)).
 
 |                      | Painel web                                | App mobile                                  |
 | -------------------- | ----------------------------------------- | ------------------------------------------- |
@@ -248,6 +249,57 @@ const response = await fetch(`${API_URL}/api/users/me/email-verification`, { met
 
 Se o e-mail do cadastro não chegar (o servidor de e-mail pode falhar), o cadastro vale do mesmo jeito: o Client pede o reenvio.
 
+## Verificação em duas etapas
+
+Para quem tem a verificação em duas etapas ativa, a senha é só a primeira etapa: o login responde `OK` e cria a sessão, mas ela fica **pendente** até o usuário digitar o código de 6 dígitos que a API envia para o e-mail dele. Vale para os três papéis, no painel e no app.
+
+> A opção de ativar a verificação em duas etapas ainda não tem rota. A tela do código já pode ser feita: até lá, nenhuma conta cai nela.
+
+**1. Depois do login, confira se a sessão está pendente.** A situação vem na claim `mfa-verified` do access token, que o SDK lê sem chamar a API:
+
+```ts
+// Web: Session.getAccessTokenPayloadSecurely(). App: SuperTokens.getAccessTokenPayloadSecurely().
+const payload = await Session.getAccessTokenPayloadSecurely();
+const pending = payload['mfa-verified']?.v === false;
+```
+
+- Com `pending`, leve o usuário para a tela do código, em vez de chamar o `GET /api/users/me`.
+- Faça a mesma conferência ao abrir o app ou o painel com uma sessão já guardada: o usuário pode ter fechado tudo antes de digitar o código.
+- Enquanto a sessão está pendente, as outras rotas respondem **403** com `{ "message": "invalid claim", "claimValidationErrors": [{ "id": "mfa-verified", ... }] }`. Se uma chamada receber essa resposta, leve o usuário para a tela do código. Não é o 403 de "sem permissão", que tem o [formato de erro da aplicação](#erros).
+- A sessão pendente renova o token e faz o signout normalmente. O botão "Sair" da tela do código usa o `signOut` do SDK.
+
+**2. Tela do código.** Envie o código digitado, com a sessão pendente (o SDK envia os tokens):
+
+```ts
+const response = await fetch(`${API_URL}/api/mfa/verify`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ code }), // texto com 6 dígitos, ex.: "042137"
+});
+// 204: login concluído. Siga para o GET /api/users/me.
+```
+
+- A resposta 204 já traz o access token atualizado, que o SDK guarda sozinho. As chamadas seguintes passam.
+- O código vale **10 minutos** e só pode ser usado uma vez. **Cinco erros invalidam o código**, mesmo que a tentativa seguinte esteja certa: mostre a opção de pedir outro.
+- Envie o código como texto, com os zeros à esquerda. Um código fora do formato responde 400 e não conta como erro.
+
+**3. Reenvio do código.** O `POST /api/mfa/code`, com a sessão pendente, envia um código novo, que **invalida o anterior**:
+
+- A mesma conta recebe **um código por minuto**, contando o do login. Antes disso, a rota responde 422, e o código que já foi continua valendo. Deixe o botão de reenviar desativado por 1 minuto, inclusive logo depois do login.
+- Se o usuário fizer o login de novo em menos de 1 minuto (por exemplo, em outro aparelho), a API não envia outro código: vale o do e-mail que ele já recebeu.
+
+| Rota                                | Resposta | Significado                                                                                                                  |
+| ----------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/mfa/verify`              | 204      | Código conferido e login concluído                                                                                           |
+| `POST /api/mfa/verify`              | 400      | Código fora do formato (6 dígitos)                                                                                           |
+| `POST /api/mfa/verify`              | 422      | Código errado, vencido, já usado ou invalidado por 5 erros. O usuário tenta de novo ou pede outro código                     |
+| `POST /api/mfa/code`                | 204      | Código novo enviado                                                                                                          |
+| `POST /api/mfa/code`                | 422      | O último código saiu há menos de 1 minuto                                                                                    |
+| As duas                             | 422      | A sessão não está pendente (o login já foi concluído, ou a conta não tem a verificação em duas etapas). A `message` diz qual |
+| Outras rotas, com a sessão pendente | 403      | `{ "message": "invalid claim", ... }`: falta o código                                                                        |
+
+Se o e-mail com o código não chegar (o servidor de e-mail pode falhar), o login vale do mesmo jeito: o usuário pede o reenvio depois de 1 minuto.
+
 ## Depois do login: perfil e papel
 
 ```http
@@ -340,6 +392,7 @@ function onHandleEvent(event: { action: string }) {
 | `GET` e `PATCH /api/users/me`                                               |     ✔      |  ✔  | O Client também edita `phone` e `birthDate`                     |
 | `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 401     |
 | `/api/users/me/sessions` (listagem, encerrar uma, encerrar as outras)       |     ✔      |  ✔  | Sessões abertas do usuário logado, de qualquer papel            |
+| `POST /api/mfa/verify` e `POST /api/mfa/code`                               |     ✔      |  ✔  | Tela do código da segunda etapa, com a sessão pendente          |
 | `POST /api/password-resets`                                                 |     ✔      |  ✔  | "Esqueci minha senha", sem sessão. Responde sempre 204          |
 | `POST /api/password-resets/confirm`                                         |     ✔      |     | Página `/redefinir-senha`, sem sessão                           |
 | `POST /api/clients`                                                         |            |  ✔  | Autocadastro, sem sessão. Envia o link de verificação de e-mail |
@@ -381,24 +434,27 @@ As rotas da aplicação respondem os erros sempre no mesmo formato, com a `messa
 }
 ```
 
-| Status | Quando                                      | `details`                                                     |
-| ------ | ------------------------------------------- | ------------------------------------------------------------- |
-| 400    | Campo inválido ou ausente                   | Lista com `field` e `message` de cada campo                   |
-| 401    | Senha de confirmação incorreta (ver abaixo) | `{ "field": "currentPassword" }` ou `{ "field": "password" }` |
-| 403    | O papel não tem permissão                   | (ausente)                                                     |
-| 404    | Recurso não encontrado                      | (ausente)                                                     |
-| 409    | E-mail ou CPF já cadastrado                 | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
-| 422    | Regra de negócio (ex.: link expirado)       | Depende da regra                                              |
-| 429    | Muitas requisições do mesmo IP (ver abaixo) | (ausente)                                                     |
+| Status | Quando                                        | `details`                                                     |
+| ------ | --------------------------------------------- | ------------------------------------------------------------- |
+| 400    | Campo inválido ou ausente                     | Lista com `field` e `message` de cada campo                   |
+| 401    | Senha de confirmação incorreta (ver abaixo)   | `{ "field": "currentPassword" }` ou `{ "field": "password" }` |
+| 403    | O papel não tem permissão                     | (ausente)                                                     |
+| 403    | Sessão pendente da segunda etapa (ver abaixo) | Formato do SuperTokens, sem `statusCode`                      |
+| 404    | Recurso não encontrado                        | (ausente)                                                     |
+| 409    | E-mail ou CPF já cadastrado                   | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
+| 422    | Regra de negócio (ex.: link expirado)         | Depende da regra                                              |
+| 429    | Muitas requisições do mesmo IP (ver abaixo)   | (ausente)                                                     |
 
 O 429 vem do limite por IP do login, do cadastro do Client, do aceite do convite, das duas rotas da redefinição de senha e da confirmação do e-mail: cada uma dessas rotas aceita 20 requisições por minuto por IP. A resposta traz o header `Retry-After`, com os segundos que faltam para a próxima tentativa.
 
 As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 com o resultado em `status`, e a falta de sessão responde 401 com `{ "message": "unauthorised" }`. A exceção é o 429, que tem o formato acima também no login.
+
+A sessão pendente da [verificação em duas etapas](#verificação-em-duas-etapas) também recebe um erro no formato do SuperTokens, em qualquer rota protegida: 403 com `{ "message": "invalid claim", "claimValidationErrors": [...] }`. Diferencie os dois 403 pelo corpo: o da aplicação tem `statusCode`, e este tem `claimValidationErrors`.
 
 > **Atenção à senha de confirmação incorreta.** O `PATCH /api/users/me/password` e o `DELETE /api/users/me` respondem 401 quando a senha informada está errada. Os dois SDKs tratam qualquer 401 da API como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes (`maxRetryAttemptsForSessionRefresh`), e depois lançam um erro em vez de devolver a resposta. Nessas duas chamadas, capture o erro e trate-o como senha incorreta.
 
 ## Testando sem o front
 
 - [api.http](api.http) tem todas as rotas prontas para executar no VS Code, na ordem de um fluxo completo.
-- Em dev, os e-mails (convite, redefinição de senha, aviso de troca de senha e verificação de e-mail) não saem para a internet: eles aparecem no Mailpit, em http://localhost:8025.
+- Em dev, os e-mails (convite, redefinição de senha, aviso de troca de senha, verificação de e-mail e código da segunda etapa) não saem para a internet: eles aparecem no Mailpit, em http://localhost:8025.
 - O SuperAdm de dev é criado pelo `npm run seed`, com o e-mail e a senha das variáveis `SUPER_ADMIN_*` do `.env` ([README](../README.md#primeiro-login)).
