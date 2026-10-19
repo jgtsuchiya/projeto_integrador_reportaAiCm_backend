@@ -179,6 +179,20 @@ describe('Matriz de permissões (e2e)', () => {
       ],
     },
     {
+      line: 'Ativar e desativar a verificação em duas etapas (autenticado)',
+      routes: [
+        {
+          route: 'PATCH /api/users/me/mfa',
+          allowed: ROLES,
+          success: 200,
+          // Desativa o que já está desativado, o que responde 200 sem efeito. Ativar revogaria
+          // as outras sessões da conta, e os logins seguintes pediriam o código.
+          send: ({ actor }) =>
+            call(actor, 'patch', '/users/me/mfa', { enabled: false, password: PASSWORD }),
+        },
+      ],
+    },
+    {
       line: 'Receber e conferir o código da segunda etapa (sessão pendente)',
       routes: [
         {

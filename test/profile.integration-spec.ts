@@ -8,6 +8,7 @@ import Session from 'supertokens-node/recipe/session';
 import { DataSource, In } from 'typeorm';
 
 import { envSchema } from '@config/env.schema';
+import { LOGIN_CODE_MAIL_SUBJECT } from '@modules/users/application/services/login-code.service';
 import { PASSWORD_CHANGED_MAIL_SUBJECT } from '@modules/users/application/services/password-changed-notice';
 import { Email } from '@modules/users/domain/value-objects/email';
 import { Password } from '@modules/users/domain/value-objects/password';
@@ -120,7 +121,10 @@ describe('Perfil do usuário autenticado (integração)', () => {
     return email;
   }
 
-  /** Cria o SUPER_ADMIN ou o ADMIN direto no SuperTokens e no MySQL, e faz login. */
+  /**
+   * Cria o SUPER_ADMIN ou o ADMIN direto no SuperTokens e no MySQL, e faz login. Os dois têm o
+   * e-mail verificado, como pelo seed e pelo aceite do convite.
+   */
   async function createStaff(role: Role): Promise<TestUser> {
     const email = newEmail(role.toLowerCase());
     const id = await identityProvider.createCredentials(
@@ -135,6 +139,7 @@ describe('Perfil do usuário autenticado (integração)', () => {
       name: 'Usuário de teste',
       email,
       status: 'ACTIVE',
+      emailVerifiedAt: new Date(),
       createdById: role === Role.ADMIN ? superAdmin.id : null,
     });
 
@@ -238,6 +243,7 @@ describe('Perfil do usuário autenticado (integração)', () => {
         email: client.email,
         status: 'ACTIVE',
         emailVerifiedAt: null,
+        mfaEnabled: false,
         lastLoginAt: expect.any(String) as string,
         createdAt: expect.any(String) as string,
         updatedAt: expect.any(String) as string,
@@ -430,6 +436,152 @@ describe('Perfil do usuário autenticado (integração)', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { details: Array<{ field: string }> };
       expect(body.details.map(({ field }) => field)).toEqual(['newPassword']);
+    });
+  });
+
+  describe('PATCH /api/users/me/mfa', () => {
+    function changeMfa(user: Tokens, body: Record<string, unknown>): Promise<Response> {
+      return request('PATCH', '/users/me/mfa', { ...user, body });
+    }
+
+    /** Quantos e-mails com o código da segunda etapa foram enviados ao endereço. */
+    function countCodeMails(email: string): number {
+      return mailSender.messages.filter(
+        ({ to, subject }) => to === email && subject === LOGIN_CODE_MAIL_SUBJECT,
+      ).length;
+    }
+
+    it('deve ativar com a senha, manter a sessão atual completa e revogar as outras (RN24)', async () => {
+      const admin = await createStaff(Role.ADMIN);
+      const other = await signIn(admin.email, PASSWORD);
+
+      const response = await changeMfa(admin, { enabled: true, password: PASSWORD });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ id: admin.id, mfaEnabled: true });
+      await expect(findRow(admin.id)).resolves.toMatchObject({ mfaEnabled: true });
+      await expect(Session.getAllSessionHandlesForUser(admin.id)).resolves.toHaveLength(1);
+      await expect(refresh(other.refreshToken)).resolves.toHaveProperty('status', 401);
+
+      // A sessão que ativou não pede o código, nem depois de renovada.
+      await expect(request('GET', '/users/me', admin)).resolves.toHaveProperty('status', 200);
+      const renewed = await refresh(admin.refreshToken);
+      expect(renewed.status).toBe(200);
+      const accessToken = renewed.headers.get('st-access-token') ?? '';
+      await expect(request('GET', '/users/me', { accessToken })).resolves.toHaveProperty(
+        'status',
+        200,
+      );
+      expect(countCodeMails(admin.email)).toBe(0);
+    });
+
+    it('deve pedir o código no próximo login depois de ativar, e não pedir mais depois de desativar', async () => {
+      const admin = await createStaff(Role.ADMIN);
+      await changeMfa(admin, { enabled: true, password: PASSWORD });
+
+      const pending = await signIn(admin.email, PASSWORD);
+
+      expect(countCodeMails(admin.email)).toBe(1);
+      const blocked = await request('GET', '/users/me', pending);
+      expect(blocked.status).toBe(403);
+      await expect(blocked.json()).resolves.toMatchObject({ message: 'invalid claim' });
+
+      const disabled = await changeMfa(admin, { enabled: false, password: PASSWORD });
+      const completed = await signIn(admin.email, PASSWORD);
+
+      expect(disabled.status).toBe(200);
+      await expect(disabled.json()).resolves.toMatchObject({ mfaEnabled: false });
+      await expect(findRow(admin.id)).resolves.toMatchObject({ mfaEnabled: false });
+      await expect(request('GET', '/users/me', completed)).resolves.toHaveProperty('status', 200);
+      expect(countCodeMails(admin.email)).toBe(1);
+    });
+
+    it('deve responder 422 ao Client com o e-mail não verificado, sem ativar nem revogar sessões', async () => {
+      const client = await createClient();
+      const other = await signIn(client.email, PASSWORD);
+
+      const response = await changeMfa(client, { enabled: true, password: PASSWORD });
+
+      expect(response.status).toBe(422);
+      await expect(response.json()).resolves.toMatchObject({
+        message: 'Verifique o seu e-mail antes de ativar a verificação em duas etapas.',
+      });
+      await expect(findRow(client.id)).resolves.toMatchObject({
+        mfaEnabled: false,
+        emailVerifiedAt: null,
+      });
+      await expect(refresh(other.refreshToken)).resolves.toHaveProperty('status', 200);
+    });
+
+    it('deve ativar para o Client com o e-mail verificado, respondendo o perfil completo', async () => {
+      const client = await createClient();
+      await dataSource
+        .getRepository(UserOrmEntity)
+        .update({ id: client.id }, { emailVerifiedAt: new Date() });
+
+      const response = await changeMfa(client, { enabled: true, password: PASSWORD });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        id: client.id,
+        mfaEnabled: true,
+        cpf: client.cpf,
+      });
+    });
+
+    it('deve responder 401 e não mudar nada quando a senha está incorreta', async () => {
+      const admin = await createStaff(Role.ADMIN);
+      const other = await signIn(admin.email, PASSWORD);
+
+      const response = await changeMfa(admin, { enabled: true, password: 'senha-errada-1' });
+
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({
+        message: 'Senha incorreta.',
+        details: { field: 'password' },
+      });
+      await expect(findRow(admin.id)).resolves.toMatchObject({ mfaEnabled: false });
+      await expect(refresh(other.refreshToken)).resolves.toHaveProperty('status', 200);
+    });
+
+    it('deve responder 200 sem efeito ao desativar o que já está desativado', async () => {
+      const admin = await createStaff(Role.ADMIN);
+      const before = await findRow(admin.id);
+
+      const response = await changeMfa(admin, { enabled: false, password: PASSWORD });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ mfaEnabled: false });
+      await expect(findRow(admin.id)).resolves.toMatchObject({
+        mfaEnabled: false,
+        updatedAt: before?.updatedAt,
+      });
+    });
+
+    it('deve responder 200 sem efeito ao ativar o que já está ativo, sem revogar as sessões', async () => {
+      const admin = await createStaff(Role.ADMIN);
+      await changeMfa(admin, { enabled: true, password: PASSWORD });
+      const before = await findRow(admin.id);
+      const other = await signIn(admin.email, PASSWORD);
+
+      const response = await changeMfa(admin, { enabled: true, password: PASSWORD });
+
+      expect(response.status).toBe(200);
+      await expect(findRow(admin.id)).resolves.toMatchObject({
+        mfaEnabled: true,
+        updatedAt: before?.updatedAt,
+      });
+      await expect(refresh(other.refreshToken)).resolves.toHaveProperty('status', 200);
+    });
+
+    it('deve responder 400 sem o enabled booleano ou sem a senha', async () => {
+      const admin = await createStaff(Role.ADMIN);
+
+      const response = await changeMfa(admin, { enabled: 'sim' });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { details: Array<{ field: string }> };
+      expect(body.details.map(({ field }) => field)).toEqual(['enabled', 'password']);
     });
   });
 

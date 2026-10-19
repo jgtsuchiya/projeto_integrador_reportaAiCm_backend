@@ -48,6 +48,7 @@ describe('GetProfileUseCase', () => {
       email: 'maria@example.com',
       status: 'ACTIVE',
       emailVerifiedAt: null,
+      mfaEnabled: false,
       lastLoginAt: null,
       createdAt: client.createdAt,
       // O perfil é criado depois do usuário, então é a alteração mais recente.

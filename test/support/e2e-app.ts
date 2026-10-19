@@ -195,8 +195,9 @@ export class E2eApp {
 
   /**
    * Abre uma sessão pendente: a senha já foi conferida, e o código da segunda etapa ainda não
-   * (RN25). A verificação em duas etapas fica ligada só durante o login, direto no banco (a
-   * rota de ativação ainda não existe), para os outros logins da conta continuarem completos.
+   * (RN25). A verificação em duas etapas fica ligada só durante o login, direto no banco, para
+   * os outros logins da conta continuarem completos. A rota de ativação não serve aqui: ela
+   * exige o e-mail verificado, que o Client não tem, e revoga as outras sessões da conta.
    */
   async logInPending(account: Account): Promise<Actor> {
     const repository = this.dataSource.getRepository(UserOrmEntity);

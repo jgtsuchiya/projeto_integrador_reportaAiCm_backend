@@ -311,7 +311,8 @@ st-auth-mode: header
 @clientToken = {{loginClient.response.headers.st-access-token}}
 
 ### Perfil e papel de quem está logado
-# Resposta: 200. O Client recebe também cpf (completo), phone e birthDate.
+# Resposta: 200. O Client recebe também cpf (completo), phone e birthDate. O mfaEnabled diz se o
+# login pede o código da verificação em duas etapas (seção 10).
 GET {{baseUrl}}/users/me
 Authorization: Bearer {{clientToken}}
 
@@ -443,14 +444,22 @@ Authorization: Bearer {{superAdminToken}}
 
 ###
 # ==============================================================================================
-# 10. Segunda etapa do login (verificação em duas etapas; aqui, com o SuperAdm)
+# 10. Verificação em duas etapas (qualquer papel; aqui, o SuperAdm, que tem o e-mail verificado)
 # ==============================================================================================
-#
-# A rota que ativa a verificação em duas etapas ainda não existe. Para testar, ligue-a direto no
-# banco, e desligue no final (mfa_enabled = 0), para o login das outras seções voltar ao normal:
-#
-#   docker compose exec mysql sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" \
-#     -e "UPDATE users SET mfa_enabled = 1 WHERE email = \"superadmin@reportaai.local\""'
+
+### Ativa a verificação em duas etapas, confirmando com a senha atual
+# Encerra as outras sessões do SuperAdm. A sessão desta requisição continua completa, sem pedir
+# o código. A partir daqui, o login do SuperAdm pede o código enviado por e-mail.
+# Resposta: 200, com o perfil e "mfaEnabled": true. Senha incorreta: 401. E-mail não verificado
+# (o Client que ainda não confirmou o e-mail): 422. Já ativa: 200, sem efeito.
+PATCH {{baseUrl}}/users/me/mfa
+Content-Type: application/json
+Authorization: Bearer {{superAdminToken}}
+
+{
+  "enabled": true,
+  "password": "{{superAdminPassword}}"
+}
 
 ### Login com a verificação em duas etapas ativa: a sessão nasce pendente
 # O código de 6 dígitos vai para o e-mail do usuário.
@@ -506,6 +515,19 @@ Authorization: Bearer {{pendingToken}}
 # Resposta: 200. O token antigo (@pendingToken) continua respondendo 403 até expirar.
 GET {{baseUrl}}/users/me
 Authorization: Bearer {{verifiedToken}}
+
+### Desativa a verificação em duas etapas: os próximos logins não pedem mais o código
+# A coleção desativa aqui, para o login das outras seções voltar ao normal. Nenhuma sessão é
+# encerrada.
+# Resposta: 200, com "mfaEnabled": false. Senha incorreta: 401. Já desativada: 200, sem efeito.
+PATCH {{baseUrl}}/users/me/mfa
+Content-Type: application/json
+Authorization: Bearer {{verifiedToken}}
+
+{
+  "enabled": false,
+  "password": "{{superAdminPassword}}"
+}
 
 ###
 # ==============================================================================================
