@@ -122,22 +122,51 @@ erDiagram
         char user_id FK
         enum type
         char token_hash UK
+        tinyint attempts
         datetime expires_at
         datetime used_at
         datetime created_at
     }
+    login_attempts {
+        char id PK
+        varchar email
+        varchar ip_address
+        varchar user_agent
+        boolean succeeded
+        datetime created_at
+    }
 ```
 
-| Tabela            | Conteúdo                                                                                                                                                 |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `roles`           | Papéis de acesso, carregados pela própria migration: `1` = `SUPER_ADMIN`, `2` = `ADMIN`, `3` = `CLIENT`. O `code` é o mesmo nome do papel no SuperTokens |
-| `users`           | Dados comuns a todos os papéis. O `id` é o mesmo do usuário no SuperTokens, e não há coluna de senha. `deleted_at` marca a exclusão lógica               |
-| `client_profiles` | Dados exclusivos do Client (1:1 com `users`, com a PK igual à FK): CPF e telefone só com dígitos, e a data de nascimento                                 |
-| `user_tokens`     | Tokens de uso único enviados por e-mail (convite de ADM). Guarda só o SHA-256 do token                                                                   |
+| Tabela            | Conteúdo                                                                                                                                                                                                                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `roles`           | Papéis de acesso, carregados pela própria migration: `1` = `SUPER_ADMIN`, `2` = `ADMIN`, `3` = `CLIENT`. O `code` é o mesmo nome do papel no SuperTokens                                                                                                                                                          |
+| `users`           | Dados comuns a todos os papéis. O `id` é o mesmo do usuário no SuperTokens, e não há coluna de senha. `deleted_at` marca a exclusão lógica                                                                                                                                                                        |
+| `client_profiles` | Dados exclusivos do Client (1:1 com `users`, com a PK igual à FK): CPF e telefone só com dígitos, e a data de nascimento                                                                                                                                                                                          |
+| `user_tokens`     | Tokens de uso único enviados por e-mail. O `type` diz o uso: `INVITATION` (convite de ADM), `PASSWORD_RESET` (redefinição de senha), `EMAIL_VERIFICATION` (verificação de e-mail) e `LOGIN_CODE` (código da segunda etapa do login, o único que usa o contador de erros `attempts`). Guarda só o SHA-256 do token |
+| `login_attempts`  | Uma linha por tentativa de login: o e-mail informado (com conta ou não), o IP, o user agent e o resultado. Tem índices em (`email`, `created_at`), para contar as falhas recentes de um e-mail, e em `created_at`, para apagar as linhas antigas                                                                  |
 
 As FKs de `client_profiles` e `user_tokens` usam `ON DELETE CASCADE`, porque esses registros não existem sem o usuário. As de `users` (`role_id` e `created_by_id`) usam `RESTRICT`. Na prática, os usuários não são apagados fisicamente: a exclusão é lógica.
 
-As credenciais e as sessões ficam no PostgreSQL do SuperTokens, criado e mantido pelo próprio Core, fora das nossas migrations. O modelo completo e as regras de negócio estão em [sprints/sprint-2-usuarios.md](sprints/sprint-2-usuarios.md).
+`login_attempts` não tem FK para `users` de propósito: o bloqueio do login conta as tentativas de qualquer e-mail informado, com conta ou não ([AUTH.md](AUTH.md#bloqueio-do-login-por-tentativas)). Como a tabela guarda dado pessoal (e-mail e IP), as linhas têm prazo: as com mais de 30 dias são apagadas quando a API sobe e, depois, uma vez por dia (RN19).
+
+As credenciais e as sessões ficam no PostgreSQL do SuperTokens, criado e mantido pelo próprio Core, fora das nossas migrations. O modelo completo e as regras de negócio estão em [sprints/sprint-2-usuarios.md](sprints/sprint-2-usuarios.md). Os tipos de token e a tabela `login_attempts` vêm do plano de login, em [sprints/sprint-3-login.md](sprints/sprint-3-login.md#3-modelagem-mysql).
+
+### Tokens de uso único
+
+`user_tokens` guarda os segredos que a API envia por e-mail. O banco guarda só o SHA-256 de cada um: o segredo puro existe apenas no e-mail, e quem lê o banco não consegue montar um link válido.
+
+| `type`               | Formato             | Validade (variável)                              | Como é localizado        |
+| -------------------- | ------------------- | ------------------------------------------------ | ------------------------ |
+| `INVITATION`         | Link, 256 bits      | 48 horas (`INVITATION_EXPIRES_IN_HOURS`)         | Pelo hash do link        |
+| `PASSWORD_RESET`     | Link, 256 bits      | 60 minutos (`PASSWORD_RESET_EXPIRES_IN_MINUTES`) | Pelo hash do link        |
+| `EMAIL_VERIFICATION` | Link, 256 bits      | 24 horas (`EMAIL_VERIFICATION_EXPIRES_IN_HOURS`) | Pelo hash do link        |
+| `LOGIN_CODE`         | Código de 6 dígitos | 10 minutos (`MFA_CODE_EXPIRES_IN_MINUTES`)       | Pelo usuário e pelo tipo |
+
+- **Um token vigente por usuário e tipo.** Um token novo apaga os anteriores do mesmo usuário e tipo, na mesma transação. É assim que o reenvio invalida os links antigos.
+- **O código de 6 dígitos** tem só um milhão de valores, e duas contas podem recebê-lo ao mesmo tempo. Como o `token_hash` é `UNIQUE`, o hash do código é calculado junto com o id do usuário, e o código é buscado pelo usuário da sessão, não pelo hash. Pelo mesmo motivo, ele vale pouco tempo e aceita 5 erros, contados em `attempts`.
+- **O uso** fica em `used_at`. O token usado continua na tabela até ser substituído por um novo do mesmo tipo ou, no ADM, até a exclusão da conta.
+
+As regras de cada fluxo estão no [AUTH.md](AUTH.md): [convite](AUTH.md#convite-de-adm), [recuperação de senha](AUTH.md#recuperação-de-senha), [verificação de e-mail](AUTH.md#verificação-de-e-mail) e [verificação em duas etapas](AUTH.md#verificação-em-duas-etapas).
 
 ### Status do usuário
 
@@ -155,8 +184,9 @@ A linha de `users` nunca é apagada. Na exclusão (RN11):
 
 - `deleted_at` é preenchido. A coluna é um `@DeleteDateColumn`, então as consultas do TypeORM já ignoram o usuário excluído.
 - `email` vira `deleted+<id>@reportaai.invalid`. Como a coluna é `UNIQUE`, é isso que libera o endereço original para um novo cadastro.
-- No **ADMIN**, o nome é mantido, para auditoria, e os convites dele em `user_tokens` são apagados.
-- No **CLIENT**, o nome vira `Usuário excluído` e a linha de `client_profiles` é apagada, com o CPF, o telefone e a data de nascimento (LGPD). O CPF também fica livre para um novo cadastro.
+- No **ADMIN**, o nome é mantido, para auditoria, e os tokens dele em `user_tokens` são apagados, inclusive o convite pendente.
+- No **CLIENT**, o nome vira `Usuário excluído` e a linha de `client_profiles` é apagada, com o CPF, o telefone e a data de nascimento (LGPD). O CPF também fica livre para um novo cadastro. Os tokens dele continuam em `user_tokens`, mas nenhum vale mais: os fluxos não encontram a conta excluída e recusam o token.
+- As linhas de `login_attempts` com o e-mail original são apagadas (RN19). Elas não têm FK para `users`, então saem por um `DELETE` próprio, e não por cascata.
 - No SuperTokens, o usuário é removido, com as credenciais e as sessões.
 
 ## Migrations
@@ -202,6 +232,6 @@ npm run db:up
 npm run test:integration
 ```
 
-O script carrega o `.env` e, em seguida, o [.env.test](../.env.test), que troca o banco para `reportaai_cm_test`. Como proteção, o teste **aborta se o nome do banco não terminar em `_test`**, para nunca rodar migrations no banco de desenvolvimento.
+O script carrega o `.env` e, em seguida, o [.env.test](../.env.test), que troca o banco para `reportaai_cm_test` e deixa alto o limite por IP (`RATE_LIMIT_MAX_REQUESTS`), para ele não interferir nos testes. O teste do limite (`test/rate-limit.integration-spec.ts`) baixa o valor só nele, com o `ConfigService.set`, antes do `configureApp`. Como proteção, o teste **aborta se o nome do banco não terminar em `_test`**, para nunca rodar migrations no banco de desenvolvimento.
 
 Os testes e2e (`npm run test:e2e`) usam o mesmo banco e a mesma proteção. Eles apagam todos os usuários do banco de teste ao começar e ao terminar ([TESTING.md](TESTING.md#testes-e2e)).

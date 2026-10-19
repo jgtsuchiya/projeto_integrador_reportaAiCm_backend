@@ -2,7 +2,7 @@
 
 API do **ReportaAi Cm**, plataforma para que os moradores de **Campo Mourão (PR)** reportem buracos no asfalto e para que a prefeitura acompanhe e analise esses reportes.
 
-> **Status:** em desenvolvimento (Projeto Integrador). A base do projeto e a gestão de usuários, com autenticação e controle de acesso, estão prontas. Os reportes entram nas próximas sprints.
+> **Status:** em desenvolvimento (Projeto Integrador). A base do projeto, a gestão de usuários e o login completo (com recuperação de senha, verificação de e-mail, proteção contra força bruta e verificação em duas etapas) estão prontos. Os reportes entram nas próximas sprints.
 
 ## Sumário
 
@@ -135,17 +135,20 @@ curl http://localhost:3000/api/users/me -H 'Authorization: Bearer <valor do st-a
 # {"id":"...","role":"SUPER_ADMIN","name":"Super Admin","email":"superadmin@reportaai.local","status":"ACTIVE",...}
 ```
 
-Para testar as outras rotas, abra a coleção [docs/api.http](docs/api.http) no VS Code, com a extensão REST Client: ela traz o mesmo login e todas as requisições na ordem de um fluxo completo (convite de ADM, cadastro de Client, gestão e perfil).
+Para testar as outras rotas, abra a coleção [docs/api.http](docs/api.http) no VS Code, com a extensão REST Client: ela traz o mesmo login e todas as requisições na ordem de um fluxo completo (convite de ADM, cadastro de Client, verificação de e-mail, recuperação de senha, gestão, perfil e segunda etapa do login).
 
 ### Problemas comuns
 
-| Sintoma                                                              | Causa                                                                                                                   | Solução                                                                      |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| A API não inicia, ou o seed mostra "Variáveis de ambiente inválidas" | O `.env` é antigo e não tem as variáveis novas                                                                          | Compare o `.env` com o [.env.example](.env.example) e copie o que falta      |
-| O login responde `{"status":"WRONG_CREDENTIALS_ERROR"}`              | O seed não rodou, ou o e-mail e a senha não são os do `.env` na hora do seed (ele não altera um SuperAdm que já existe) | Rode o `npm run seed`. Se a senha do SuperAdm se perdeu, zere o ambiente     |
-| O `POST /api/clients` ou o `POST /api/admins` responde 500           | Os papéis de acesso ainda não existem no SuperTokens: é o seed que os cria                                              | Rode o `npm run seed`                                                        |
-| O seed responde "E-mail já cadastrado"                               | O MySQL foi zerado sem o SuperTokens, que ainda guarda a credencial do SuperAdm                                         | Zere o ambiente: os dois bancos precisam andar juntos                        |
-| O `npm run db:up` falha com porta em uso                             | Outro processo usa a 3307, a 3567, a 1025 ou a 8025                                                                     | Pare o outro processo. A porta do MySQL também pode ser trocada no `DB_PORT` |
+| Sintoma                                                                        | Causa                                                                                                                   | Solução                                                                                                         |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| A API não inicia, ou o seed mostra "Variáveis de ambiente inválidas"           | O `.env` é antigo e não tem as variáveis novas                                                                          | Compare o `.env` com o [.env.example](.env.example) e copie o que falta                                         |
+| O login responde `{"status":"WRONG_CREDENTIALS_ERROR"}`                        | O seed não rodou, ou o e-mail e a senha não são os do `.env` na hora do seed (ele não altera um SuperAdm que já existe) | Rode o `npm run seed`. Se a senha do SuperAdm se perdeu, zere o ambiente                                        |
+| O `POST /api/clients` ou o `POST /api/admins` responde 500                     | Os papéis de acesso ainda não existem no SuperTokens: é o seed que os cria                                              | Rode o `npm run seed`                                                                                           |
+| O seed responde "E-mail já cadastrado"                                         | O MySQL foi zerado sem o SuperTokens, que ainda guarda a credencial do SuperAdm                                         | Zere o ambiente: os dois bancos precisam andar juntos                                                           |
+| O login responde `{"status":"GENERAL_ERROR","message":"Muitas tentativas..."}` | 5 senhas erradas para o mesmo e-mail em 15 minutos: o login desse e-mail fica bloqueado, mesmo com a senha certa        | Espere 15 minutos ou redefina a senha pelo link do e-mail, que zera o bloqueio                                  |
+| Uma rota pública (login, cadastro, redefinição de senha) responde 429          | Mais de 20 requisições por minuto do mesmo IP na mesma rota, como num script de teste                                   | Espere os segundos do header `Retry-After` ou reinicie a API: a contagem fica em memória                        |
+| Depois do login, as rotas respondem 403 `{"message":"invalid claim",...}`      | A conta tem a verificação em duas etapas ativa, e a sessão ainda espera o código                                        | Copie o código do e-mail, no Mailpit, e envie no `POST /api/mfa/verify` (seção 10 do [api.http](docs/api.http)) |
+| O `npm run db:up` falha com porta em uso                                       | Outro processo usa a 3307, a 3567, a 1025 ou a 8025                                                                     | Pare o outro processo. A porta do MySQL também pode ser trocada no `DB_PORT`                                    |
 
 Para **zerar o ambiente**, apague os volumes e repita os passos 4 e 5. Isso remove todos os dados do MySQL e do SuperTokens:
 
@@ -166,53 +169,75 @@ A API tem três papéis de acesso, e o login é o mesmo para todos (e-mail e sen
 
 A autenticação é feita pelo **SuperTokens**: ele guarda as credenciais e as sessões, e o MySQL guarda os dados dos usuários, o papel e o status de cada um. Toda rota exige sessão, exceto as públicas.
 
-| Grupo            | Rotas                                                                                                                  | Quem acessa                                       |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| Sessão           | `POST /api/auth/signin`, `POST /api/auth/session/refresh` e `POST /api/auth/signout`                                   | Público (o signout exige sessão)                  |
-| Perfil           | `GET` e `PATCH /api/users/me`, `PATCH /api/users/me/password` e `DELETE /api/users/me`                                 | Qualquer usuário logado (a exclusão, só o Client) |
-| Clients          | `POST /api/clients`                                                                                                    | Público (autocadastro)                            |
-| Clients (painel) | `GET /api/clients`, `GET /api/clients/:id` e `PATCH /api/clients/:id/status`                                           | `ADMIN` e `SUPER_ADMIN`                           |
-| ADMs             | `POST`, `GET`, `PATCH` e `DELETE` em `/api/admins`, `PATCH /api/admins/:id/status` e `POST /api/admins/:id/invitation` | `SUPER_ADMIN`                                     |
-| Convite          | `POST /api/invitations/accept`                                                                                         | Público (o ADM ainda não tem senha)               |
+| Grupo                  | Rotas                                                                                                                  | Quem acessa                                                                |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Sessão                 | `POST /api/auth/signin`, `POST /api/auth/session/refresh` e `POST /api/auth/signout`                                   | Público (o signout exige sessão)                                           |
+| Perfil                 | `GET` e `PATCH /api/users/me`, `PATCH /api/users/me/password` e `DELETE /api/users/me`                                 | Qualquer usuário logado (a exclusão, só o Client)                          |
+| Duas etapas (ativação) | `PATCH /api/users/me/mfa`                                                                                              | Qualquer usuário logado. Ativar exige o e-mail verificado                  |
+| Sessões abertas        | `GET /api/users/me/sessions`, `DELETE /api/users/me/sessions/:id` e `DELETE /api/users/me/sessions`                    | Qualquer usuário logado, só nas próprias sessões                           |
+| Clients                | `POST /api/clients`                                                                                                    | Público (autocadastro)                                                     |
+| Clients (painel)       | `GET /api/clients`, `GET /api/clients/:id` e `PATCH /api/clients/:id/status`                                           | `ADMIN` e `SUPER_ADMIN`                                                    |
+| ADMs                   | `POST`, `GET`, `PATCH` e `DELETE` em `/api/admins`, `PATCH /api/admins/:id/status` e `POST /api/admins/:id/invitation` | `SUPER_ADMIN`                                                              |
+| Convite                | `POST /api/invitations/accept`                                                                                         | Público (o ADM ainda não tem senha)                                        |
+| Recuperação de senha   | `POST /api/password-resets` e `POST /api/password-resets/confirm`                                                      | Público (quem esqueceu a senha não tem sessão)                             |
+| Verificação de e-mail  | `POST /api/email-verifications/confirm` e `POST /api/users/me/email-verification`                                      | A confirmação é pública (o link abre no navegador). O reenvio exige sessão |
+| Segunda etapa do login | `POST /api/mfa/verify` e `POST /api/mfa/code`                                                                          | Só a sessão pendente, de quem tem a verificação em duas etapas ativa       |
+
+Em volta do login, a API protege e recupera o acesso:
+
+- **Recuperação de senha:** o usuário que esqueceu a senha recebe um link por e-mail e define uma nova, sem depender de ninguém.
+- **Verificação de e-mail:** o Client confirma, por um link, que o e-mail do cadastro é dele.
+- **Verificação em duas etapas:** opcional, para qualquer papel. Quem a ativa digita um código enviado por e-mail depois da senha.
+- **Sessões abertas:** o usuário vê onde a conta está aberta e encerra o acesso de outros aparelhos.
+- **Força bruta:** depois de 5 senhas erradas para o mesmo e-mail em 15 minutos, o login desse e-mail fica bloqueado por um tempo, e as rotas públicas aceitam 20 requisições por minuto por IP.
 
 Onde continuar:
 
-- [docs/AUTH.md](docs/AUTH.md): como o SuperTokens está integrado, a matriz de permissões e como proteger uma rota nova.
-- [docs/FRONTEND.md](docs/FRONTEND.md): guia rápido de login para o painel web e para o app.
+- [docs/AUTH.md](docs/AUTH.md): como o SuperTokens está integrado, como funciona cada fluxo de login, a matriz de permissões e como proteger uma rota nova.
+- [docs/FRONTEND.md](docs/FRONTEND.md): guia para o painel web e para o app: login, páginas dos links de e-mail, segunda etapa e erros.
 - [docs/api.http](docs/api.http): requisições prontas de todas as rotas.
+- [docs/sprints/sprint-3-login.md](docs/sprints/sprint-3-login.md): plano do login, com as decisões e as regras de negócio (RN17 a RN25).
 
 ## Variáveis de ambiente
 
 O modelo está em [.env.example](.env.example). As variáveis são validadas quando a aplicação sobe: se alguma estiver faltando ou inválida, a API não inicia e mostra qual variável está errada.
 
-| Variável                      | Obrigatória | Padrão        | Descrição                                                                                                         |
-| ----------------------------- | ----------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `NODE_ENV`                    | não         | `development` | `development`, `test` ou `production`                                                                             |
-| `PORT`                        | não         | `3000`        | Porta HTTP da API                                                                                                 |
-| `DB_HOST`                     | sim         | (nenhum)      | Host do MySQL                                                                                                     |
-| `DB_PORT`                     | não         | `3306`        | Porta do MySQL (`3307` no Docker local)                                                                           |
-| `DB_USERNAME`                 | sim         | (nenhum)      | Usuário do banco                                                                                                  |
-| `DB_PASSWORD`                 | sim         | (nenhum)      | Senha do banco                                                                                                    |
-| `DB_DATABASE`                 | sim         | (nenhum)      | Nome do banco                                                                                                     |
-| `DB_LOGGING`                  | não         | `false`       | Exibe as queries SQL no log                                                                                       |
-| `DB_ROOT_PASSWORD`            | só Docker   | (nenhum)      | Senha de root do MySQL, usada pelo docker-compose                                                                 |
-| `SUPERTOKENS_CONNECTION_URI`  | sim         | (nenhum)      | Endereço do SuperTokens Core (`http://localhost:3567`)                                                            |
-| `SUPERTOKENS_API_KEY`         | sim         | (nenhum)      | Chave da API no Core (mín. 20 caracteres: letras, números, `=` e `-`). O docker-compose usa o mesmo valor no Core |
-| `API_DOMAIN`                  | sim         | (nenhum)      | URL pública da API, usada pelo SuperTokens                                                                        |
-| `WEB_APP_URL`                 | sim         | (nenhum)      | URL do painel web, usada pelo SuperTokens, pelo CORS e no link do convite de ADM                                  |
-| `INVITATION_EXPIRES_IN_HOURS` | não         | `48`          | Validade, em horas, do link de convite de ADM                                                                     |
-| `SUPERTOKENS_DB_PASSWORD`     | só Docker   | (nenhum)      | Senha do PostgreSQL do SuperTokens, usada pelo docker-compose                                                     |
-| `SMTP_HOST`                   | sim         | (nenhum)      | Servidor SMTP (`localhost` com o Mailpit do Docker)                                                               |
-| `SMTP_PORT`                   | não         | `587`         | Porta do SMTP (`1025` no Mailpit)                                                                                 |
-| `SMTP_SECURE`                 | não         | `false`       | `true` para TLS direto (porta 465). Com `false`, o STARTTLS é usado se o servidor oferecer                        |
-| `SMTP_USER`                   | não         | (vazio)       | Usuário do SMTP. Vazio, a conexão é feita sem autenticação (caso do Mailpit)                                      |
-| `SMTP_PASSWORD`               | não         | (vazio)       | Senha do SMTP                                                                                                     |
-| `MAIL_FROM`                   | sim         | (nenhum)      | Remetente dos e-mails, no formato `Nome <email>` ou só o e-mail                                                   |
-| `SUPER_ADMIN_NAME`            | só seed     | (nenhum)      | Nome do SuperAdm criado pelo `npm run seed`                                                                       |
-| `SUPER_ADMIN_EMAIL`           | só seed     | (nenhum)      | E-mail (login) do SuperAdm                                                                                        |
-| `SUPER_ADMIN_PASSWORD`        | só seed     | (nenhum)      | Senha do SuperAdm: de 8 a 128 caracteres, com pelo menos uma letra e um número                                    |
+| Variável                              | Obrigatória | Padrão        | Descrição                                                                                                                            |
+| ------------------------------------- | ----------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `NODE_ENV`                            | não         | `development` | `development`, `test` ou `production`                                                                                                |
+| `PORT`                                | não         | `3000`        | Porta HTTP da API                                                                                                                    |
+| `DB_HOST`                             | sim         | (nenhum)      | Host do MySQL                                                                                                                        |
+| `DB_PORT`                             | não         | `3306`        | Porta do MySQL (`3307` no Docker local)                                                                                              |
+| `DB_USERNAME`                         | sim         | (nenhum)      | Usuário do banco                                                                                                                     |
+| `DB_PASSWORD`                         | sim         | (nenhum)      | Senha do banco                                                                                                                       |
+| `DB_DATABASE`                         | sim         | (nenhum)      | Nome do banco                                                                                                                        |
+| `DB_LOGGING`                          | não         | `false`       | Exibe as queries SQL no log                                                                                                          |
+| `DB_ROOT_PASSWORD`                    | só Docker   | (nenhum)      | Senha de root do MySQL, usada pelo docker-compose                                                                                    |
+| `SUPERTOKENS_CONNECTION_URI`          | sim         | (nenhum)      | Endereço do SuperTokens Core (`http://localhost:3567`)                                                                               |
+| `SUPERTOKENS_API_KEY`                 | sim         | (nenhum)      | Chave da API no Core (mín. 20 caracteres: letras, números, `=` e `-`). O docker-compose usa o mesmo valor no Core                    |
+| `API_DOMAIN`                          | sim         | (nenhum)      | URL pública da API, usada pelo SuperTokens                                                                                           |
+| `WEB_APP_URL`                         | sim         | (nenhum)      | URL do painel web, usada pelo SuperTokens, pelo CORS e nos links dos e-mails (convite, redefinição de senha e verificação de e-mail) |
+| `INVITATION_EXPIRES_IN_HOURS`         | não         | `48`          | Validade, em horas, do link de convite de ADM                                                                                        |
+| `PASSWORD_RESET_EXPIRES_IN_MINUTES`   | não         | `60`          | Validade, em minutos, do link de redefinição de senha ([detalhes](docs/AUTH.md#recuperação-de-senha))                                |
+| `EMAIL_VERIFICATION_EXPIRES_IN_HOURS` | não         | `24`          | Validade, em horas, do link de verificação de e-mail do Client ([detalhes](docs/AUTH.md#verificação-de-e-mail))                      |
+| `MFA_CODE_EXPIRES_IN_MINUTES`         | não         | `10`          | Validade, em minutos, do código da segunda etapa do login ([detalhes](docs/AUTH.md#verificação-em-duas-etapas))                      |
+| `LOGIN_MAX_FAILED_ATTEMPTS`           | não         | `5`           | Falhas de login por e-mail que causam o bloqueio ([detalhes](docs/AUTH.md#bloqueio-do-login-por-tentativas))                         |
+| `LOGIN_LOCK_WINDOW_MINUTES`           | não         | `15`          | Janela, em minutos, em que as falhas de login são contadas                                                                           |
+| `RATE_LIMIT_MAX_REQUESTS`             | não         | `20`          | Requisições por IP em cada rota limitada, por janela ([detalhes](docs/AUTH.md#limite-de-requisições-por-ip))                         |
+| `RATE_LIMIT_WINDOW_SECONDS`           | não         | `60`          | Duração, em segundos, da janela do limite por IP                                                                                     |
+| `TRUST_PROXY`                         | não         | `0`           | Quantidade de proxies reversos na frente da API. Define de onde o IP do cliente é lido                                               |
+| `SUPERTOKENS_DB_PASSWORD`             | só Docker   | (nenhum)      | Senha do PostgreSQL do SuperTokens, usada pelo docker-compose                                                                        |
+| `SMTP_HOST`                           | sim         | (nenhum)      | Servidor SMTP (`localhost` com o Mailpit do Docker)                                                                                  |
+| `SMTP_PORT`                           | não         | `587`         | Porta do SMTP (`1025` no Mailpit)                                                                                                    |
+| `SMTP_SECURE`                         | não         | `false`       | `true` para TLS direto (porta 465). Com `false`, o STARTTLS é usado se o servidor oferecer                                           |
+| `SMTP_USER`                           | não         | (vazio)       | Usuário do SMTP. Vazio, a conexão é feita sem autenticação (caso do Mailpit)                                                         |
+| `SMTP_PASSWORD`                       | não         | (vazio)       | Senha do SMTP                                                                                                                        |
+| `MAIL_FROM`                           | sim         | (nenhum)      | Remetente dos e-mails, no formato `Nome <email>` ou só o e-mail                                                                      |
+| `SUPER_ADMIN_NAME`                    | só seed     | (nenhum)      | Nome do SuperAdm criado pelo `npm run seed`                                                                                          |
+| `SUPER_ADMIN_EMAIL`                   | só seed     | (nenhum)      | E-mail (login) do SuperAdm                                                                                                           |
+| `SUPER_ADMIN_PASSWORD`                | só seed     | (nenhum)      | Senha do SuperAdm: de 8 a 128 caracteres, com pelo menos uma letra e um número                                                       |
 
-O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração e e2e. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md).
+O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração e e2e, e deixa o limite por IP alto, para ele não interferir nos testes. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md).
 
 ## Comandos disponíveis
 
@@ -268,7 +293,7 @@ O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes
 │   ├── shared/                # código compartilhado entre módulos
 │   │   ├── domain/            # classes base do domínio (ex.: Entity)
 │   │   ├── application/       # contratos genéricos (ex.: UseCase, MailSender)
-│   │   ├── infra/             # banco de dados (conexão e migrations) e envio de e-mail
+│   │   ├── infra/             # banco de dados, envio de e-mail e tarefas em segundo plano
 │   │   └── testing/           # fakes reutilizados nos testes (fora do build)
 │   └── modules/               # um módulo por funcionalidade
 │       └── <feature>/
@@ -287,16 +312,17 @@ Cada funcionalidade é um módulo independente, dividido em camadas. As regras d
 
 ## Documentação
 
-| Documento                                                              | Conteúdo                                                                                        |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                           | Camadas, regras de dependência, nomenclatura, aliases, envio de e-mail e como criar uma feature |
-| [docs/AUTH.md](docs/AUTH.md)                                           | Integração com o SuperTokens, sessão, matriz de permissões e como proteger uma rota             |
-| [docs/FRONTEND.md](docs/FRONTEND.md)                                   | Guia rápido para os times web e mobile: SDKs, login, sessão e formato dos erros                 |
-| [docs/DATABASE.md](docs/DATABASE.md)                                   | Banco local, PostgreSQL do SuperTokens, tabelas, migrations e seed                              |
-| [docs/TESTING.md](docs/TESTING.md)                                     | Tipos de teste, o que testar em cada camada e convenções                                        |
-| [docs/api.http](docs/api.http)                                         | Coleção de requisições com todas as rotas, para a extensão REST Client do VS Code               |
-| [docs/sprints/sprint-2-usuarios.md](docs/sprints/sprint-2-usuarios.md) | Plano da sprint 2: decisões, modelagem e regras de negócio (RN01 a RN16)                        |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                                     | Git Flow, padrão de commits, Pull Requests e releases                                           |
+| Documento                                                              | Conteúdo                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                           | Camadas, regras de dependência, nomenclatura, aliases, envio de e-mail e como criar uma feature                                                                                                           |
+| [docs/AUTH.md](docs/AUTH.md)                                           | Integração com o SuperTokens, sessão, bloqueio e limite do login, recuperação de senha, verificação de e-mail, sessões abertas, verificação em duas etapas, matriz de permissões e como proteger uma rota |
+| [docs/FRONTEND.md](docs/FRONTEND.md)                                   | Guia para os times web e mobile: SDKs, login, páginas dos links de e-mail, segunda etapa, sessões e formato dos erros                                                                                     |
+| [docs/DATABASE.md](docs/DATABASE.md)                                   | Banco local, PostgreSQL do SuperTokens, tabelas, tokens de uso único, migrations e seed                                                                                                                   |
+| [docs/TESTING.md](docs/TESTING.md)                                     | Tipos de teste, o que testar em cada camada e convenções                                                                                                                                                  |
+| [docs/api.http](docs/api.http)                                         | Coleção de requisições com todas as rotas, para a extensão REST Client do VS Code                                                                                                                         |
+| [docs/sprints/sprint-2-usuarios.md](docs/sprints/sprint-2-usuarios.md) | Plano da sprint 2: decisões, modelagem e regras de negócio (RN01 a RN16)                                                                                                                                  |
+| [docs/sprints/sprint-3-login.md](docs/sprints/sprint-3-login.md)       | Plano da sprint 3 (login e segurança de acesso): decisões, modelagem e regras de negócio (RN17 a RN25)                                                                                                    |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                                     | Git Flow, padrão de commits, Pull Requests e releases                                                                                                                                                     |
 
 ## Contribuindo
 

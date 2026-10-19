@@ -1,0 +1,1882 @@
+{
+  "info": {
+    "_postman_id": "1f620ed4-9dc6-5144-8ed2-3919b82d92e5",
+    "name": "ReportaAi Cm - Sprint 2 (evidências)",
+    "description": "Rotas entregues até a Sprint 2 (Epic #15), em ordem de fluxo. Cada requisição traz no nome as issues que ela evidencia e tem testes na aba Tests.\n\nRode as pastas em ordem (ou a coleção inteira pelo Runner): os tokens e os ids são salvos nas variáveis da coleção pelas próprias requisições. A coleção exclui o Client e o ADM no fim, então pode ser rodada de novo no mesmo ambiente.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0. Infraestrutura",
+      "description": "Saúde da API, validação dos dados e proteção das rotas (#16, #18, #21).",
+      "item": [
+        {
+          "name": "0.1 [#16 #18] Saúde da API",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health",
+            "description": "Rota pública. Resposta esperada: 200, com { status: 'ok' }."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('API no ar', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0.2 [#16] Validação: cadastro com dados inválidos (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/clients",
+            "description": "O ZodValidationPipe devolve 400 com a lista dos campos inválidos em details.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"email\": \"nao-e-email\",\n  \"password\": \"123\",\n  \"cpf\": \"111.111.111-11\",\n  \"phone\": \"1\",\n  \"birthDate\": \"2999-01-01\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Lista os campos inválidos', () => {",
+                  "  const fields = pm.response.json().details.map((d) => d.field);",
+                  "  pm.expect(fields).to.include.members(['name', 'email', 'password', 'cpf']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0.3 [#21] Rota protegida sem sessão (401)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/me",
+            "description": "Toda rota sem @Public() exige sessão."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 401', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. Login do SuperAdm",
+      "description": "O SuperAdm é criado pelo npm run seed (#20). O login é a rota nativa do SuperTokens no modo header (#18, #21).",
+      "item": [
+        {
+          "name": "1.1 [#20 #21] Login do SuperAdm",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "st-auth-mode",
+                "value": "header"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signin",
+            "description": "Os tokens voltam nos headers st-access-token e st-refresh-token e ficam salvos nas variáveis da coleção.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formFields\": [\n    {\n      \"id\": \"email\",\n      \"value\": \"{{superAdminEmail}}\"\n    },\n    {\n      \"id\": \"password\",\n      \"value\": \"{{superAdminPassword}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Login aceito (status OK)', () => pm.expect(pm.response.json().status).to.eql('OK'));",
+                  "pm.test('Tokens da sessão nos headers', () => {",
+                  "  pm.expect(pm.response.headers.get('st-access-token')).to.be.a('string');",
+                  "  pm.expect(pm.response.headers.get('st-refresh-token')).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('superAdminToken', pm.response.headers.get('st-access-token'));",
+                  "pm.collectionVariables.set('superAdminRefreshToken', pm.response.headers.get('st-refresh-token'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.2 [#20 #27] Perfil do SuperAdm",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/users/me",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const me = pm.response.json();",
+                  "pm.test('Papel SUPER_ADMIN e status ACTIVE', () => {",
+                  "  pm.expect(me.role).to.eql('SUPER_ADMIN');",
+                  "  pm.expect(me.status).to.eql('ACTIVE');",
+                  "});",
+                  "pm.collectionVariables.set('superAdminId', me.id);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Convite de ADM",
+      "description": "O SuperAdm convida, o e-mail chega no Mailpit (#22) e o ADM aceita o convite sem sessão (#24).",
+      "item": [
+        {
+          "name": "2.1 [#24] Convidar ADM",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ana Souza\",\n  \"email\": \"{{adminEmail}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const admin = pm.response.json();",
+                  "pm.test('ADM criado como PENDING', () => pm.expect(admin.status).to.eql('PENDING'));",
+                  "pm.test('Convite enviado por e-mail', () => pm.expect(admin.invitation.sent).to.eql(true));",
+                  "pm.collectionVariables.set('adminId', admin.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.2 [#16 #24] Convidar o mesmo e-mail de novo (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ana Souza\",\n  \"email\": \"{{adminEmail}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Corpo de erro padronizado', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.include.keys('statusCode', 'error', 'message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.3 [#22] Ler o e-mail do convite (Mailpit)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpitUrl}}/api/v1/message/latest",
+            "description": "Não é rota da API: lê o último e-mail capturado pelo Mailpit e guarda o token do link. A caixa de entrada também abre no navegador, em http://localhost:8025."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const message = pm.response.json();",
+                  "pm.test('E-mail enviado para o ADM convidado', () => {",
+                  "  pm.expect(message.To.map((to) => to.Address)).to.include(pm.collectionVariables.get('adminEmail'));",
+                  "});",
+                  "const match = message.Text.match(/convite\\?token=([A-Za-z0-9_-]+)/);",
+                  "pm.test('Link do convite no e-mail', () => pm.expect(match).to.not.be.null);",
+                  "if (match) pm.collectionVariables.set('invitationTokenOld', match[1]);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.4 [#21 #24] Login do ADM ainda pendente (recusado)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "st-auth-mode",
+                "value": "header"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signin",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formFields\": [\n    {\n      \"id\": \"email\",\n      \"value\": \"{{adminEmail}}\"\n    },\n    {\n      \"id\": \"password\",\n      \"value\": \"{{adminPassword}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Login recusado (WRONG_CREDENTIALS_ERROR)', () => pm.expect(pm.response.json().status).to.eql('WRONG_CREDENTIALS_ERROR'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.5 [#24] Reenviar o convite",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins/{{adminId}}/invitation",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Convite reenviado', () => pm.expect(pm.response.json().sent).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.6 [#22] Ler o e-mail do reenvio (Mailpit)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpitUrl}}/api/v1/message/latest",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const message = pm.response.json();",
+                  "pm.test('E-mail enviado para o ADM convidado', () => {",
+                  "  pm.expect(message.To.map((to) => to.Address)).to.include(pm.collectionVariables.get('adminEmail'));",
+                  "});",
+                  "const match = message.Text.match(/convite\\?token=([A-Za-z0-9_-]+)/);",
+                  "pm.test('Link do convite no e-mail', () => pm.expect(match).to.not.be.null);",
+                  "if (match) pm.collectionVariables.set('invitationToken', match[1]);",
+                  "pm.test('O reenvio gerou um link novo', () => {",
+                  "  pm.expect(pm.collectionVariables.get('invitationToken')).to.not.eql(pm.collectionVariables.get('invitationTokenOld'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.7 [#24] Aceitar com o link substituído pelo reenvio (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/invitations/accept",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{invitationTokenOld}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Corpo de erro padronizado', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.include.keys('statusCode', 'error', 'message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.8 [#24] Aceitar o convite",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/invitations/accept",
+            "description": "Rota pública: o ADM define a senha e fica ACTIVE.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{invitationToken}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 204', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.9 [#24] Reusar o mesmo link (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/invitations/accept",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{invitationToken}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Corpo de erro padronizado', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.include.keys('statusCode', 'error', 'message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.10 [#21 #24] Login do ADM",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "st-auth-mode",
+                "value": "header"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signin",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formFields\": [\n    {\n      \"id\": \"email\",\n      \"value\": \"{{adminEmail}}\"\n    },\n    {\n      \"id\": \"password\",\n      \"value\": \"{{adminPassword}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Login aceito (status OK)', () => pm.expect(pm.response.json().status).to.eql('OK'));",
+                  "pm.test('Tokens da sessão nos headers', () => {",
+                  "  pm.expect(pm.response.headers.get('st-access-token')).to.be.a('string');",
+                  "  pm.expect(pm.response.headers.get('st-refresh-token')).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('adminToken', pm.response.headers.get('st-access-token'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.11 [#24 #25] ADM tenta convidar outro ADM (403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins",
+            "description": "Só o SUPER_ADMIN gerencia ADMs (RN04).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Outro ADM\",\n  \"email\": \"outro.adm@reportaai.local\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Corpo de erro padronizado', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.include.keys('statusCode', 'error', 'message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Autocadastro do Client",
+      "description": "Cadastro público do cidadão pelo app, que substitui o sign-up nativo do SuperTokens (#23).",
+      "item": [
+        {
+          "name": "3.1 [#23] Cadastrar Client",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/clients",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Maria da Silva\",\n  \"email\": \"{{clientEmail}}\",\n  \"password\": \"{{clientPassword}}\",\n  \"cpf\": \"{{clientCpf}}\",\n  \"phone\": \"(44) 99999-8888\",\n  \"birthDate\": \"1990-05-20\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const client = pm.response.json();",
+                  "pm.test('Client ACTIVE com papel CLIENT', () => {",
+                  "  pm.expect(client.role).to.eql('CLIENT');",
+                  "  pm.expect(client.status).to.eql('ACTIVE');",
+                  "});",
+                  "pm.test('CPF salvo só com dígitos', () => pm.expect(client.cpf).to.match(/^\\d{11}$/));",
+                  "pm.test('A senha não volta na resposta', () => pm.expect(pm.response.text()).to.not.include(pm.collectionVariables.get('clientPassword')));",
+                  "pm.collectionVariables.set('clientId', client.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.2 [#23] Cadastrar o mesmo e-mail e CPF de novo (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/clients",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Maria da Silva\",\n  \"email\": \"{{clientEmail}}\",\n  \"password\": \"{{clientPassword}}\",\n  \"cpf\": \"{{clientCpf}}\",\n  \"phone\": \"(44) 99999-8888\",\n  \"birthDate\": \"1990-05-20\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Corpo de erro padronizado', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.include.keys('statusCode', 'error', 'message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.3 [#21 #23] Login do Client",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "st-auth-mode",
+                "value": "header"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signin",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formFields\": [\n    {\n      \"id\": \"email\",\n      \"value\": \"{{clientEmail}}\"\n    },\n    {\n      \"id\": \"password\",\n      \"value\": \"{{clientPassword}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Login aceito (status OK)', () => pm.expect(pm.response.json().status).to.eql('OK'));",
+                  "pm.test('Tokens da sessão nos headers', () => {",
+                  "  pm.expect(pm.response.headers.get('st-access-token')).to.be.a('string');",
+                  "  pm.expect(pm.response.headers.get('st-refresh-token')).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('clientToken', pm.response.headers.get('st-access-token'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Gestão de Clients (painel)",
+      "description": "Consulta, inativação e reativação de Clients por ADMIN e SUPER_ADMIN (#26).",
+      "item": [
+        {
+          "name": "4.1 [#16 #26] Listar Clients (ADM)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/clients?page=1&pageSize=20&status=ACTIVE&search=maria",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const page = pm.response.json();",
+                  "pm.test('Resposta paginada', () => pm.expect(page).to.have.keys('items', 'page', 'pageSize', 'total'));",
+                  "pm.test('Client cadastrado na lista', () => pm.expect(page.items.map((c) => c.id)).to.include(pm.collectionVariables.get('clientId')));",
+                  "pm.test('CPF mascarado', () => page.items.forEach((c) => pm.expect(c.cpf).to.include('*')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.2 [#26] Consultar Client",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/clients/{{clientId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('CPF mascarado (RN12)', () => pm.expect(pm.response.json().cpf).to.match(/^\\*{3}\\.\\d{3}\\.\\d{3}-\\*{2}$/));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.3 [#26] Client tenta listar Clients (403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/clients",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Corpo de erro padronizado', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.include.keys('statusCode', 'error', 'message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.4 [#26] Inativar Client",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/clients/{{clientId}}/status",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"INACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Client INACTIVE', () => pm.expect(pm.response.json().status).to.eql('INACTIVE'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.5 [#21 #26] Client inativo perde o acesso (401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/users/me",
+            "description": "O token ainda não expirou, mas o guard confere o status no MySQL a cada requisição (RN10)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 401', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.6 [#21] Login do Client inativo (recusado)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "st-auth-mode",
+                "value": "header"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signin",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formFields\": [\n    {\n      \"id\": \"email\",\n      \"value\": \"{{clientEmail}}\"\n    },\n    {\n      \"id\": \"password\",\n      \"value\": \"{{clientPassword}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Login recusado (WRONG_CREDENTIALS_ERROR)', () => pm.expect(pm.response.json().status).to.eql('WRONG_CREDENTIALS_ERROR'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.7 [#26] Reativar Client",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/clients/{{clientId}}/status",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Client ACTIVE', () => pm.expect(pm.response.json().status).to.eql('ACTIVE'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.8 [#21 #26] Login do Client reativado",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "st-auth-mode",
+                "value": "header"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signin",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formFields\": [\n    {\n      \"id\": \"email\",\n      \"value\": \"{{clientEmail}}\"\n    },\n    {\n      \"id\": \"password\",\n      \"value\": \"{{clientPassword}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Login aceito (status OK)', () => pm.expect(pm.response.json().status).to.eql('OK'));",
+                  "pm.test('Tokens da sessão nos headers', () => {",
+                  "  pm.expect(pm.response.headers.get('st-access-token')).to.be.a('string');",
+                  "  pm.expect(pm.response.headers.get('st-refresh-token')).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('clientToken', pm.response.headers.get('st-access-token'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Perfil do usuário (/users/me)",
+      "description": "O usuário logado vê e mantém os próprios dados, troca a senha e (só o Client) exclui a conta (#27).",
+      "item": [
+        {
+          "name": "5.1 [#27] Ver o próprio perfil (Client)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/users/me",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const me = pm.response.json();",
+                  "pm.test('Papel CLIENT e CPF completo', () => {",
+                  "  pm.expect(me.role).to.eql('CLIENT');",
+                  "  pm.expect(me.cpf).to.match(/^\\d{11}$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5.2 [#27] Editar o próprio perfil",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/users/me",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Maria da Silva Santos\",\n  \"phone\": \"(44) 3523-1234\",\n  \"birthDate\": \"1990-05-21\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Nome atualizado', () => pm.expect(pm.response.json().name).to.eql('Maria da Silva Santos'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5.3 [#27] Trocar a senha com a senha atual errada (401)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/users/me/password",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"SenhaErrada999\",\n  \"newPassword\": \"{{clientNewPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Corpo de erro padronizado', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.include.keys('statusCode', 'error', 'message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5.4 [#27] Trocar a senha",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/users/me/password",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{clientPassword}}\",\n  \"newPassword\": \"{{clientNewPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 204', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5.5 [#27] Login com a senha antiga (recusado)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "st-auth-mode",
+                "value": "header"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signin",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formFields\": [\n    {\n      \"id\": \"email\",\n      \"value\": \"{{clientEmail}}\"\n    },\n    {\n      \"id\": \"password\",\n      \"value\": \"{{clientPassword}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Login recusado (WRONG_CREDENTIALS_ERROR)', () => pm.expect(pm.response.json().status).to.eql('WRONG_CREDENTIALS_ERROR'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5.6 [#27] Login com a senha nova",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "st-auth-mode",
+                "value": "header"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signin",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formFields\": [\n    {\n      \"id\": \"email\",\n      \"value\": \"{{clientEmail}}\"\n    },\n    {\n      \"id\": \"password\",\n      \"value\": \"{{clientNewPassword}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Login aceito (status OK)', () => pm.expect(pm.response.json().status).to.eql('OK'));",
+                  "pm.test('Tokens da sessão nos headers', () => {",
+                  "  pm.expect(pm.response.headers.get('st-access-token')).to.be.a('string');",
+                  "  pm.expect(pm.response.headers.get('st-refresh-token')).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('clientToken', pm.response.headers.get('st-access-token'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5.7 [#27] ADM tenta excluir a própria conta (403)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/users/me",
+            "description": "A autoexclusão é só do Client (RN15).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Corpo de erro padronizado', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.include.keys('statusCode', 'error', 'message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5.8 [#27] Excluir a própria conta (Client)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/users/me",
+            "description": "Exclusão lógica com anonimização (RN11): o e-mail e o CPF ficam livres para um novo cadastro.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"{{clientNewPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 204', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5.9 [#27] Conta excluída perde o acesso (401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/users/me",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 401', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Gestão de ADMs (SuperAdm)",
+      "description": "CRUD dos ADMs, restrito ao SUPER_ADMIN (#25).",
+      "item": [
+        {
+          "name": "6.1 [#16 #25] Listar ADMs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins?page=1&pageSize=20&status=ACTIVE",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const page = pm.response.json();",
+                  "pm.test('Resposta paginada', () => pm.expect(page).to.have.keys('items', 'page', 'pageSize', 'total'));",
+                  "pm.test('ADM convidado na lista', () => pm.expect(page.items.map((a) => a.id)).to.include(pm.collectionVariables.get('adminId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6.2 [#25] Consultar ADM",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins/{{adminId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('ADM ACTIVE', () => pm.expect(pm.response.json().status).to.eql('ACTIVE'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6.3 [#25] Consultar o SuperAdm pela rota de ADMs (404)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins/{{superAdminId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Corpo de erro padronizado', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.include.keys('statusCode', 'error', 'message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6.4 [#25] Editar o nome do ADM",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins/{{adminId}}",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ana Souza Lima\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Nome atualizado', () => pm.expect(pm.response.json().name).to.eql('Ana Souza Lima'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6.5 [#25] Inativar ADM",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins/{{adminId}}/status",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"INACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('ADM INACTIVE', () => pm.expect(pm.response.json().status).to.eql('INACTIVE'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6.6 [#21 #25] ADM inativo perde o acesso (401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/users/me",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 401', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6.7 [#25] Reativar ADM",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins/{{adminId}}/status",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('ADM ACTIVE', () => pm.expect(pm.response.json().status).to.eql('ACTIVE'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6.8 [#25] Excluir ADM",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins/{{adminId}}",
+            "description": "Exclusão lógica com anonimização do e-mail (RN11). O e-mail fica livre para um novo convite."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 204', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6.9 [#25] ADM excluído não é mais encontrado (404)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admins/{{adminId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Corpo de erro padronizado', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.include.keys('statusCode', 'error', 'message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7. Sessão: renovar e encerrar",
+      "description": "Rotas nativas do SuperTokens para renovar e encerrar a sessão (#18, #21).",
+      "item": [
+        {
+          "name": "7.1 [#18 #21] Renovar a sessão do SuperAdm",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "st-auth-mode",
+                "value": "header"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminRefreshToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/session/refresh",
+            "description": "O refresh token vai no Authorization. Os SDKs de front fazem esta chamada sozinhos quando o access token expira (15 min)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Novo par de tokens', () => {",
+                  "  pm.expect(pm.response.headers.get('st-access-token')).to.be.a('string');",
+                  "  pm.expect(pm.response.headers.get('st-refresh-token')).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('superAdminToken', pm.response.headers.get('st-access-token'));",
+                  "pm.collectionVariables.set('superAdminRefreshToken', pm.response.headers.get('st-refresh-token'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7.2 [#21] Encerrar a sessão (logout)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signout",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Sessão encerrada', () => pm.expect(pm.response.json().status).to.eql('OK'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7.3 [#21] Renovar uma sessão encerrada (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "st-auth-mode",
+                "value": "header"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{superAdminRefreshToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/session/refresh",
+            "description": "Depois do logout, o refresh token não vale mais."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 401', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8. Rotas nativas desativadas",
+      "description": "Rotas do SuperTokens fora do escopo, desligadas no override (#21, RN16).",
+      "item": [
+        {
+          "name": "8.1 [#21] Sign-up nativo (404)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signup",
+            "description": "O cadastro é pelo POST /clients.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formFields\": [\n    {\n      \"id\": \"email\",\n      \"value\": \"{{clientEmail}}\"\n    },\n    {\n      \"id\": \"password\",\n      \"value\": \"{{clientPassword}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 404', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8.2 [#21] Consulta de e-mail existente (404)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/auth/emailpassword/email/exists?email={{clientEmail}}",
+            "description": "Desativada para não revelar quais e-mails têm conta."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 404', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8.3 [#21] Reset de senha nativo (404)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/user/password/reset/token",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"formFields\": [\n    {\n      \"id\": \"email\",\n      \"value\": \"{{clientEmail}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status 404', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000/api",
+      "type": "string"
+    },
+    {
+      "key": "mailpitUrl",
+      "value": "http://localhost:8025",
+      "type": "string"
+    },
+    {
+      "key": "superAdminEmail",
+      "value": "superadmin@reportaai.local",
+      "type": "string"
+    },
+    {
+      "key": "superAdminPassword",
+      "value": "SuperAdmin123",
+      "type": "string"
+    },
+    {
+      "key": "adminEmail",
+      "value": "ana.souza@reportaai.local",
+      "type": "string"
+    },
+    {
+      "key": "adminPassword",
+      "value": "SenhaDoAdm123",
+      "type": "string"
+    },
+    {
+      "key": "clientEmail",
+      "value": "maria.silva@reportaai.local",
+      "type": "string"
+    },
+    {
+      "key": "clientCpf",
+      "value": "529.982.247-25",
+      "type": "string"
+    },
+    {
+      "key": "clientPassword",
+      "value": "SenhaForte123",
+      "type": "string"
+    },
+    {
+      "key": "clientNewPassword",
+      "value": "OutraSenha456",
+      "type": "string"
+    },
+    {
+      "key": "superAdminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "superAdminRefreshToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "superAdminId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "adminId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "invitationTokenOld",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "invitationToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "clientId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "clientToken",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

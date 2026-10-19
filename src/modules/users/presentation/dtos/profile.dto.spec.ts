@@ -1,4 +1,5 @@
 import {
+  changeMfaBodySchema,
   changePasswordBodySchema,
   deleteOwnAccountBodySchema,
   updateProfileBodySchema,
@@ -80,4 +81,27 @@ describe('deleteOwnAccountBodySchema', () => {
 
     expect(result.error?.issues.map(({ path }) => path.join('.'))).toEqual(['password']);
   });
+});
+
+describe('changeMfaBodySchema', () => {
+  it.each([true, false])(
+    'deve aceitar enabled %p com a senha, sem aplicar a política',
+    (enabled) => {
+      const body = { enabled, password: 'antiga' };
+
+      expect(changeMfaBodySchema.parse(body)).toEqual(body);
+    },
+  );
+
+  it.each([{}, { enabled: 'true', password: '' }, { enabled: 1, password: '' }])(
+    'deve exigir o enabled booleano e a senha em %p',
+    (body) => {
+      const result = changeMfaBodySchema.safeParse(body);
+
+      expect(result.error?.issues.map(({ path }) => path.join('.'))).toEqual([
+        'enabled',
+        'password',
+      ]);
+    },
+  );
 });

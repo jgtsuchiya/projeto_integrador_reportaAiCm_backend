@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { UseCase } from '@shared/application/use-case.interface';
 
 import { ClientProfile } from '../../domain/entities/client-profile.entity';
+import { IssuedUserToken } from '../../domain/entities/user-token.entity';
 import { User } from '../../domain/entities/user.entity';
 import { CpfAlreadyInUseError } from '../../domain/errors/cpf-already-in-use.error';
 import { EmailAlreadyInUseError } from '../../domain/errors/email-already-in-use.error';
@@ -16,6 +17,7 @@ import { Phone } from '../../domain/value-objects/phone';
 import { Role } from '../../domain/value-objects/role';
 import { UserStatus } from '../../domain/value-objects/user-status';
 import { IdentityProvider } from '../ports/identity-provider';
+import { EmailVerificationService } from '../services/email-verification.service';
 
 export interface RegisterClientInput {
   name: string;
@@ -44,12 +46,25 @@ export interface RegisterClientOutput {
   createdAt: Date;
 }
 
+/** Dados do cadastro, já validados pelos value objects. */
+interface ClientData {
+  name: string;
+  email: Email;
+  password: Password;
+  cpf: Cpf;
+  phone: Phone;
+  birthDate: BirthDate;
+}
+
 /**
  * Autocadastro do CLIENT pelo app (RN05). Substitui o sign-up nativo do SuperTokens, que
  * fica desativado. O CLIENT já nasce ACTIVE, e o app faz o login em seguida pelo SDK.
  *
+ * Ele nasce com o e-mail não verificado e recebe o link de verificação (RN22). O login não
+ * depende dela, e uma falha no envio do e-mail não desfaz o cadastro: o link pode ser reenviado.
+ *
  * A credencial é criada no SuperTokens antes da gravação no MySQL, porque o id gerado por ele
- * é o `users.id`. Se algo falhar depois disso, a credencial é removida (compensação).
+ * é o `users.id`. Se a gravação falhar, a credencial é removida (compensação).
  */
 @Injectable()
 export class RegisterClientUseCase implements UseCase<RegisterClientInput, RegisterClientOutput> {
@@ -57,6 +72,7 @@ export class RegisterClientUseCase implements UseCase<RegisterClientInput, Regis
     private readonly userRepository: UserRepository,
     private readonly clientProfileRepository: ClientProfileRepository,
     private readonly identityProvider: IdentityProvider,
+    private readonly emailVerificationService: EmailVerificationService,
   ) {}
 
   async execute(input: RegisterClientInput): Promise<RegisterClientOutput> {
@@ -74,16 +90,36 @@ export class RegisterClientUseCase implements UseCase<RegisterClientInput, Regis
       throw new CpfAlreadyInUseError();
     }
 
+    const { user, profile, verification } = await this.createClient({
+      name: input.name,
+      email,
+      password,
+      cpf,
+      phone,
+      birthDate,
+    });
+    await this.emailVerificationService.send(user, verification);
+
+    return toOutput(user, profile);
+  }
+
+  private async createClient({
+    name,
+    email,
+    password,
+    ...profileData
+  }: ClientData): Promise<{ user: User; profile: ClientProfile; verification: IssuedUserToken }> {
     const userId = await this.identityProvider.createCredentials(email, password);
 
     try {
       await this.identityProvider.assignRole(userId, Role.CLIENT);
 
-      const user = User.createClient({ id: userId, name: input.name, email });
-      const profile = ClientProfile.create({ userId, cpf, phone, birthDate });
-      await this.userRepository.saveClient(user, profile);
+      const user = User.createClient({ id: userId, name, email });
+      const profile = ClientProfile.create({ userId, ...profileData });
+      const verification = this.emailVerificationService.issue(userId);
+      await this.userRepository.saveClient(user, profile, verification.token);
 
-      return toOutput(user, profile);
+      return { user, profile, verification };
     } catch (error) {
       // Compensação: sem o registro no MySQL, a credencial ficaria órfã no SuperTokens.
       await this.identityProvider.deleteCredentials(userId);

@@ -1,90 +1,187 @@
-import type { Page } from '@shared/domain/pagination';
+import { MailDeliveryError } from '@shared/application/ports/mail-sender';
+import { FakeMailSender } from '@shared/testing/fake-mail-sender';
 
+import { UserToken } from '../../domain/entities/user-token.entity';
 import { User } from '../../domain/entities/user.entity';
-import { ClientWithProfile, UserRepository } from '../../domain/repositories/user.repository';
 import { Email } from '../../domain/value-objects/email';
-import { Role } from '../../domain/value-objects/role';
+import { UserTokenType } from '../../domain/value-objects/user-token-type';
+import {
+  InMemoryUserRepository,
+  InMemoryUsersDatabase,
+  InMemoryUserTokenRepository,
+} from '../../testing/in-memory-users';
+import { LOGIN_CODE_MAIL_SUBJECT, LoginCodeService } from '../services/login-code.service';
+import { UserMailService } from '../services/user-mail.service';
 import { AuthorizeSignInUseCase } from './authorize-sign-in.use-case';
 
-/** Como o repositório real, ignora os usuários excluídos. */
-class InMemoryUserRepository extends UserRepository {
-  readonly items = new Map<string, User>();
-
-  async findById(id: string): Promise<User | null> {
-    const user = this.items.get(id);
-
-    return user && !user.isDeleted ? user : null;
-  }
-
-  async findByEmail(email: Email): Promise<User | null> {
-    return [...this.items.values()].find((user) => user.email.equals(email)) ?? null;
-  }
-
-  async existsByEmail(email: Email): Promise<boolean> {
-    return (await this.findByEmail(email)) !== null;
-  }
-
-  async existsByRole(role: Role): Promise<boolean> {
-    return [...this.items.values()].some((user) => user.role === role);
-  }
-
-  async findPage(): Promise<Page<User>> {
-    throw new Error('Não usado neste teste.');
-  }
-
-  async findClientPage(): Promise<Page<ClientWithProfile>> {
-    throw new Error('Não usado neste teste.');
-  }
-
-  async save(user: User): Promise<void> {
-    this.items.set(user.id, user);
-  }
-  async saveClient(user: User): Promise<void> {
-    await this.save(user);
-  }
-
-  async updateClient(): Promise<void> {
-    throw new Error('Não usado neste teste.');
-  }
-
-  async deleteClient(): Promise<void> {
-    throw new Error('Não usado neste teste.');
-  }
-
-  async saveWithToken(user: User): Promise<void> {
-    await this.save(user);
-  }
-}
+const MINUTE_IN_MS = 60 * 1000;
+const EMAIL = 'maria@example.com';
 
 describe('AuthorizeSignInUseCase', () => {
+  let database: InMemoryUsersDatabase;
   let userRepository: InMemoryUserRepository;
+  let mailSender: FakeMailSender;
   let sut: AuthorizeSignInUseCase;
 
   beforeEach(() => {
-    userRepository = new InMemoryUserRepository();
-    sut = new AuthorizeSignInUseCase(userRepository);
+    database = new InMemoryUsersDatabase();
+    userRepository = new InMemoryUserRepository(database);
+    mailSender = new FakeMailSender();
+    sut = new AuthorizeSignInUseCase(
+      userRepository,
+      new LoginCodeService(
+        new InMemoryUserTokenRepository(database),
+        new UserMailService(mailSender, { webAppUrl: 'http://localhost:5173' }),
+        { expiresInMinutes: 10 },
+      ),
+    );
   });
 
   function createClient(): User {
-    const user = User.createClient({
-      id: 'client-1',
-      name: 'Maria',
-      email: Email.create('maria@example.com'),
-    });
-    userRepository.items.set(user.id, user);
+    const user = User.createClient({ id: 'client-1', name: 'Maria', email: Email.create(EMAIL) });
+    database.users.set(user.id, user);
 
     return user;
   }
 
-  it('deve permitir o login de um usuário ACTIVE e registrar o último acesso', async () => {
+  /** Client com a verificação em duas etapas ativa, o que exige o e-mail verificado (RN24). */
+  function createClientWithMfa(): User {
     const user = createClient();
-    const saveSpy = jest.spyOn(userRepository, 'save');
+    user.verifyEmail();
+    user.enableMfa();
 
-    const result = await sut.execute({ userId: user.id });
+    return user;
+  }
 
-    expect(result).toEqual({ allowed: true });
-    expect(user.lastLoginAt).toBeInstanceOf(Date);
-    expect(saveSpy).toHaveBeenCalledWith(user);
+  /** Código do último e-mail enviado. */
+  function lastCode(): string {
+    const match = /^\d{6}$/m.exec(mailSender.messages.at(-1)?.text ?? '');
+
+    if (!match) {
+      throw new Error('Nenhum código foi enviado.');
+    }
+
+    return match[0];
+  }
+
+  describe('sem a verificação em duas etapas', () => {
+    it('deve permitir o login de um usuário ACTIVE e registrar o último acesso', async () => {
+      const user = createClient();
+      const saveSpy = jest.spyOn(userRepository, 'save');
+
+      const result = await sut.execute({ userId: user.id });
+
+      expect(result).toEqual({ allowed: true, secondFactorRequired: false });
+      expect(user.lastLoginAt).toBeInstanceOf(Date);
+      expect(saveSpy).toHaveBeenCalledWith(user);
+    });
+
+    it('não deve gerar nem enviar código', async () => {
+      const user = createClient();
+
+      await sut.execute({ userId: user.id });
+
+      expect(mailSender.messages).toHaveLength(0);
+      expect(database.tokens.size).toBe(0);
+    });
+  });
+
+  describe('com a verificação em duas etapas ativa (RN25)', () => {
+    it('deve permitir o login informando que falta a segunda etapa', async () => {
+      const user = createClientWithMfa();
+
+      const result = await sut.execute({ userId: user.id });
+
+      expect(result).toEqual({ allowed: true, secondFactorRequired: true });
+    });
+
+    it('deve gravar o código de 6 dígitos e enviá-lo por e-mail', async () => {
+      const user = createClientWithMfa();
+
+      await sut.execute({ userId: user.id });
+
+      expect(mailSender.messages).toHaveLength(1);
+      expect(mailSender.messages[0]).toMatchObject({ to: EMAIL, subject: LOGIN_CODE_MAIL_SUBJECT });
+      const [token] = [...database.tokens.values()];
+      expect(database.tokens.size).toBe(1);
+      expect(token.userId).toBe(user.id);
+      expect(token.type).toBe(UserTokenType.LOGIN_CODE);
+      expect(token.matchesCode(lastCode())).toBe(true);
+      expect(token.expiresAt.getTime() - token.createdAt.getTime()).toBe(10 * MINUTE_IN_MS);
+      expect(token.isUsable()).toBe(true);
+    });
+
+    it('não deve registrar o último acesso: o login só termina quando o código é conferido', async () => {
+      const user = createClientWithMfa();
+      const saveSpy = jest.spyOn(userRepository, 'save');
+
+      await sut.execute({ userId: user.id });
+
+      expect(user.lastLoginAt).toBeNull();
+      expect(saveSpy).not.toHaveBeenCalled();
+    });
+
+    it('deve manter o código enviado há menos de 1 minuto, sem enviar outro', async () => {
+      const user = createClientWithMfa();
+      await sut.execute({ userId: user.id });
+      const code = lastCode();
+
+      const result = await sut.execute({ userId: user.id });
+
+      expect(result).toEqual({ allowed: true, secondFactorRequired: true });
+      expect(mailSender.messages).toHaveLength(1);
+      const [token] = [...database.tokens.values()];
+      expect(database.tokens.size).toBe(1);
+      expect(token.matchesCode(code)).toBe(true);
+    });
+
+    it('deve enviar um código novo quando o anterior já foi usado, mesmo há menos de 1 minuto', async () => {
+      const user = createClientWithMfa();
+      await sut.execute({ userId: user.id });
+      const [used] = [...database.tokens.values()];
+      used.use();
+
+      await sut.execute({ userId: user.id });
+
+      expect(mailSender.messages).toHaveLength(2);
+      const [token] = [...database.tokens.values()];
+      expect(database.tokens.size).toBe(1);
+      expect(token.equals(used)).toBe(false);
+      expect(token.isUsable()).toBe(true);
+    });
+
+    it('deve substituir o código enviado há 1 minuto ou mais', async () => {
+      const user = createClientWithMfa();
+      const createdAt = new Date(Date.now() - MINUTE_IN_MS);
+      const old = UserToken.restore('token-antigo', {
+        userId: user.id,
+        type: UserTokenType.LOGIN_CODE,
+        tokenHash: UserToken.hashCode(user.id, '000000'),
+        attempts: 3,
+        expiresAt: new Date(createdAt.getTime() + 10 * MINUTE_IN_MS),
+        usedAt: null,
+        createdAt,
+      });
+      database.tokens.set(old.id, old);
+
+      await sut.execute({ userId: user.id });
+
+      expect(mailSender.messages).toHaveLength(1);
+      const [token] = [...database.tokens.values()];
+      expect(database.tokens.size).toBe(1);
+      expect(token.equals(old)).toBe(false);
+      expect(token.attempts).toBe(0);
+    });
+
+    it('deve permitir o login mesmo quando o envio do e-mail falha', async () => {
+      const user = createClientWithMfa();
+      jest.spyOn(mailSender, 'send').mockRejectedValue(new MailDeliveryError());
+
+      const result = await sut.execute({ userId: user.id });
+
+      expect(result).toEqual({ allowed: true, secondFactorRequired: true });
+      expect(database.tokens.size).toBe(1);
+    });
   });
 
   it('deve recusar um usuário que não existe no MySQL', async () => {
@@ -106,6 +203,17 @@ describe('AuthorizeSignInUseCase', () => {
     expect(user.lastLoginAt).toBeNull();
   });
 
+  it('deve recusar um usuário INACTIVE com a verificação em duas etapas, sem enviar o código', async () => {
+    const user = createClientWithMfa();
+    user.deactivate();
+
+    const result = await sut.execute({ userId: user.id });
+
+    expect(result).toEqual({ allowed: false });
+    expect(mailSender.messages).toHaveLength(0);
+    expect(database.tokens.size).toBe(0);
+  });
+
   it('deve recusar um ADMIN PENDING', async () => {
     const admin = User.createAdmin({
       id: 'admin-1',
@@ -113,7 +221,7 @@ describe('AuthorizeSignInUseCase', () => {
       email: Email.create('joao@example.com'),
       createdById: 'super-1',
     });
-    userRepository.items.set(admin.id, admin);
+    database.users.set(admin.id, admin);
 
     const result = await sut.execute({ userId: admin.id });
 

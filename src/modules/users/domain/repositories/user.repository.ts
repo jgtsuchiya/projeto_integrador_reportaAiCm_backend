@@ -45,11 +45,12 @@ export abstract class UserRepository {
   /** Insere ou atualiza, inclusive a exclusão lógica feita por `User.delete()`. */
   abstract save(user: User): Promise<void>;
   /**
-   * Insere o CLIENT e o perfil dele na mesma transação: se um falhar, nenhum é gravado.
-   * Lança `EmailAlreadyInUseError` ou `CpfAlreadyInUseError` quando um cadastro concorrente
-   * grava o mesmo e-mail ou CPF antes (RN02, RN07).
+   * Insere o CLIENT, o perfil dele e o token de verificação de e-mail (RN22) na mesma
+   * transação: se um falhar, nenhum é gravado. Lança `EmailAlreadyInUseError` ou
+   * `CpfAlreadyInUseError` quando um cadastro concorrente grava o mesmo e-mail ou CPF antes
+   * (RN02, RN07).
    */
-  abstract saveClient(user: User, profile: ClientProfile): Promise<void>;
+  abstract saveClient(user: User, profile: ClientProfile, token: UserToken): Promise<void>;
   /** Atualiza um CLIENT existente e o perfil dele na mesma transação (edição do perfil). */
   abstract updateClient(user: User, profile: ClientProfile): Promise<void>;
   /**
@@ -59,8 +60,9 @@ export abstract class UserRepository {
   abstract deleteClient(user: User): Promise<void>;
   /**
    * Grava o usuário e o token na mesma transação: se um falhar, nenhum é gravado. Usado no
-   * convite do ADMIN (insere os dois) e no aceite (atualiza os dois). Lança
-   * `EmailAlreadyInUseError` quando um cadastro concorrente grava o mesmo e-mail antes (RN02).
+   * convite do ADMIN (insere os dois) e quando um link é usado, como no aceite do convite
+   * (atualiza os dois). Lança `EmailAlreadyInUseError` quando um cadastro concorrente grava o
+   * mesmo e-mail antes (RN02).
    */
   abstract saveWithToken(user: User, token: UserToken): Promise<void>;
 }

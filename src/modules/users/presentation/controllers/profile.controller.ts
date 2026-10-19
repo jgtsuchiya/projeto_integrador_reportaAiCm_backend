@@ -1,16 +1,20 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Patch } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Patch, Post } from '@nestjs/common';
 
 import { CurrentUser } from '@modules/auth/presentation/decorators/current-user.decorator';
 import { Roles } from '@modules/auth/presentation/decorators/roles.decorator';
 
 import type { ProfileOutput } from '../../application/dtos/profile.output';
+import { ChangeMfaUseCase } from '../../application/use-cases/change-mfa.use-case';
 import { ChangePasswordUseCase } from '../../application/use-cases/change-password.use-case';
 import { DeleteOwnAccountUseCase } from '../../application/use-cases/delete-own-account.use-case';
 import type { AuthenticatedUser } from '../../application/use-cases/get-authenticated-user.use-case';
 import { GetProfileUseCase } from '../../application/use-cases/get-profile.use-case';
+import { ResendEmailVerificationUseCase } from '../../application/use-cases/resend-email-verification.use-case';
 import { UpdateProfileUseCase } from '../../application/use-cases/update-profile.use-case';
 import { Role } from '../../domain/value-objects/role';
 import {
+  type ChangeMfaBody,
+  changeMfaBodySchema,
   type ChangePasswordBody,
   changePasswordBodySchema,
   type DeleteOwnAccountBody,
@@ -27,6 +31,8 @@ export class ProfileController {
     private readonly updateProfileUseCase: UpdateProfileUseCase,
     private readonly changePasswordUseCase: ChangePasswordUseCase,
     private readonly deleteOwnAccountUseCase: DeleteOwnAccountUseCase,
+    private readonly resendEmailVerificationUseCase: ResendEmailVerificationUseCase,
+    private readonly changeMfaUseCase: ChangeMfaUseCase,
   ) {}
 
   /** Perfil e papel. É por aqui que os fronts descobrem o papel depois do login. */
@@ -52,6 +58,33 @@ export class ProfileController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<void> {
     return this.changePasswordUseCase.execute({
+      userId: user.id,
+      sessionHandle: user.sessionHandle,
+      ...body,
+    });
+  }
+
+  /**
+   * Reenvia o link de verificação de e-mail e invalida os anteriores (RN22). Responde 422 para
+   * quem já verificou o e-mail e para o pedido feito menos de um minuto depois do último envio.
+   */
+  @Post('email-verification')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  resendEmailVerification(@CurrentUser() user: AuthenticatedUser): Promise<void> {
+    return this.resendEmailVerificationUseCase.execute({ userId: user.id });
+  }
+
+  /**
+   * Liga ou desliga a verificação em duas etapas, com a senha atual, e responde o perfil
+   * atualizado (RN24). Ativar exige o e-mail verificado e revoga as outras sessões, mantendo a
+   * atual, que continua completa.
+   */
+  @Patch('mfa')
+  changeMfa(
+    @Body({ schema: changeMfaBodySchema }) body: ChangeMfaBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ProfileOutput> {
+    return this.changeMfaUseCase.execute({
       userId: user.id,
       sessionHandle: user.sessionHandle,
       ...body,

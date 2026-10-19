@@ -8,6 +8,8 @@ Como o painel web e o app fazem login e chamam a API do ReportaAi Cm. O funciona
 - O login é o mesmo para os três papéis: e-mail e senha no `POST /api/auth/signin`.
 - **Use o SDK do SuperTokens.** Ele guarda os tokens, os envia nas requisições e renova a sessão sozinho quando o access token expira (a cada 15 minutos).
 - Depois do login, chame o `GET /api/users/me` para saber **quem entrou e com qual papel**.
+- Quem tem a verificação em duas etapas ativa ainda digita um código depois da senha ([verificação em duas etapas](#verificação-em-duas-etapas)).
+- Os links dos e-mails da API (convite, redefinição de senha e verificação de e-mail) abrem páginas do painel web, inclusive para o Client, no navegador do celular ([páginas dos links](#páginas-abertas-pelos-links-dos-e-mails)).
 
 |                      | Painel web                                | App mobile                                  |
 | -------------------- | ----------------------------------------- | ------------------------------------------- |
@@ -48,23 +50,37 @@ SuperTokens.init({
 ```ts
 import { signIn } from 'supertokens-web-js/recipe/emailpassword';
 
-const response = await signIn({
-  formFields: [
-    { id: 'email', value: email },
-    { id: 'password', value: password },
-  ],
-});
+try {
+  const response = await signIn({
+    formFields: [
+      { id: 'email', value: email },
+      { id: 'password', value: password },
+    ],
+  });
 
-if (response.status === 'OK') {
-  // Sessão criada: os cookies já estão no navegador.
-} else if (response.status === 'FIELD_ERROR') {
-  // E-mail fora do formato: response.formFields traz o erro de cada campo.
-} else {
-  // WRONG_CREDENTIALS_ERROR: mostre "E-mail ou senha incorretos".
+  if (response.status === 'OK') {
+    // Sessão criada: os cookies já estão no navegador.
+  } else if (response.status === 'FIELD_ERROR') {
+    // E-mail fora do formato: response.formFields traz o erro de cada campo.
+  } else {
+    // WRONG_CREDENTIALS_ERROR: mostre "E-mail ou senha incorretos".
+  }
+} catch (error) {
+  if (error.isSuperTokensGeneralError === true) {
+    // GENERAL_ERROR: e-mail bloqueado por tentativas. Mostre o error.message.
+  } else if (error instanceof Response && error.status === 429) {
+    // Limite por IP: error.headers.get('Retry-After') traz os segundos de espera.
+  } else {
+    throw error;
+  }
 }
 ```
 
 O `WRONG_CREDENTIALS_ERROR` também é a resposta para um usuário inativado, excluído ou com o convite pendente. A API não diferencia os casos, para não revelar se o e-mail tem conta.
+
+**Bloqueio por tentativas.** Depois de 5 falhas de login para o mesmo e-mail em 15 minutos, a API responde `{ "status": "GENERAL_ERROR", "message": "Muitas tentativas. Tente novamente em alguns minutos." }` até uma das falhas sair da janela, mesmo com a senha correta. O `supertokens-web-js` não devolve esse status no `response`: ele lança um erro com `isSuperTokensGeneralError` e a `message` da API, como no `catch` acima. A resposta é a mesma para um e-mail sem conta.
+
+**Limite por IP.** Acima de 20 tentativas de login por minuto do mesmo IP, a resposta é 429 ([erros](#erros)). O SDK também não devolve esse caso no `response`: para qualquer status HTTP a partir de 300, ele lança a própria `Response` do `fetch`, sem ler o corpo. Por isso o `catch` acima confere o `error.status`.
 
 **Chamadas à API.** Depois do `init`, o SDK intercepta o `fetch` e o `XMLHttpRequest` (o axios funciona sem configuração extra). Nas requisições para o `apiDomain`, ele envia os cookies, renova a sessão quando recebe 401 e repete a chamada:
 
@@ -83,6 +99,23 @@ await Session.signOut(); // encerra a sessão na API e limpa os cookies
 ```
 
 **Em dev**, o painel precisa rodar na origem configurada no `WEB_APP_URL` da API (`http://localhost:5173` no `.env.example`): é a única que o CORS libera. Use `localhost` na API e no painel, sem misturar com `127.0.0.1`, senão o navegador não envia os cookies.
+
+### Páginas abertas pelos links dos e-mails
+
+Os e-mails da API levam a três páginas do painel. Os caminhos são fixos na API (`WEB_APP_URL` + caminho): se o painel mudar um deles, o backend precisa mudar junto.
+
+| Página                           | E-mail que leva até ela                     | Rota chamada pela página                | Detalhes                                        |
+| -------------------------------- | ------------------------------------------- | --------------------------------------- | ----------------------------------------------- |
+| `/convite?token=<token>`         | Convite de ADM                              | `POST /api/invitations/accept`          | [Aceite do convite](#aceite-do-convite-de-adm)  |
+| `/redefinir-senha?token=<token>` | "Esqueci minha senha", dos três papéis      | `POST /api/password-resets/confirm`     | [Esqueci minha senha](#esqueci-minha-senha)     |
+| `/verificar-email?token=<token>` | Cadastro do Client e reenvio da verificação | `POST /api/email-verifications/confirm` | [Verificação de e-mail](#verificação-de-e-mail) |
+
+Valem para as três:
+
+- **São públicas.** Abrem sem sessão: o Client abre o link no navegador do celular, onde não tem a sessão do app. Não redirecione para o login.
+- **Leia o `token` da URL** com `new URLSearchParams(window.location.search).get('token')`. Sem ele, mostre direto que o link é inválido, sem chamar a API.
+- **O token é um segredo**: quem o tem redefine a senha ou ativa a conta. Não o envie para ferramentas de analytics nem para o log do front, e não deixe o navegador repassá-lo a outros sites no header `Referer` (`<meta name="referrer" content="no-referrer">` na página).
+- **Cada link vale uma vez.** Depois do uso, a mesma chamada responde 422. Chame a rota uma única vez por envio do formulário (ou, na verificação de e-mail, por abertura da página).
 
 ### Aceite do convite de ADM
 
@@ -146,14 +179,23 @@ const response = await fetch(`${API_URL}/api/auth/signin`, {
     ],
   }),
 });
-const result = await response.json();
 
-if (result.status === 'OK') {
-  // Sessão criada: o SDK já guardou os tokens.
+if (response.status === 429) {
+  // Limite por IP: o header Retry-After traz os segundos de espera.
 } else {
-  // WRONG_CREDENTIALS_ERROR ou FIELD_ERROR (o status HTTP é 200 nos dois casos).
+  const result = await response.json();
+
+  if (result.status === 'OK') {
+    // Sessão criada: o SDK já guardou os tokens.
+  } else if (result.status === 'GENERAL_ERROR') {
+    // E-mail bloqueado por tentativas: mostre o result.message.
+  } else {
+    // WRONG_CREDENTIALS_ERROR ou FIELD_ERROR (o status HTTP é 200 nos dois casos).
+  }
 }
 ```
+
+O `GENERAL_ERROR` aparece depois de 5 falhas de login para o mesmo e-mail em 15 minutos e dura até uma delas sair da janela, mesmo com a senha correta. O 429 vem do limite por IP, acima de 20 tentativas por minuto, e tem o corpo no [formato de erro da aplicação](#erros), sem o campo `status`: confira o status HTTP antes de ler o resultado.
 
 O SDK intercepta o `fetch` das requisições para o `apiDomain`: pede os tokens por header (`st-auth-mode: header`), guarda os que voltam na resposta, envia o access token no `Authorization` das chamadas seguintes e renova a sessão quando recebe 401. Com o axios, registre o interceptor uma vez: `SuperTokens.addAxiosInterceptors(axios)`.
 
@@ -165,6 +207,191 @@ await SuperTokens.signOut(); // encerra a sessão na API e apaga os tokens
 ```
 
 **Em dev**, o `localhost` do aparelho não é o da sua máquina. Use `http://10.0.2.2:3000` no emulador Android, `http://localhost:3000` no simulador do iOS e o IP da máquina na rede num aparelho físico. O app não passa pelo CORS.
+
+## Esqueci minha senha
+
+A recuperação de senha é igual para os três papéis e tem duas etapas: o pedido do link, feito no painel e no app, e a página que define a senha nova, que fica só no painel web.
+
+**1. Pedido do link (painel e app).** Na tela "Esqueci minha senha", envie o e-mail para a rota pública:
+
+```ts
+const response = await fetch(`${API_URL}/api/password-resets`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email }),
+});
+// 204: mostre "Se este e-mail tiver uma conta, você vai receber um link para redefinir a senha".
+```
+
+- A resposta é **sempre 204**, exista ou não a conta. Mostre a mesma mensagem nos dois casos, sem dizer que o e-mail não foi encontrado.
+- A mesma conta recebe **um e-mail por minuto**. Um pedido repetido antes disso também responde 204, mas não envia nada. Deixe o botão de reenviar desativado por 1 minuto.
+- Só recebe o link a conta ativa. O ADM com o convite pendente continua dependendo do convite.
+
+**2. Página `/redefinir-senha` (painel web).** O e-mail leva o usuário para **`<WEB_APP_URL>/redefinir-senha?token=<token>`**. O Client abre o link no navegador do celular:
+
+1. Leia o `token` da URL e mostre um formulário para o usuário escolher a senha.
+2. Envie o `POST /api/password-resets/confirm` com `{ "token": "...", "password": "..." }`. A rota é pública.
+3. Com o 204, leve o ADM ou o SuperAdm para a tela de login. Para o Client, mostre que a senha foi alterada e peça para ele voltar ao app. A página não sabe o papel de quem redefiniu, então uma mensagem só serve aos dois casos.
+
+```ts
+const token = new URLSearchParams(window.location.search).get('token');
+
+const response = await fetch(`${API_URL}/api/password-resets/confirm`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ token, password }),
+});
+
+if (response.status === 204) {
+  // "Sua senha foi alterada. Entre com a senha nova no painel ou no app."
+} else if (response.status === 400) {
+  const { details } = await response.json(); // [{ field: 'password', message: '...' }]
+  // Senha fora da regra: mostre a message do campo. O link continua valendo.
+} else if (response.status === 422) {
+  // Link inválido ou expirado: ofereça pedir outro, na tela "Esqueci minha senha".
+} else if (response.status === 429) {
+  // Muitas tentativas do mesmo IP: o header Retry-After traz os segundos de espera.
+}
+```
+
+Valide a senha no formulário com a [regra do campo](#regras-dos-campos) antes de enviar, para evitar uma ida à API.
+
+| Rota                                | Resposta | Significado                                                                                                 |
+| ----------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------- |
+| `POST /api/password-resets`         | 204      | Pedido recebido. Não diz se o e-mail tem conta                                                              |
+| `POST /api/password-resets`         | 400      | E-mail fora do formato                                                                                      |
+| `POST /api/password-resets/confirm` | 204      | Senha redefinida                                                                                            |
+| `POST /api/password-resets/confirm` | 400      | Senha fora da regra (de 8 a 128 caracteres, com pelo menos uma letra e um número). O link continua valendo  |
+| `POST /api/password-resets/confirm` | 422      | Link inválido, expirado (60 minutos), já usado ou substituído por um pedido novo. O usuário pede outro link |
+| As duas                             | 429      | Muitas requisições do mesmo IP ([erros](#erros))                                                            |
+
+Depois da redefinição, **todas as sessões do usuário são encerradas**, em todos os aparelhos, e ele recebe o e-mail "Sua senha foi alterada". O mesmo aviso sai na troca de senha pelo perfil. A redefinição também libera o login de um e-mail [bloqueado por tentativas](AUTH.md#bloqueio-do-login-por-tentativas).
+
+## Verificação de e-mail
+
+O Client nasce com o e-mail **não verificado** e recebe, no cadastro, um e-mail com o link de confirmação. O login não depende disso: ele entra no app normalmente. O ADM e o SuperAdm já nascem verificados, então isto vale só para o app e para uma página do painel.
+
+**1. No app: situação e reenvio.** O `emailVerifiedAt` do `GET /api/users/me` é `null` enquanto o e-mail não for confirmado. Mostre um aviso ("Confirme o seu e-mail") com a opção de reenviar o link:
+
+```ts
+// Com a sessão do Client (o SDK envia os tokens).
+const response = await fetch(`${API_URL}/api/users/me/email-verification`, { method: 'POST' });
+// 204: mostre "Enviamos um novo link para o seu e-mail".
+```
+
+- O link novo **invalida os anteriores**.
+- A mesma conta recebe **um e-mail por minuto**, contando o do cadastro. Antes disso, a rota responde 422 e o link que já foi continua valendo. Deixe o botão de reenviar desativado por 1 minuto, inclusive logo depois do cadastro.
+- Para saber que o e-mail foi confirmado, chame o `GET /api/users/me` de novo, por exemplo quando o app volta para o primeiro plano.
+
+**2. Página `/verificar-email` (painel web).** O e-mail leva o Client para **`<WEB_APP_URL>/verificar-email?token=<token>`**, que abre no navegador do celular:
+
+1. Leia o `token` da URL e envie o `POST /api/email-verifications/confirm` com `{ "token": "..." }`, sozinho, quando a página abre. A rota é pública: no navegador, o Client não tem a sessão do app.
+2. Com o 204, mostre que o e-mail foi confirmado e peça para ele voltar ao app.
+3. Com o 422, mostre que o link não vale mais e oriente a pedir outro pelo app.
+
+```ts
+const token = new URLSearchParams(window.location.search).get('token');
+
+const response = await fetch(`${API_URL}/api/email-verifications/confirm`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ token }),
+});
+
+if (response.status === 204) {
+  // "E-mail confirmado. Pode voltar ao app."
+} else if (response.status === 429) {
+  // Muitas tentativas do mesmo IP: o header Retry-After traz os segundos de espera.
+} else {
+  // 422 (ou 400, para um token vazio): "Este link não vale mais. Se você já confirmou o
+  // e-mail, não precisa fazer nada. Se não, peça outro link pelo app."
+}
+```
+
+- **Chame a rota uma vez só.** O link é de uso único: uma segunda chamada com o mesmo token responde 422, mesmo com o e-mail já confirmado. Cuidado com o React em modo estrito (`StrictMode`), que roda os efeitos duas vezes em dev.
+- Pelo mesmo motivo, a mensagem do 422 não deve afirmar que o e-mail não foi confirmado: quem abre de novo um link que já usou também recebe 422.
+
+| Rota                                    | Resposta | Significado                                                                                             |
+| --------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------- |
+| `POST /api/email-verifications/confirm` | 204      | E-mail confirmado                                                                                       |
+| `POST /api/email-verifications/confirm` | 422      | Link inválido, expirado (24 horas), já usado ou substituído por um reenvio. O Client pede outro link    |
+| `POST /api/email-verifications/confirm` | 429      | Muitas requisições do mesmo IP ([erros](#erros))                                                        |
+| `POST /api/users/me/email-verification` | 204      | Link novo enviado                                                                                       |
+| `POST /api/users/me/email-verification` | 422      | O e-mail já foi verificado, ou o último e-mail saiu há menos de 1 minuto. A `message` diz qual dos dois |
+
+Se o e-mail do cadastro não chegar (o servidor de e-mail pode falhar), o cadastro vale do mesmo jeito: o Client pede o reenvio.
+
+## Verificação em duas etapas
+
+Para quem tem a verificação em duas etapas ativa, a senha é só a primeira etapa: o login responde `OK` e cria a sessão, mas ela fica **pendente** até o usuário digitar o código de 6 dígitos que a API envia para o e-mail dele. Vale para os três papéis, no painel e no app.
+
+**Ativar e desativar.** A opção fica nas configurações da conta, no painel e no app. O usuário liga ou desliga e confirma com a senha atual:
+
+```ts
+const response = await fetch(`${API_URL}/api/users/me/mfa`, {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ enabled: true, password }), // enabled: false para desativar
+});
+// 200: o corpo é o perfil atualizado, com o mfaEnabled.
+```
+
+- O estado atual vem no `mfaEnabled` do [`GET /api/users/me`](#depois-do-login-perfil-e-papel).
+- **Ativar exige o e-mail verificado** (`emailVerifiedAt` preenchido). Sem ele, a resposta é 422. No app, enquanto o Client não confirmar o e-mail, mostre a opção de [reenviar a verificação](#verificação-de-e-mail) no lugar do botão de ativar.
+- **Ativar encerra as outras sessões da conta**, que caem na renovação seguinte, em até 15 minutos, e pedem o código no próximo login. O aparelho que ativou continua logado, sem pedir o código. Avise o usuário antes de confirmar.
+- Desativar não encerra nenhuma sessão. Ativar o que já está ativo, ou desativar o que já está desativado, responde 200 sem efeito.
+- A senha incorreta responde **401**, que os SDKs confundem com sessão expirada: trate como na troca de senha ([erros](#erros)).
+
+O login de quem ativou segue os três passos abaixo.
+
+**1. Depois do login, confira se a sessão está pendente.** A situação vem na claim `mfa-verified` do access token, que o SDK lê sem chamar a API:
+
+```ts
+// Web: Session.getAccessTokenPayloadSecurely(). App: SuperTokens.getAccessTokenPayloadSecurely().
+const payload = await Session.getAccessTokenPayloadSecurely();
+const pending = payload['mfa-verified']?.v === false;
+```
+
+- Com `pending`, leve o usuário para a tela do código, em vez de chamar o `GET /api/users/me`.
+- Faça a mesma conferência ao abrir o app ou o painel com uma sessão já guardada: o usuário pode ter fechado tudo antes de digitar o código.
+- Enquanto a sessão está pendente, as outras rotas respondem **403** com `{ "message": "invalid claim", "claimValidationErrors": [{ "id": "mfa-verified", ... }] }`. Se uma chamada receber essa resposta, leve o usuário para a tela do código. Não é o 403 de "sem permissão", que tem o [formato de erro da aplicação](#erros).
+- A sessão pendente renova o token e faz o signout normalmente. O botão "Sair" da tela do código usa o `signOut` do SDK.
+
+**2. Tela do código.** Envie o código digitado, com a sessão pendente (o SDK envia os tokens):
+
+```ts
+const response = await fetch(`${API_URL}/api/mfa/verify`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ code }), // texto com 6 dígitos, ex.: "042137"
+});
+// 204: login concluído. Siga para o GET /api/users/me.
+```
+
+- A resposta 204 já traz o access token atualizado, que o SDK guarda sozinho. As chamadas seguintes passam.
+- O código vale **10 minutos** e só pode ser usado uma vez. **Cinco erros invalidam o código**, mesmo que a tentativa seguinte esteja certa: mostre a opção de pedir outro.
+- Envie o código como texto, com os zeros à esquerda. Um código fora do formato responde 400 e não conta como erro.
+
+**3. Reenvio do código.** O `POST /api/mfa/code`, com a sessão pendente, envia um código novo, que **invalida o anterior**:
+
+- A mesma conta recebe **um código por minuto**, contando o do login. Antes disso, a rota responde 422, e o código que já foi continua valendo. Deixe o botão de reenviar desativado por 1 minuto, inclusive logo depois do login.
+- Se o usuário fizer o login de novo em menos de 1 minuto (por exemplo, em outro aparelho), a API não envia outro código: vale o do e-mail que ele já recebeu.
+
+| Rota                                | Resposta | Significado                                                                                                                  |
+| ----------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `PATCH /api/users/me/mfa`           | 200      | Verificação ativada ou desativada. O corpo é o perfil, com o `mfaEnabled`                                                    |
+| `PATCH /api/users/me/mfa`           | 400      | Falta o `enabled` (booleano) ou a senha                                                                                      |
+| `PATCH /api/users/me/mfa`           | 401      | Senha incorreta ([erros](#erros))                                                                                            |
+| `PATCH /api/users/me/mfa`           | 422      | Ativação com o e-mail ainda não verificado                                                                                   |
+| `POST /api/mfa/verify`              | 204      | Código conferido e login concluído                                                                                           |
+| `POST /api/mfa/verify`              | 400      | Código fora do formato (6 dígitos)                                                                                           |
+| `POST /api/mfa/verify`              | 422      | Código errado, vencido, já usado ou invalidado por 5 erros. O usuário tenta de novo ou pede outro código                     |
+| `POST /api/mfa/code`                | 204      | Código novo enviado                                                                                                          |
+| `POST /api/mfa/code`                | 422      | O último código saiu há menos de 1 minuto                                                                                    |
+| `/api/mfa/verify` e `/api/mfa/code` | 422      | A sessão não está pendente (o login já foi concluído, ou a conta não tem a verificação em duas etapas). A `message` diz qual |
+| Outras rotas, com a sessão pendente | 403      | `{ "message": "invalid claim", ... }`: falta o código                                                                        |
+
+Se o e-mail com o código não chegar (o servidor de e-mail pode falhar), o login vale do mesmo jeito: o usuário pede o reenvio depois de 1 minuto.
 
 ## Depois do login: perfil e papel
 
@@ -180,6 +407,7 @@ GET /api/users/me
   "email": "maria.silva@exemplo.com",
   "status": "ACTIVE",
   "emailVerifiedAt": null,
+  "mfaEnabled": false,
   "lastLoginAt": "2026-10-04T23:57:35.427Z",
   "createdAt": "2026-10-04T23:57:35.237Z",
   "updatedAt": "2026-10-04T23:57:35.237Z",
@@ -190,8 +418,44 @@ GET /api/users/me
 ```
 
 - `role` é `SUPER_ADMIN`, `ADMIN` ou `CLIENT`, e não muda depois que a conta é criada.
+- `emailVerifiedAt` é `null` até o Client confirmar o e-mail ([verificação de e-mail](#verificação-de-e-mail)). No ADM e no SuperAdm, vem sempre preenchido.
+- `mfaEnabled` diz se o login da conta pede o código da [verificação em duas etapas](#verificação-em-duas-etapas).
 - `cpf`, `phone` e `birthDate` só existem para o Client. CPF e telefone vêm só com dígitos: a máscara é por conta do front.
 - No painel, o CPF dos Clients vem sempre mascarado (`***.982.247-**`) nas rotas de `/api/clients`.
+
+## Sessões abertas
+
+O usuário, de qualquer papel, vê onde a conta está aberta e encerra o acesso de outros aparelhos. A tela "Onde você está conectado" vale para o painel e para o app:
+
+```http
+GET /api/users/me/sessions
+```
+
+```json
+[
+  {
+    "id": "5a1c9f0e-3b7d-4c2a-9e41-0d6f8b2a7c13",
+    "createdAt": "2026-10-06T12:00:00.000Z",
+    "expiresAt": "2026-10-13T12:00:00.000Z",
+    "ipAddress": "203.0.113.10",
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64)",
+    "current": true
+  }
+]
+```
+
+- A lista vem da sessão mais recente para a mais antiga, sem paginação. `createdAt` é a data do login.
+- `current` é `true` só na sessão que fez a requisição. Mostre-a como "este aparelho", sem o botão de encerrar: para sair dela, use o `signOut` do SDK.
+- `ipAddress` e `userAgent` são os do login e podem vir `null`, como nas sessões abertas antes de esta listagem existir. O `userAgent` é o texto cru do header: transformar em "Chrome no Linux" é por conta do front.
+
+| Rota                                | Resposta | Significado                                                          |
+| ----------------------------------- | -------- | -------------------------------------------------------------------- |
+| `GET /api/users/me/sessions`        | 200      | Lista das sessões abertas                                            |
+| `DELETE /api/users/me/sessions/:id` | 204      | Sessão encerrada. O `:id` é o `id` da listagem                       |
+| `DELETE /api/users/me/sessions/:id` | 404      | A sessão não existe mais (ex.: já foi encerrada). Recarregue a lista |
+| `DELETE /api/users/me/sessions`     | 204      | Todas as outras sessões encerradas. A atual continua aberta          |
+
+O aparelho da sessão encerrada não cai na hora: ele perde o acesso na renovação seguinte do token, em até 15 minutos.
 
 ## Quando a sessão acaba
 
@@ -200,7 +464,10 @@ A renovação do access token é automática e o usuário não percebe. A sessã
 - o usuário sai (`signOut`);
 - o refresh token expira, depois de 7 dias sem uso;
 - o usuário é inativado ou excluído: o bloqueio vale na requisição seguinte;
-- a senha é trocada em outro aparelho: as outras sessões caem na renovação seguinte, em até 15 minutos, e a de quem trocou continua.
+- a sessão é encerrada em outro aparelho, pela lista de [sessões abertas](#sessões-abertas): ela cai na renovação seguinte, em até 15 minutos;
+- a senha é trocada em outro aparelho: as outras sessões caem na renovação seguinte, em até 15 minutos, e a de quem trocou continua;
+- a verificação em duas etapas é ativada em outro aparelho: as outras sessões caem do mesmo jeito, e a de quem ativou continua;
+- a senha é redefinida pelo link do e-mail: todas as sessões caem na renovação seguinte, em até 15 minutos.
 
 Nesses casos, a API responde 401, o SDK apaga os tokens e avisa pelo `onHandleEvent`, com a ação `UNAUTHORISED`. Use o evento para levar o usuário à tela de login:
 
@@ -215,16 +482,23 @@ function onHandleEvent(event: { action: string }) {
 
 ## Rotas de cada front
 
-| Rota                                                                        | Painel web | App | Observação                                                  |
-| --------------------------------------------------------------------------- | :--------: | :-: | ----------------------------------------------------------- |
-| `POST /api/auth/signin`, `/session/refresh` e `/signout`                    |     ✔      |  ✔  | Pelo SDK                                                    |
-| `GET` e `PATCH /api/users/me`                                               |     ✔      |  ✔  | O Client também edita `phone` e `birthDate`                 |
-| `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 401 |
-| `POST /api/clients`                                                         |            |  ✔  | Autocadastro, sem sessão                                    |
-| `DELETE /api/users/me`                                                      |            |  ✔  | `{ password }`. Exclui e anonimiza a conta do Client        |
-| `POST /api/invitations/accept`                                              |     ✔      |     | Página `/convite`, sem sessão                               |
-| `GET /api/clients`, `GET /api/clients/:id`, `PATCH /api/clients/:id/status` |     ✔      |     | `ADMIN` e `SUPER_ADMIN`                                     |
-| `/api/admins` (convite, listagem, edição, status, reenvio, exclusão)        |     ✔      |     | Só o `SUPER_ADMIN`                                          |
+| Rota                                                                        | Painel web | App | Observação                                                      |
+| --------------------------------------------------------------------------- | :--------: | :-: | --------------------------------------------------------------- |
+| `POST /api/auth/signin`, `/session/refresh` e `/signout`                    |     ✔      |  ✔  | Pelo SDK                                                        |
+| `GET` e `PATCH /api/users/me`                                               |     ✔      |  ✔  | O Client também edita `phone` e `birthDate`                     |
+| `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 401     |
+| `/api/users/me/sessions` (listagem, encerrar uma, encerrar as outras)       |     ✔      |  ✔  | Sessões abertas do usuário logado, de qualquer papel            |
+| `PATCH /api/users/me/mfa`                                                   |     ✔      |  ✔  | `{ enabled, password }`. Ativar exige o e-mail verificado       |
+| `POST /api/mfa/verify` e `POST /api/mfa/code`                               |     ✔      |  ✔  | Tela do código da segunda etapa, com a sessão pendente          |
+| `POST /api/password-resets`                                                 |     ✔      |  ✔  | "Esqueci minha senha", sem sessão. Responde sempre 204          |
+| `POST /api/password-resets/confirm`                                         |     ✔      |     | Página `/redefinir-senha`, sem sessão                           |
+| `POST /api/clients`                                                         |            |  ✔  | Autocadastro, sem sessão. Envia o link de verificação de e-mail |
+| `POST /api/users/me/email-verification`                                     |            |  ✔  | Reenvia o link de verificação. Só para quem ainda não verificou |
+| `POST /api/email-verifications/confirm`                                     |     ✔      |     | Página `/verificar-email`, sem sessão                           |
+| `DELETE /api/users/me`                                                      |            |  ✔  | `{ password }`. Exclui e anonimiza a conta do Client            |
+| `POST /api/invitations/accept`                                              |     ✔      |     | Página `/convite`, sem sessão                                   |
+| `GET /api/clients`, `GET /api/clients/:id`, `PATCH /api/clients/:id/status` |     ✔      |     | `ADMIN` e `SUPER_ADMIN`                                         |
+| `/api/admins` (convite, listagem, edição, status, reenvio, exclusão)        |     ✔      |     | Só o `SUPER_ADMIN`                                              |
 
 As listagens recebem `?page=1&pageSize=20` (até 100 por página) e respondem `{ items, page, pageSize, total }`. O corpo e a resposta de cada rota estão na coleção [api.http](api.http), e quem pode chamar cada uma, na [matriz de permissões](AUTH.md#matriz-de-permissões).
 
@@ -257,21 +531,27 @@ As rotas da aplicação respondem os erros sempre no mesmo formato, com a `messa
 }
 ```
 
-| Status | Quando                                      | `details`                                                     |
-| ------ | ------------------------------------------- | ------------------------------------------------------------- |
-| 400    | Campo inválido ou ausente                   | Lista com `field` e `message` de cada campo                   |
-| 401    | Senha de confirmação incorreta (ver abaixo) | `{ "field": "currentPassword" }` ou `{ "field": "password" }` |
-| 403    | O papel não tem permissão                   | (ausente)                                                     |
-| 404    | Recurso não encontrado                      | (ausente)                                                     |
-| 409    | E-mail ou CPF já cadastrado                 | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
-| 422    | Regra de negócio (ex.: convite expirado)    | Depende da regra                                              |
+| Status | Quando                                        | `details`                                                     |
+| ------ | --------------------------------------------- | ------------------------------------------------------------- |
+| 400    | Campo inválido ou ausente                     | Lista com `field` e `message` de cada campo                   |
+| 401    | Senha de confirmação incorreta (ver abaixo)   | `{ "field": "currentPassword" }` ou `{ "field": "password" }` |
+| 403    | O papel não tem permissão                     | (ausente)                                                     |
+| 403    | Sessão pendente da segunda etapa (ver abaixo) | Formato do SuperTokens, sem `statusCode`                      |
+| 404    | Recurso não encontrado                        | (ausente)                                                     |
+| 409    | E-mail ou CPF já cadastrado                   | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
+| 422    | Regra de negócio (ex.: link expirado)         | Depende da regra                                              |
+| 429    | Muitas requisições do mesmo IP (ver abaixo)   | (ausente)                                                     |
 
-As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 com o resultado em `status`, e a falta de sessão responde 401 com `{ "message": "unauthorised" }`.
+O 429 vem do limite por IP do login, do cadastro do Client, do aceite do convite, das duas rotas da redefinição de senha e da confirmação do e-mail: cada uma dessas rotas aceita 20 requisições por minuto por IP. A resposta traz o header `Retry-After`, com os segundos que faltam para a próxima tentativa.
 
-> **Atenção à senha de confirmação incorreta.** O `PATCH /api/users/me/password` e o `DELETE /api/users/me` respondem 401 quando a senha informada está errada. Os dois SDKs tratam qualquer 401 da API como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes (`maxRetryAttemptsForSessionRefresh`), e depois lançam um erro em vez de devolver a resposta. Nessas duas chamadas, capture o erro e trate-o como senha incorreta.
+As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 com o resultado em `status`, e a falta de sessão responde 401 com `{ "message": "unauthorised" }`. A exceção é o 429, que tem o formato acima também no login.
+
+A sessão pendente da [verificação em duas etapas](#verificação-em-duas-etapas) também recebe um erro no formato do SuperTokens, em qualquer rota protegida: 403 com `{ "message": "invalid claim", "claimValidationErrors": [...] }`. Diferencie os dois 403 pelo corpo: o da aplicação tem `statusCode`, e este tem `claimValidationErrors`.
+
+> **Atenção à senha de confirmação incorreta.** O `PATCH /api/users/me/password`, o `PATCH /api/users/me/mfa` e o `DELETE /api/users/me` respondem 401 quando a senha informada está errada. Os dois SDKs tratam qualquer 401 da API como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes (`maxRetryAttemptsForSessionRefresh`), e depois lançam um erro em vez de devolver a resposta. Nessas três chamadas, capture o erro e trate-o como senha incorreta.
 
 ## Testando sem o front
 
 - [api.http](api.http) tem todas as rotas prontas para executar no VS Code, na ordem de um fluxo completo.
-- Em dev, os e-mails de convite não saem para a internet: eles aparecem no Mailpit, em http://localhost:8025.
+- Em dev, os e-mails (convite, redefinição de senha, aviso de troca de senha, verificação de e-mail e código da segunda etapa) não saem para a internet: eles aparecem no Mailpit, em http://localhost:8025.
 - O SuperAdm de dev é criado pelo `npm run seed`, com o e-mail e a senha das variáveis `SUPER_ADMIN_*` do `.env` ([README](../README.md#primeiro-login)).

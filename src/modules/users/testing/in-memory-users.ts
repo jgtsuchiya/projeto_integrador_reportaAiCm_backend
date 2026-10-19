@@ -1,12 +1,14 @@
 import { Page, PageRequest } from '@shared/domain/pagination';
 
-import { IdentityProvider } from '../application/ports/identity-provider';
+import { IdentityProvider, IdentitySession } from '../application/ports/identity-provider';
 import { ClientProfile } from '../domain/entities/client-profile.entity';
+import { LoginAttempt } from '../domain/entities/login-attempt.entity';
 import { UserToken } from '../domain/entities/user-token.entity';
 import { User } from '../domain/entities/user.entity';
 import { EmailAlreadyInUseError } from '../domain/errors/email-already-in-use.error';
 import { UserNotFoundError } from '../domain/errors/user-not-found.error';
 import { ClientProfileRepository } from '../domain/repositories/client-profile.repository';
+import { LoginAttemptRepository } from '../domain/repositories/login-attempt.repository';
 import {
   ClientFilter,
   ClientWithProfile,
@@ -18,6 +20,7 @@ import { Cpf } from '../domain/value-objects/cpf';
 import { Email } from '../domain/value-objects/email';
 import { Password } from '../domain/value-objects/password';
 import { Role } from '../domain/value-objects/role';
+import { UserTokenType } from '../domain/value-objects/user-token-type';
 
 /**
  * Fakes do módulo users para os testes de caso de uso. Os repositórios compartilham um
@@ -31,6 +34,7 @@ export class InMemoryUsersDatabase {
   readonly users = new Map<string, User>();
   readonly profiles = new Map<string, ClientProfile>();
   readonly tokens = new Map<string, UserToken>();
+  readonly loginAttempts = new Map<string, LoginAttempt>();
 }
 
 export class InMemoryUserRepository extends UserRepository {
@@ -95,13 +99,14 @@ export class InMemoryUserRepository extends UserRepository {
     this.database.users.set(user.id, user);
   }
 
-  async saveClient(user: User, profile: ClientProfile): Promise<void> {
-    this.database.users.set(user.id, user);
-    this.database.profiles.set(profile.userId, profile);
+  async saveClient(user: User, profile: ClientProfile, token: UserToken): Promise<void> {
+    await this.updateClient(user, profile);
+    this.database.tokens.set(token.id, token);
   }
 
   async updateClient(user: User, profile: ClientProfile): Promise<void> {
-    await this.saveClient(user, profile);
+    this.database.users.set(user.id, user);
+    this.database.profiles.set(profile.userId, profile);
   }
 
   async deleteClient(user: User): Promise<void> {
@@ -152,6 +157,14 @@ export class InMemoryUserTokenRepository extends UserTokenRepository {
     );
   }
 
+  async findLatest(userId: string, type: UserTokenType): Promise<UserToken | null> {
+    const [latest] = [...this.database.tokens.values()]
+      .filter((token) => token.userId === userId && token.type === type)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    return latest ?? null;
+  }
+
   async replace(token: UserToken): Promise<void> {
     for (const [id, existing] of this.database.tokens) {
       if (existing.userId === token.userId && existing.type === token.type) {
@@ -160,6 +173,20 @@ export class InMemoryUserTokenRepository extends UserTokenRepository {
     }
 
     this.database.tokens.set(token.id, token);
+  }
+
+  async saveFailedAttempt(token: UserToken): Promise<void> {
+    // Como o UPDATE do banco: um token já removido (ex.: por um reenvio) não volta.
+    if (this.database.tokens.has(token.id)) {
+      this.database.tokens.set(token.id, token);
+    }
+  }
+
+  async consume(token: UserToken): Promise<boolean> {
+    // O uso feito por `use()` já aparece no "banco", que guarda a entidade por referência.
+    // Como no UPDATE do banco, o código substituído por um reenvio não é consumido. A disputa
+    // entre duas conferências simultâneas é coberta pelo teste de integração.
+    return this.database.tokens.has(token.id);
   }
 
   async deleteByUserId(userId: string): Promise<void> {
@@ -171,15 +198,75 @@ export class InMemoryUserTokenRepository extends UserTokenRepository {
   }
 }
 
+export class InMemoryLoginAttemptRepository extends LoginAttemptRepository {
+  constructor(private readonly database: InMemoryUsersDatabase) {
+    super();
+  }
+
+  async save(attempt: LoginAttempt): Promise<void> {
+    this.database.loginAttempts.set(attempt.id, attempt);
+  }
+
+  async countRecentFailures(email: Email, since: Date): Promise<number> {
+    const recent = this.attemptsOf(email).filter((attempt) => attempt.createdAt > since);
+    const lastSuccess = Math.max(
+      since.getTime(),
+      ...recent
+        .filter((attempt) => attempt.succeeded)
+        .map((attempt) => attempt.createdAt.getTime()),
+    );
+
+    return recent.filter(
+      (attempt) => !attempt.succeeded && attempt.createdAt.getTime() > lastSuccess,
+    ).length;
+  }
+
+  async deleteFailuresSince(email: Email, since: Date): Promise<void> {
+    this.deleteWhere(
+      (attempt) => attempt.email.equals(email) && !attempt.succeeded && attempt.createdAt > since,
+    );
+  }
+
+  async deleteByEmail(email: Email): Promise<void> {
+    this.deleteWhere((attempt) => attempt.email.equals(email));
+  }
+
+  async deleteOlderThan(date: Date): Promise<void> {
+    this.deleteWhere((attempt) => attempt.createdAt < date);
+  }
+
+  private attemptsOf(email: Email): LoginAttempt[] {
+    return [...this.database.loginAttempts.values()].filter((attempt) =>
+      attempt.email.equals(email),
+    );
+  }
+
+  private deleteWhere(matches: (attempt: LoginAttempt) => boolean): void {
+    for (const [id, attempt] of this.database.loginAttempts) {
+      if (matches(attempt)) {
+        this.database.loginAttempts.delete(id);
+      }
+    }
+  }
+}
+
 /**
  * SuperTokens em memória: guarda a senha em texto puro só para os testes conferirem. As
- * sessões são só os handles de cada usuário, que os testes criam direto em `sessions`.
+ * sessões são só os handles de cada usuário, que os testes criam direto em `sessions`. O teste
+ * que confere os dados de uma sessão (datas e origem do login) a abre com o `openSession`.
  */
 export class FakeIdentityProvider extends IdentityProvider {
   readonly credentials = new Map<string, { email: string; password: string }>();
   readonly userRoles = new Map<string, Role>();
   readonly sessions = new Map<string, string[]>();
+  private readonly sessionDetails = new Map<string, IdentitySession>();
   private nextId = 1;
+
+  /** Abre uma sessão com os dados que o `listSessions` devolve. */
+  openSession(userId: string, session: IdentitySession): void {
+    this.sessions.set(userId, [...(this.sessions.get(userId) ?? []), session.handle]);
+    this.sessionDetails.set(session.handle, session);
+  }
 
   async createCredentials(email: Email, password: Password): Promise<string> {
     if ([...this.credentials.values()].some((credential) => credential.email === email.value)) {
@@ -224,6 +311,29 @@ export class FakeIdentityProvider extends IdentityProvider {
       userId,
       handles.filter((handle) => handle === currentSessionHandle),
     );
+  }
+
+  async listSessions(userId: string): Promise<IdentitySession[]> {
+    // A sessão criada direto em `sessions` sai sem a origem do login, como as antigas.
+    return (this.sessions.get(userId) ?? []).map(
+      (handle) =>
+        this.sessionDetails.get(handle) ?? {
+          handle,
+          createdAt: new Date(0),
+          expiresAt: new Date(0),
+          ipAddress: null,
+          userAgent: null,
+        },
+    );
+  }
+
+  async revokeSession(sessionHandle: string): Promise<void> {
+    for (const [userId, handles] of this.sessions) {
+      this.sessions.set(
+        userId,
+        handles.filter((handle) => handle !== sessionHandle),
+      );
+    }
   }
 
   async createRoles(): Promise<void> {}

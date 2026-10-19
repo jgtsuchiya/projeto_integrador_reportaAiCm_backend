@@ -85,7 +85,9 @@ providers: [
 
 Assim, o caso de uso depende apenas de `ReportRepository`. Os testes unitários conseguem trocar a implementação por um fake sem precisar de banco.
 
-Os serviços externos seguem o mesmo padrão, com a porta em `application/ports/`. No módulo `users`, o [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts) (criar credencial, conferir e trocar senha, remover o usuário, revogar sessões, criar e atribuir papéis) é implementado pelo [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts). Só a infra importa o `supertokens-node`. As portas usadas por mais de um módulo, como a de [envio de e-mail](#envio-de-e-mail), ficam em `shared/application/ports/`.
+Os serviços externos seguem o mesmo padrão, com a porta em `application/ports/`. No módulo `users`, o [`IdentityProvider`](../src/modules/users/application/ports/identity-provider.ts) (criar credencial, conferir e trocar senha, remover o usuário, listar e revogar sessões, criar e atribuir papéis) é implementado pelo [`SuperTokensIdentityProvider`](../src/modules/users/infra/identity/supertokens-identity-provider.ts). Só a infra importa o `supertokens-node`. As portas usadas por mais de um módulo, como a de [envio de e-mail](#envio-de-e-mail), ficam em `shared/application/ports/`.
+
+A porta também resolve o caso em que a `infra` e a `presentation` precisam da mesma peça de uma biblioteca, já que uma não importa a outra. No módulo `auth`, a claim de sessão da segunda etapa do login é gravada pela configuração do SuperTokens (`infra`) e conferida pelo `AuthGuard` (`presentation`): ela fica na `infra`, e o guard fala com ela pela porta [`SessionSecondFactor`](../src/modules/auth/application/ports/session-second-factor.ts).
 
 ### Entidades e value objects
 
@@ -167,7 +169,7 @@ const listClientsQuerySchema = pageRequestSchema.extend({
 
 ## Autenticação e autorização
 
-Toda rota da aplicação exige uma sessão do SuperTokens (cookie no painel web, header no app). Quem garante isso é o [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts) global, registrado no `AppModule`. A cada requisição, ele carrega o usuário no MySQL e bloqueia quem não estiver ACTIVE ou tiver sido excluído, mesmo com o token ainda válido. O papel conferido é o do MySQL, não o do token.
+Toda rota da aplicação exige uma sessão do SuperTokens (cookie no painel web, header no app). Quem garante isso é o [`AuthGuard`](../src/modules/auth/presentation/guards/auth.guard.ts) global, registrado no `AppModule`. A cada requisição, ele carrega o usuário no MySQL e bloqueia quem não estiver ACTIVE ou tiver sido excluído, mesmo com o token ainda válido. Ele também recusa a sessão de quem ainda não conferiu o código da verificação em duas etapas (403 `invalid claim`). O papel conferido é o do MySQL, não o do token.
 
 Os decorators ficam em [`modules/auth/presentation/decorators`](../src/modules/auth/presentation/decorators) e podem ser importados pelos controllers de qualquer módulo:
 
@@ -217,9 +219,39 @@ await this.mailSender.send({
 
 O template escapa o HTML de todo o conteúdo, então dados do usuário (como o nome) podem entrar direto.
 
-Se o servidor SMTP não aceitar a mensagem, o `send` lança um `MailDeliveryError` com mensagem genérica. O motivo (ex.: `Invalid login: 535 ... (EAUTH)`) vai só para o log, sem a configuração do SMTP e com o usuário e a senha mascarados. Se o caso de uso não tratar o erro, a resposta é 500. Cada etapa da conexão SMTP tem timeout de 10 s, porque o envio acontece dentro da requisição.
+Se o servidor SMTP não aceitar a mensagem, o `send` lança um `MailDeliveryError` com mensagem genérica. O motivo (ex.: `Invalid login: 535 ... (EAUTH)`) vai só para o log, sem a configuração do SMTP e com o usuário e a senha mascarados. Se o caso de uso não tratar o erro, a resposta é 500. Cada etapa da conexão SMTP tem timeout de 10 s, porque o envio acontece dentro da requisição. A exceção é o pedido de redefinição de senha, que responde antes de enviar ([tarefas em segundo plano](#tarefas-em-segundo-plano)).
+
+No módulo `users`, os e-mails da conta (convite, redefinição de senha, verificação de e-mail e código do login) passam pelo [`UserMailService`](../src/modules/users/application/services/user-mail.service.ts). Ele monta o link `${WEB_APP_URL}<página>?token=...` e trata o `MailDeliveryError`: o `send` devolve `false` em vez de lançar o erro, porque nenhum desses fluxos é desfeito por causa do e-mail.
 
 Em dev, o SMTP é o **Mailpit** do docker-compose: nenhum e-mail sai para a internet, e todos aparecem em http://localhost:8025.
+
+## Tarefas em segundo plano
+
+Quando a resposta não pode esperar o trabalho, o controller o entrega ao [`BackgroundTasks`](../src/shared/application/ports/background-tasks.ts) e responde em seguida. É o caso do pedido de redefinição de senha: se a rota esperasse a busca da conta e o envio do e-mail, o tempo de resposta revelaria se o e-mail tem conta ([AUTH.md](AUTH.md#recuperação-de-senha)).
+
+| Peça                                                                                        | Papel                                                                                      |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`BackgroundTasks`](../src/shared/application/ports/background-tasks.ts)                    | Porta, com `run(name, task)` e `drain()`                                                   |
+| [`InProcessBackgroundTasks`](../src/shared/infra/background/in-process-background-tasks.ts) | Adapter que roda a tarefa no próprio processo, ligado à porta pelo `BackgroundTasksModule` |
+
+```ts
+// <feature>.module.ts
+@Module({ imports: [BackgroundTasksModule], controllers: [PasswordResetsController] })
+
+// no controller
+@Post()
+@HttpCode(HttpStatus.NO_CONTENT)
+request(@Body({ schema: requestPasswordResetBodySchema }) body: RequestPasswordResetBody): void {
+  this.backgroundTasks.run('Pedido de redefinição de senha', () =>
+    this.requestPasswordResetUseCase.execute(body),
+  );
+}
+```
+
+- **O caso de uso não muda.** Ele faz o trabalho inteiro e pode ser esperado, como qualquer outro. Quem decide não esperar é o controller.
+- **A falha vai só para o log**, com o `name` da tarefa: a requisição já foi respondida. Por isso, use o `BackgroundTasks` só quando a resposta não depende do resultado.
+- **Sem fila.** A tarefa roda no processo da API e se perde se ele cair. No encerramento normal (`app.close()` ou SIGTERM), a API espera as tarefas em andamento.
+- **Nos testes** que sobem a aplicação, `app.get(BackgroundTasks).drain()` espera as tarefas terminarem ([TESTING.md](TESTING.md#testes-de-rotas-que-respondem-antes-de-terminar)).
 
 ## Convenções de nomenclatura
 

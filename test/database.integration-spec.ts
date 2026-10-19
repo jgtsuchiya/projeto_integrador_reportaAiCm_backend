@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import { DataSource } from 'typeorm';
@@ -42,6 +43,20 @@ describe('Banco de dados (integração)', () => {
     return rows.map((row) => row.name);
   }
 
+  /** Desfaz as migrations, da mais recente até a informada (inclusive). */
+  async function revertDownTo(migration: string): Promise<void> {
+    const isExecuted = async (): Promise<boolean> => {
+      const rows = await dataSource.query<unknown[]>('SELECT 1 FROM migrations WHERE name = ?', [
+        migration,
+      ]);
+      return rows.length > 0;
+    };
+
+    while (await isExecuted()) {
+      await dataSource.undoLastMigration();
+    }
+  }
+
   it('deve conectar ao banco de teste', async () => {
     const [row] = await dataSource.query<{ db: string }[]>('SELECT DATABASE() AS db');
 
@@ -66,6 +81,83 @@ describe('Banco de dados (integração)', () => {
 
     expect(tablesAfterRevert).toEqual(['migrations']);
     await expect(dataSource.showMigrations()).resolves.toBe(false);
+  });
+
+  describe('AddTokenTypesAndLoginAttempts', () => {
+    const MIGRATION = 'AddTokenTypesAndLoginAttempts1791171016716';
+    const ADMIN_ROLE_ID = 2;
+
+    interface TokenRow {
+      type: string;
+      token_hash: string;
+      expires_at: Date;
+      used_at: Date | null;
+    }
+
+    const userId = randomUUID();
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+
+    async function insertToken(type: string, tokenHash: string): Promise<void> {
+      await dataSource.query(
+        'INSERT INTO user_tokens (id, user_id, type, token_hash, expires_at) VALUES (?, ?, ?, ?, ?)',
+        [randomUUID(), userId, type, tokenHash, expiresAt],
+      );
+    }
+
+    async function listTokens(): Promise<TokenRow[]> {
+      return dataSource.query<TokenRow[]>(
+        'SELECT type, token_hash, expires_at, used_at FROM user_tokens WHERE user_id = ? ORDER BY type',
+        [userId],
+      );
+    }
+
+    // O banco começa no schema anterior à migration, com um ADMIN convidado (PENDING).
+    beforeEach(async () => {
+      await dataSource.runMigrations();
+      await revertDownTo(MIGRATION);
+      await dataSource.query(
+        'INSERT INTO users (id, role_id, name, email, status) VALUES (?, ?, ?, ?, ?)',
+        [userId, ADMIN_ROLE_ID, 'Admin Fulano', `admin.${userId}@example.com`, 'PENDING'],
+      );
+      await insertToken('INVITATION', 'a'.repeat(64));
+    });
+
+    afterEach(async () => {
+      await dataSource.query('DELETE FROM users WHERE id = ?', [userId]);
+      await dataSource.runMigrations();
+    });
+
+    it('deve manter o convite pendente ao aplicar a migration', async () => {
+      await dataSource.runMigrations();
+
+      await expect(listTokens()).resolves.toEqual([
+        { type: 'INVITATION', token_hash: 'a'.repeat(64), expires_at: expiresAt, used_at: null },
+      ]);
+      const [row] = await dataSource.query<{ attempts: number }[]>(
+        'SELECT attempts FROM user_tokens WHERE user_id = ?',
+        [userId],
+      );
+      expect(row?.attempts).toBe(0);
+    });
+
+    it('deve apagar os tokens dos tipos novos e manter o convite ao reverter', async () => {
+      await dataSource.runMigrations();
+      await insertToken('PASSWORD_RESET', 'b'.repeat(64));
+      await insertToken('EMAIL_VERIFICATION', 'c'.repeat(64));
+      await insertToken('LOGIN_CODE', 'd'.repeat(64));
+      await dataSource.query('INSERT INTO login_attempts (id, email, succeeded) VALUES (?, ?, ?)', [
+        randomUUID(),
+        `admin.${userId}@example.com`,
+        false,
+      ]);
+
+      await revertDownTo(MIGRATION);
+
+      await expect(listTokens()).resolves.toEqual([
+        { type: 'INVITATION', token_hash: 'a'.repeat(64), expires_at: expiresAt, used_at: null },
+      ]);
+      await expect(listTables()).resolves.not.toContain('login_attempts');
+    });
   });
 
   it('deve usar o charset utf8mb4 no banco', async () => {

@@ -4,13 +4,14 @@ import EmailPassword from 'supertokens-node/recipe/emailpassword';
 import Session from 'supertokens-node/recipe/session';
 import UserRoles from 'supertokens-node/recipe/userroles';
 
-import { IdentityProvider } from '../../application/ports/identity-provider';
+import { IdentityProvider, IdentitySession } from '../../application/ports/identity-provider';
 import { EmailAlreadyInUseError } from '../../domain/errors/email-already-in-use.error';
 import { InvalidPasswordError } from '../../domain/errors/invalid-password.error';
 import { UserNotFoundError } from '../../domain/errors/user-not-found.error';
 import { Email } from '../../domain/value-objects/email';
 import { Password } from '../../domain/value-objects/password';
 import { Role } from '../../domain/value-objects/role';
+import { readSessionOrigin } from './session-origin';
 
 /** O projeto não usa multitenancy: tudo fica no tenant padrão do SuperTokens. */
 const TENANT_ID = 'public';
@@ -72,6 +73,31 @@ export class SuperTokensIdentityProvider implements IdentityProvider {
     if (others.length > 0) {
       await Session.revokeMultipleSessions(others);
     }
+  }
+
+  async listSessions(userId: string): Promise<IdentitySession[]> {
+    const handles = await Session.getAllSessionHandlesForUser(userId);
+    const sessions = await Promise.all(
+      handles.map((handle) => Session.getSessionInformation(handle)),
+    );
+
+    // Uma sessão encerrada entre as duas consultas volta undefined.
+    return sessions.flatMap((session) =>
+      session
+        ? [
+            {
+              handle: session.sessionHandle,
+              createdAt: new Date(session.timeCreated),
+              expiresAt: new Date(session.expiry),
+              ...readSessionOrigin(session.sessionDataInDatabase),
+            },
+          ]
+        : [],
+    );
+  }
+
+  async revokeSession(sessionHandle: string): Promise<void> {
+    await Session.revokeSession(sessionHandle);
   }
 
   async createRoles(roles: readonly Role[]): Promise<void> {

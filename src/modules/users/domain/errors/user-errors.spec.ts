@@ -9,16 +9,21 @@ import { AdminNotPendingError } from './admin-not-pending.error';
 import { ClientOnlyFieldsError } from './client-only-fields.error';
 import { CpfAlreadyInUseError } from './cpf-already-in-use.error';
 import { EmailAlreadyInUseError } from './email-already-in-use.error';
+import { EmailAlreadyVerifiedError } from './email-already-verified.error';
+import { EmailNotVerifiedError } from './email-not-verified.error';
+import { EmailRecentlySentError } from './email-recently-sent.error';
 import { IncorrectPasswordError } from './incorrect-password.error';
 import { InvalidBirthDateError } from './invalid-birth-date.error';
 import { InvalidCpfError } from './invalid-cpf.error';
 import { InvalidEmailError } from './invalid-email.error';
+import { InvalidLoginCodeError } from './invalid-login-code.error';
 import { InvalidPasswordError } from './invalid-password.error';
 import { InvalidPhoneError } from './invalid-phone.error';
 import { InvalidStatusTransitionError } from './invalid-status-transition.error';
 import { InvalidUserNameError } from './invalid-user-name.error';
 import { InvalidUserTokenError } from './invalid-user-token.error';
 import { SelfDeletionNotAllowedError } from './self-deletion-not-allowed.error';
+import { SessionNotFoundError } from './session-not-found.error';
 import { SuperAdminProtectedError } from './super-admin-protected.error';
 import { UserAlreadyDeletedError } from './user-already-deleted.error';
 import { UserNotFoundError } from './user-not-found.error';
@@ -34,7 +39,11 @@ describe('Erros do domínio de usuários', () => {
     [new InvalidUserNameError('mensagem'), BusinessRuleError, { field: 'name' }],
     [new UserAlreadyDeletedError(), BusinessRuleError, undefined],
     [new InvalidUserTokenError(), BusinessRuleError, { field: 'token' }],
+    [new InvalidLoginCodeError(), BusinessRuleError, { field: 'code' }],
     [new AdminNotPendingError(), BusinessRuleError, undefined],
+    [new EmailNotVerifiedError(), BusinessRuleError, undefined],
+    [new EmailAlreadyVerifiedError(), BusinessRuleError, undefined],
+    [new EmailRecentlySentError(), BusinessRuleError, undefined],
     [new ClientOnlyFieldsError(['phone']), BusinessRuleError, { fields: ['phone'] }],
     [
       new InvalidStatusTransitionError('PENDING', 'INACTIVE'),
@@ -51,6 +60,7 @@ describe('Erros do domínio de usuários', () => {
       { field: 'currentPassword' },
     ],
     [new UserNotFoundError(), NotFoundError, undefined],
+    [new SessionNotFoundError(), NotFoundError, undefined],
   ])('%p deve ser da categoria certa e ter os detalhes esperados', (error, category, details) => {
     expect(error).toBeInstanceOf(category);
     expect(error.message).not.toHaveLength(0);

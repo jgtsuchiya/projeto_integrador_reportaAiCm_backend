@@ -26,6 +26,22 @@ export const envSchema = z.object({
 
   // Validade do link de convite do ADM (RN06).
   INVITATION_EXPIRES_IN_HOURS: z.coerce.number().int().positive().default(48),
+  // Validade do link de redefinição de senha (RN20).
+  PASSWORD_RESET_EXPIRES_IN_MINUTES: z.coerce.number().int().positive().default(60),
+  // Validade do link de verificação de e-mail do Client (RN22).
+  EMAIL_VERIFICATION_EXPIRES_IN_HOURS: z.coerce.number().int().positive().default(24),
+  // Validade do código da segunda etapa do login (RN25).
+  MFA_CODE_EXPIRES_IN_MINUTES: z.coerce.number().int().positive().default(10),
+
+  // Bloqueio temporário do login: falhas por e-mail, contadas dentro da janela (RN17).
+  LOGIN_MAX_FAILED_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  LOGIN_LOCK_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
+
+  // Limite de requisições por IP em cada rota pública limitada (RN18).
+  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(20),
+  RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+  // Quantidade de proxies reversos na frente da API. Com 0, o IP do cliente é o da conexão.
+  TRUST_PROXY: z.coerce.number().int().nonnegative().default(0),
 
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive().default(587),

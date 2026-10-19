@@ -7,6 +7,8 @@ import { UserNotFoundError } from '../../domain/errors/user-not-found.error';
 import { UserRepository } from '../../domain/repositories/user.repository';
 import { Password } from '../../domain/value-objects/password';
 import { IdentityProvider } from '../ports/identity-provider';
+import { sendPasswordChangedNotice } from '../services/password-changed-notice';
+import { UserMailService } from '../services/user-mail.service';
 
 export interface ChangePasswordInput {
   /** Usuário da sessão. */
@@ -21,12 +23,16 @@ export interface ChangePasswordInput {
  * Troca da própria senha (RN13): confere a senha atual no SuperTokens, grava a nova com a
  * política da RN08 e revoga as outras sessões do usuário. A sessão de quem trocou continua
  * válida. Uma senha atual incorreta gera `IncorrectPasswordError` (401).
+ *
+ * No fim, o usuário recebe o e-mail de aviso da troca (RN21). Uma falha nesse envio não
+ * desfaz a troca.
  */
 @Injectable()
 export class ChangePasswordUseCase implements UseCase<ChangePasswordInput, void> {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly identityProvider: IdentityProvider,
+    private readonly userMailService: UserMailService,
   ) {}
 
   async execute(input: ChangePasswordInput): Promise<void> {
@@ -43,5 +49,7 @@ export class ChangePasswordUseCase implements UseCase<ChangePasswordInput, void>
 
     await this.identityProvider.updatePassword(user.id, newPassword);
     await this.identityProvider.revokeOtherSessions(user.id, input.sessionHandle);
+
+    await sendPasswordChangedNotice(this.userMailService, user);
   }
 }

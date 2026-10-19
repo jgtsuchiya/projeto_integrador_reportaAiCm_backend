@@ -9,12 +9,17 @@ import request from 'supertest';
 import { DataSource, In, IsNull, Not } from 'typeorm';
 
 import { Env, envSchema } from '@config/env.schema';
+import { LOGIN_CODE_MAIL_SUBJECT } from '@modules/users/application/services/login-code.service';
 import {
   CreateSuperAdminInput,
   CreateSuperAdminOutput,
   CreateSuperAdminUseCase,
 } from '@modules/users/application/use-cases/create-super-admin.use-case';
+import { USER_TOKEN_RESEND_INTERVAL_MINUTES } from '@modules/users/domain/entities/user-token.entity';
+import { LoginAttemptOrmEntity } from '@modules/users/infra/database/entities/login-attempt.orm-entity';
+import { UserTokenOrmEntity } from '@modules/users/infra/database/entities/user-token.orm-entity';
 import { UserOrmEntity } from '@modules/users/infra/database/entities/user.orm-entity';
+import { BackgroundTasks } from '@shared/application/ports/background-tasks';
 import { MailSender } from '@shared/application/ports/mail-sender';
 import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
 import { FakeMailSender } from '@shared/testing/fake-mail-sender';
@@ -92,12 +97,16 @@ export function readTokens(response: request.Response): Tokens {
   };
 }
 
+/** Páginas do painel web que recebem o token dos links enviados por e-mail. */
+export type LinkPage = '/convite' | '/redefinir-senha' | '/verificar-email';
+
 /**
  * A API de pé para os testes e2e (`test/*.e2e-spec.ts`), contra o MySQL de teste e o
  * SuperTokens Core, com o `FakeMailSender` no lugar do SMTP. As requisições são feitas com o
  * supertest, e o login, no modo header (`st-auth-mode: header`).
  *
- * Cada arquivo de teste parte do banco sem usuários: o `start` e o `close` apagam todos eles.
+ * Cada arquivo de teste parte do banco sem usuários e sem tentativas de login: o `start` e o
+ * `close` apagam todos eles.
  * As contas são criadas pelos mesmos caminhos da aplicação (seed, convite e autocadastro).
  */
 export class E2eApp {
@@ -130,7 +139,7 @@ export class E2eApp {
     const e2e = new E2eApp(app, app.get(DataSource), mailSender);
 
     try {
-      await e2e.clearUsers();
+      await e2e.clearData();
     } catch (error) {
       await app.close();
       throw error;
@@ -141,7 +150,9 @@ export class E2eApp {
 
   async close(): Promise<void> {
     try {
-      await this.clearUsers();
+      // Um pedido de redefinição de senha ainda em andamento gravaria depois da limpeza.
+      await this.waitForBackgroundTasks();
+      await this.clearData();
     } finally {
       await this.app.close();
     }
@@ -173,6 +184,14 @@ export class E2eApp {
       .auth(refreshToken, { type: 'bearer' });
   }
 
+  /**
+   * Espera o trabalho que a API continua depois de responder. É o caso do pedido de
+   * redefinição de senha, que responde 204 antes de buscar a conta e de enviar o e-mail.
+   */
+  waitForBackgroundTasks(): Promise<void> {
+    return this.app.get(BackgroundTasks).drain();
+  }
+
   /** Abre uma sessão nova para a conta. */
   async logIn(account: Account): Promise<Actor> {
     const response = await this.signIn(account.email, account.password);
@@ -183,6 +202,75 @@ export class E2eApp {
     }
 
     return { ...account, ...tokens };
+  }
+
+  /**
+   * Abre uma sessão pendente: a senha já foi conferida, e o código da segunda etapa ainda não
+   * (RN25). A verificação em duas etapas fica ligada só durante o login, direto no banco, para
+   * os outros logins da conta continuarem completos. A rota de ativação não serve aqui: ela
+   * exige o e-mail verificado, que o Client não tem, e revoga as outras sessões da conta.
+   */
+  async logInPending(account: Account): Promise<Actor> {
+    const repository = this.dataSource.getRepository(UserOrmEntity);
+    await repository.update({ id: account.id }, { mfaEnabled: true });
+
+    try {
+      return await this.logIn(account);
+    } finally {
+      await repository.update({ id: account.id }, { mfaEnabled: false });
+    }
+  }
+
+  /**
+   * Código da segunda etapa do último e-mail enviado ao endereço. Um login feito menos de um
+   * minuto depois de outro não envia um código novo: vale o do e-mail anterior.
+   */
+  lastLoginCode(email: string): string {
+    const message = this.mailSender.messages.findLast(
+      ({ to, subject }) => to === email && subject === LOGIN_CODE_MAIL_SUBJECT,
+    );
+    const match = /^\d{6}$/m.exec(message?.text ?? '');
+
+    if (!match) {
+      throw new Error(`Nenhum código da segunda etapa foi enviado para ${email}.`);
+    }
+
+    return match[0];
+  }
+
+  /**
+   * Token do link para a página do painel, no último e-mail enviado ao endereço com esse link.
+   * O token só existe no e-mail: o banco guarda o hash dele.
+   */
+  lastLinkToken(email: string, page: LinkPage): string {
+    const pattern = new RegExp(`${page}\\?token=([\\w-]+)`);
+    const match = this.mailSender.messages
+      .filter(({ to }) => to === email)
+      .map(({ text }) => pattern.exec(text))
+      .findLast((result) => result !== null);
+
+    if (!match) {
+      throw new Error(`Nenhum link para ${page} foi enviado para ${email}.`);
+    }
+
+    return match[1];
+  }
+
+  /** Id da sessão dos tokens, como o `GET /api/users/me/sessions` a identifica. */
+  async currentSessionId(tokens: Tokens): Promise<string> {
+    const response = await this.api()
+      .get('/api/users/me/sessions')
+      .auth(tokens.accessToken, { type: 'bearer' });
+    assertStatus(response, 200, 'Listagem das sessões');
+
+    const sessions = response.body as Array<{ id: string; current: boolean }>;
+    const current = sessions.find((session) => session.current);
+
+    if (!current) {
+      throw new Error('A sessão dos tokens não está entre as sessões abertas.');
+    }
+
+    return current.id;
   }
 
   /** Roda o caso de uso do seed (`npm run seed`), que também cria os papéis no SuperTokens. */
@@ -211,18 +299,11 @@ export class E2eApp {
       .send({ name: 'Ana Souza', email });
     assertStatus(response, 201, 'Convite');
 
-    return { id: (response.body as { id: string }).id, email, token: this.lastInvitationToken() };
-  }
-
-  /** Token do link de convite do último e-mail enviado. */
-  lastInvitationToken(): string {
-    const match = /\/convite\?token=([\w-]+)/.exec(this.mailSender.messages.at(-1)?.text ?? '');
-
-    if (!match) {
-      throw new Error('Nenhum convite foi enviado.');
-    }
-
-    return match[1];
+    return {
+      id: (response.body as { id: string }).id,
+      email,
+      token: this.lastLinkToken(email, '/convite'),
+    };
   }
 
   /** Convida um ADMIN, aceita o convite e faz login. */
@@ -250,10 +331,48 @@ export class E2eApp {
   }
 
   /**
-   * Apaga todos os usuários do banco de teste e as credenciais deles no SuperTokens. O Core
-   * é o mesmo do ambiente de dev, então só saem dele os ids encontrados no banco de teste.
+   * Cadastra um Client com a verificação em duas etapas ativa, pelos caminhos da aplicação:
+   * cadastro, confirmação do e-mail pelo link (a ativação exige o e-mail verificado) e
+   * `PATCH /api/users/me/mfa`. A sessão devolvida é a que ativou, que continua completa
+   * (RN24). Os logins seguintes abrem sessões pendentes.
    */
-  private async clearUsers(): Promise<void> {
+  async registerClientWithMfa(): Promise<Actor> {
+    const client = await this.registerClient();
+    const verification = await this.api()
+      .post('/api/email-verifications/confirm')
+      .send({ token: this.lastLinkToken(client.email, '/verificar-email') });
+    assertStatus(verification, 204, 'Confirmação do e-mail');
+
+    const activation = await this.api()
+      .patch('/api/users/me/mfa')
+      .auth(client.accessToken, { type: 'bearer' })
+      .send({ enabled: true, password: client.password });
+    assertStatus(activation, 200, 'Ativação da verificação em duas etapas');
+
+    return client;
+  }
+
+  /**
+   * Recua a emissão dos tokens do usuário, como se o intervalo mínimo entre dois e-mails do
+   * mesmo tipo já tivesse passado. Sem isso, o reenvio logo depois do cadastro responde 422.
+   */
+  async passResendInterval(userId: string): Promise<void> {
+    const elapsedMs = (USER_TOKEN_RESEND_INTERVAL_MINUTES * 60 + 1) * 1000;
+
+    await this.dataSource
+      .getRepository(UserTokenOrmEntity)
+      .update({ userId }, { createdAt: new Date(Date.now() - elapsedMs) });
+  }
+
+  /**
+   * Apaga todos os usuários do banco de teste, as tentativas de login e as credenciais deles
+   * no SuperTokens. O Core é o mesmo do ambiente de dev, então só saem dele os ids encontrados
+   * no banco de teste.
+   */
+  private async clearData(): Promise<void> {
+    // As tentativas de login não têm FK para users, então saem à parte.
+    await this.dataSource.getRepository(LoginAttemptOrmEntity).deleteAll();
+
     const repository = this.dataSource.getRepository(UserOrmEntity);
     const users = await repository.find({ select: { id: true }, withDeleted: true });
     const ids = users.map(({ id }) => id);

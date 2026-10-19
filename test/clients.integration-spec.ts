@@ -16,10 +16,13 @@ import { UserTokenOrmEntity } from '@modules/users/infra/database/entities/user-
 import { UserOrmEntity } from '@modules/users/infra/database/entities/user.orm-entity';
 import { ROLE_IDS } from '@modules/users/infra/database/mappers/user.mapper';
 import { SuperTokensIdentityProvider } from '@modules/users/infra/identity/supertokens-identity-provider';
+import { MailSender } from '@shared/application/ports/mail-sender';
 import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
+import { FakeMailSender } from '@shared/testing/fake-mail-sender';
 
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
+import { deleteLoginAttempts } from './support/login-attempts';
 
 const TENANT_ID = 'public';
 const PASSWORD = 'senha-forte-1';
@@ -41,6 +44,8 @@ function formatCpf(cpf: string): string {
 
 describe('Autocadastro de Client (integração)', () => {
   const env = envSchema.parse(process.env);
+  // O cadastro envia o link de verificação de e-mail (test/email-verification.integration-spec.ts).
+  const mailSender = new FakeMailSender();
   const emails: string[] = [];
   let dataSource: DataSource;
   let app: INestApplication;
@@ -62,7 +67,10 @@ describe('Autocadastro de Client (integração)', () => {
     await dataSource.initialize();
     await dataSource.runMigrations();
 
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(MailSender)
+      .useValue(mailSender)
+      .compile();
     app = moduleRef.createNestApplication({ logger: false });
     configureApp(app);
     await app.listen(0, '127.0.0.1');
@@ -80,6 +88,7 @@ describe('Autocadastro de Client (integração)', () => {
     // O client_profiles é removido junto (ON DELETE CASCADE).
     await dataSource?.getRepository(UserOrmEntity).delete({ email: In(emails) });
     await Promise.all(ids.map((id) => supertokens.deleteUser(id)));
+    await deleteLoginAttempts(dataSource, emails);
     await dataSource?.destroy();
     await app?.close();
   });
@@ -245,5 +254,6 @@ describe('Autocadastro de Client (integração)', () => {
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toMatchObject({ message: 'Erro interno do servidor.' });
     await expect(credentialsFor(body.email)).resolves.toEqual([]);
+    expect(mailSender.messages.filter(({ to }) => to === body.email)).toEqual([]);
   });
 });

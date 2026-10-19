@@ -9,7 +9,7 @@ import { Email } from '../../domain/value-objects/email';
 import { Password } from '../../domain/value-objects/password';
 import { Role, ROLES } from '../../domain/value-objects/role';
 import { UserStatus } from '../../domain/value-objects/user-status';
-import { IdentityProvider } from '../ports/identity-provider';
+import { IdentityProvider, IdentitySession } from '../ports/identity-provider';
 import { CreateSuperAdminInput, CreateSuperAdminUseCase } from './create-super-admin.use-case';
 
 class InMemoryUserRepository extends UserRepository {
@@ -90,6 +90,12 @@ class FakeIdentityProvider extends IdentityProvider {
   async revokeAllSessions(): Promise<void> {}
 
   async revokeOtherSessions(): Promise<void> {}
+
+  async listSessions(): Promise<IdentitySession[]> {
+    return [];
+  }
+
+  async revokeSession(): Promise<void> {}
 
   async createRoles(roles: readonly Role[]): Promise<void> {
     roles.forEach((role) => this.roles.add(role));

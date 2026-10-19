@@ -1,3 +1,6 @@
+import { MailDeliveryError } from '@shared/application/ports/mail-sender';
+import { FakeMailSender } from '@shared/testing/fake-mail-sender';
+
 import { User } from '../../domain/entities/user.entity';
 import { IncorrectPasswordError } from '../../domain/errors/incorrect-password.error';
 import { InvalidPasswordError } from '../../domain/errors/invalid-password.error';
@@ -9,6 +12,8 @@ import {
   InMemoryUserRepository,
   InMemoryUsersDatabase,
 } from '../../testing/in-memory-users';
+import { PASSWORD_CHANGED_MAIL_SUBJECT } from '../services/password-changed-notice';
+import { UserMailService } from '../services/user-mail.service';
 import { ChangePasswordUseCase } from './change-password.use-case';
 
 const CURRENT_PASSWORD = 'senha-antiga-1';
@@ -17,13 +22,19 @@ const NEW_PASSWORD = 'senha-nova-2';
 describe('ChangePasswordUseCase', () => {
   let database: InMemoryUsersDatabase;
   let identityProvider: FakeIdentityProvider;
+  let mailSender: FakeMailSender;
   let sut: ChangePasswordUseCase;
   let user: User;
 
   beforeEach(async () => {
     database = new InMemoryUsersDatabase();
     identityProvider = new FakeIdentityProvider();
-    sut = new ChangePasswordUseCase(new InMemoryUserRepository(database), identityProvider);
+    mailSender = new FakeMailSender();
+    sut = new ChangePasswordUseCase(
+      new InMemoryUserRepository(database),
+      identityProvider,
+      new UserMailService(mailSender, { webAppUrl: 'http://localhost:5173' }),
+    );
 
     const email = Email.create('maria@example.com');
     const id = await identityProvider.createCredentials(email, Password.create(CURRENT_PASSWORD));
@@ -44,6 +55,38 @@ describe('ChangePasswordUseCase', () => {
     expect(identityProvider.sessions.get(user.id)).toEqual(['atual']);
   });
 
+  it('deve avisar o usuário da troca por e-mail (RN21)', async () => {
+    await sut.execute({
+      userId: user.id,
+      sessionHandle: 'atual',
+      currentPassword: CURRENT_PASSWORD,
+      newPassword: NEW_PASSWORD,
+    });
+
+    expect(mailSender.messages).toHaveLength(1);
+    expect(mailSender.messages[0]).toMatchObject({
+      to: 'maria@example.com',
+      subject: PASSWORD_CHANGED_MAIL_SUBJECT,
+    });
+    expect(mailSender.messages[0].text).not.toContain(NEW_PASSWORD);
+  });
+
+  it('deve manter a troca quando o e-mail de aviso falha', async () => {
+    jest.spyOn(mailSender, 'send').mockRejectedValue(new MailDeliveryError());
+
+    await expect(
+      sut.execute({
+        userId: user.id,
+        sessionHandle: 'atual',
+        currentPassword: CURRENT_PASSWORD,
+        newPassword: NEW_PASSWORD,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(identityProvider.credentials.get(user.id)?.password).toBe(NEW_PASSWORD);
+    expect(identityProvider.sessions.get(user.id)).toEqual(['atual']);
+  });
+
   it('deve lançar IncorrectPasswordError quando a senha atual não confere', async () => {
     await expect(
       sut.execute({
@@ -56,6 +99,7 @@ describe('ChangePasswordUseCase', () => {
 
     expect(identityProvider.credentials.get(user.id)?.password).toBe(CURRENT_PASSWORD);
     expect(identityProvider.sessions.get(user.id)).toHaveLength(3);
+    expect(mailSender.messages).toHaveLength(0);
   });
 
   it('deve aplicar a política de senha na nova senha (RN08)', async () => {

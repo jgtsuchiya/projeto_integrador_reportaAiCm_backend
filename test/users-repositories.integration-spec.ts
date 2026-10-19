@@ -5,7 +5,8 @@ import { DataSource, QueryRunner } from 'typeorm';
 
 import { envSchema } from '@config/env.schema';
 import { ClientProfile } from '@modules/users/domain/entities/client-profile.entity';
-import { UserToken } from '@modules/users/domain/entities/user-token.entity';
+import { LoginAttempt } from '@modules/users/domain/entities/login-attempt.entity';
+import { UserToken, UserTokenProps } from '@modules/users/domain/entities/user-token.entity';
 import { User } from '@modules/users/domain/entities/user.entity';
 import { CpfAlreadyInUseError } from '@modules/users/domain/errors/cpf-already-in-use.error';
 import { EmailAlreadyInUseError } from '@modules/users/domain/errors/email-already-in-use.error';
@@ -17,10 +18,12 @@ import { Role } from '@modules/users/domain/value-objects/role';
 import { UserStatus } from '@modules/users/domain/value-objects/user-status';
 import { UserTokenType } from '@modules/users/domain/value-objects/user-token-type';
 import { ClientProfileOrmEntity } from '@modules/users/infra/database/entities/client-profile.orm-entity';
+import { LoginAttemptOrmEntity } from '@modules/users/infra/database/entities/login-attempt.orm-entity';
 import { RoleOrmEntity } from '@modules/users/infra/database/entities/role.orm-entity';
 import { UserTokenOrmEntity } from '@modules/users/infra/database/entities/user-token.orm-entity';
 import { UserOrmEntity } from '@modules/users/infra/database/entities/user.orm-entity';
 import { TypeOrmClientProfileRepository } from '@modules/users/infra/database/repositories/typeorm-client-profile.repository';
+import { TypeOrmLoginAttemptRepository } from '@modules/users/infra/database/repositories/typeorm-login-attempt.repository';
 import { TypeOrmUserTokenRepository } from '@modules/users/infra/database/repositories/typeorm-user-token.repository';
 import { TypeOrmUserRepository } from '@modules/users/infra/database/repositories/typeorm-user.repository';
 import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
@@ -32,6 +35,7 @@ describe('Repositórios de usuários (integração)', () => {
   let users: TypeOrmUserRepository;
   let profiles: TypeOrmClientProfileRepository;
   let tokens: TypeOrmUserTokenRepository;
+  let loginAttempts: TypeOrmLoginAttemptRepository;
 
   beforeAll(async () => {
     // Proteção: os testes de integração alteram o schema; nunca rode contra o banco de desenvolvimento.
@@ -41,7 +45,13 @@ describe('Repositórios de usuários (integração)', () => {
 
     dataSource = new DataSource({
       ...buildDataSourceOptions(env),
-      entities: [RoleOrmEntity, UserOrmEntity, ClientProfileOrmEntity, UserTokenOrmEntity],
+      entities: [
+        RoleOrmEntity,
+        UserOrmEntity,
+        ClientProfileOrmEntity,
+        UserTokenOrmEntity,
+        LoginAttemptOrmEntity,
+      ],
       migrations: [
         join(__dirname, '..', 'src', 'shared', 'infra', 'database', 'migrations', '*.ts'),
       ],
@@ -63,6 +73,9 @@ describe('Repositórios de usuários (integração)', () => {
       queryRunner.manager.getRepository(ClientProfileOrmEntity),
     );
     tokens = new TypeOrmUserTokenRepository(queryRunner.manager.getRepository(UserTokenOrmEntity));
+    loginAttempts = new TypeOrmLoginAttemptRepository(
+      queryRunner.manager.getRepository(LoginAttemptOrmEntity),
+    );
   });
 
   afterEach(async () => {
@@ -234,7 +247,7 @@ describe('Repositórios de usuários (integração)', () => {
           updatedAt: date,
           deletedAt: null,
         });
-        await users.saveClient(user, buildProfile(user.id, cpf));
+        await users.saveClient(user, buildProfile(user.id, cpf), buildVerification(user.id));
 
         return user;
       }
@@ -327,36 +340,72 @@ describe('Repositórios de usuários (integração)', () => {
     });
 
     describe('saveClient', () => {
-      it('deve gravar o usuário e o perfil do Client', async () => {
+      it('deve gravar o usuário, o perfil e o token de verificação do Client (RN22)', async () => {
         const user = buildClient();
+        const verification = buildVerification(user.id);
 
-        await users.saveClient(user, buildProfile(user.id));
+        await users.saveClient(user, buildProfile(user.id), verification);
 
         await expect(users.findById(user.id)).resolves.toMatchObject({ role: Role.CLIENT });
         await expect(profiles.findByUserId(user.id)).resolves.toMatchObject({
           cpf: Cpf.create('52998224725'),
         });
+        const token = await tokens.findByHash(verification.tokenHash);
+        expect(token?.equals(verification)).toBe(true);
+        expect(token).toMatchObject({
+          userId: user.id,
+          type: UserTokenType.EMAIL_VERIFICATION,
+          usedAt: null,
+        });
+      });
+
+      it('deve desfazer o usuário e o perfil quando o token falha', async () => {
+        const first = buildClient();
+        const verification = buildVerification(first.id);
+        await users.saveClient(first, buildProfile(first.id), verification);
+        const second = buildClient();
+        // O mesmo id do token já gravado: a chave primária barra a última gravação da transação.
+        const repeated = UserToken.restore(verification.id, {
+          userId: second.id,
+          type: UserTokenType.EMAIL_VERIFICATION,
+          tokenHash: UserToken.hash(randomUUID()),
+          attempts: 0,
+          expiresAt: verification.expiresAt,
+          usedAt: null,
+          createdAt: verification.createdAt,
+        });
+
+        await expect(
+          users.saveClient(second, buildProfile(second.id, randomCpf()), repeated),
+        ).rejects.toThrow();
+
+        await expect(users.findById(second.id)).resolves.toBeNull();
+        await expect(profiles.findByUserId(second.id)).resolves.toBeNull();
       });
 
       it('deve desfazer o usuário quando o perfil falha e converter o CPF repetido em conflito', async () => {
         const first = buildClient();
-        await users.saveClient(first, buildProfile(first.id));
+        await users.saveClient(first, buildProfile(first.id), buildVerification(first.id));
         const second = buildClient();
 
-        await expect(users.saveClient(second, buildProfile(second.id))).rejects.toThrow(
-          CpfAlreadyInUseError,
-        );
+        await expect(
+          users.saveClient(second, buildProfile(second.id), buildVerification(second.id)),
+        ).rejects.toThrow(CpfAlreadyInUseError);
 
         await expect(users.findById(second.id)).resolves.toBeNull();
       });
 
       it('deve converter o e-mail repetido em conflito', async () => {
         const first = buildClient();
-        await users.saveClient(first, buildProfile(first.id));
+        await users.saveClient(first, buildProfile(first.id), buildVerification(first.id));
         const second = buildClient(first.email.value);
 
         await expect(
-          users.saveClient(second, buildProfile(second.id, '111.444.777-35')),
+          users.saveClient(
+            second,
+            buildProfile(second.id, '111.444.777-35'),
+            buildVerification(second.id),
+          ),
         ).rejects.toThrow(EmailAlreadyInUseError);
       });
     });
@@ -365,7 +414,7 @@ describe('Repositórios de usuários (integração)', () => {
       it('deve gravar as alterações do usuário e do perfil', async () => {
         const user = buildClient();
         const profile = buildProfile(user.id);
-        await users.saveClient(user, profile);
+        await users.saveClient(user, profile, buildVerification(user.id));
 
         user.rename('Maria Souza');
         profile.changePhone(Phone.create('4332221111'));
@@ -383,7 +432,7 @@ describe('Repositórios de usuários (integração)', () => {
     describe('deleteClient', () => {
       it('deve gravar a exclusão lógica e remover o perfil, liberando o e-mail e o CPF (RN11)', async () => {
         const user = buildClient();
-        await users.saveClient(user, buildProfile(user.id));
+        await users.saveClient(user, buildProfile(user.id), buildVerification(user.id));
         const originalEmail = user.email;
 
         user.delete();
@@ -410,7 +459,7 @@ describe('Repositórios de usuários (integração)', () => {
     it('deve remover todos os tokens do usuário e manter os dos outros', async () => {
       const superAdmin = await saved(buildSuperAdminLike());
       const issue = (userId: string): UserToken =>
-        UserToken.issue({ userId, type: UserTokenType.INVITATION, validForHours: 48 }).token;
+        UserToken.issue({ userId, type: UserTokenType.INVITATION, validForMinutes: 48 * 60 }).token;
       const token = issue(superAdmin.id);
       const other = issue((await saved(buildClient())).id);
       await tokens.replace(token);
@@ -420,6 +469,374 @@ describe('Repositórios de usuários (integração)', () => {
 
       await expect(tokens.findByHash(token.tokenHash)).resolves.toBeNull();
       await expect(tokens.findByHash(other.tokenHash)).resolves.not.toBeNull();
+    });
+
+    it.each([UserTokenType.PASSWORD_RESET, UserTokenType.EMAIL_VERIFICATION] as const)(
+      'deve gravar e buscar pelo hash um token de link do tipo %s',
+      async (type) => {
+        const user = await saved(buildClient());
+        const { token, secret } = UserToken.issue({ userId: user.id, type, validForMinutes: 60 });
+
+        await tokens.replace(token);
+
+        const found = await tokens.findByHash(UserToken.hash(secret));
+        expect(found?.equals(token)).toBe(true);
+        expect(found).toMatchObject({
+          userId: user.id,
+          type,
+          attempts: 0,
+          expiresAt: token.expiresAt,
+          usedAt: null,
+          createdAt: token.createdAt,
+        });
+      },
+    );
+
+    describe('findLatest', () => {
+      it('deve buscar o token do usuário e do tipo, ignorando os outros', async () => {
+        const user = await saved(buildClient());
+        const other = await saved(buildClient());
+        const { token, secret } = UserToken.issueCode({ userId: user.id, validForMinutes: 10 });
+        await tokens.replace(token);
+        await tokens.replace(UserToken.issueCode({ userId: other.id, validForMinutes: 10 }).token);
+        await tokens.replace(
+          UserToken.issue({
+            userId: user.id,
+            type: UserTokenType.PASSWORD_RESET,
+            validForMinutes: 60,
+          }).token,
+        );
+
+        const found = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+
+        expect(found?.equals(token)).toBe(true);
+        expect(found).toMatchObject({ type: UserTokenType.LOGIN_CODE, attempts: 0 });
+        expect(found?.matchesCode(secret)).toBe(true);
+        await expect(tokens.findLatest(other.id, UserTokenType.PASSWORD_RESET)).resolves.toBeNull();
+        await expect(tokens.findLatest(randomUUID(), UserTokenType.LOGIN_CODE)).resolves.toBeNull();
+      });
+
+      it('deve devolver o mais recente quando há mais de um, mesmo usado ou expirado', async () => {
+        const user = await saved(buildClient());
+        const older = buildCode(user.id, '111111', { createdAt: new Date('2026-10-05T12:00:00Z') });
+        const newer = buildCode(user.id, '222222', {
+          createdAt: new Date('2026-10-05T12:01:00Z'),
+          expiresAt: new Date('2026-10-05T12:11:00Z'),
+          usedAt: new Date('2026-10-05T12:02:00Z'),
+        });
+        await users.saveWithToken(user, newer);
+        await users.saveWithToken(user, older);
+
+        const found = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+
+        expect(found?.equals(newer)).toBe(true);
+        expect(found?.isUsable()).toBe(false);
+      });
+
+      it('deve devolver só o código novo depois de um reenvio', async () => {
+        const user = await saved(buildClient());
+        const first = UserToken.issueCode({ userId: user.id, validForMinutes: 10 });
+        const second = UserToken.issueCode({ userId: user.id, validForMinutes: 10 });
+        await tokens.replace(first.token);
+
+        await tokens.replace(second.token);
+
+        const found = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+        expect(found?.equals(second.token)).toBe(true);
+        await expect(
+          queryRunner.manager.countBy(UserTokenOrmEntity, { userId: user.id }),
+        ).resolves.toBe(1);
+      });
+    });
+
+    it('deve aceitar o mesmo código para dois usuários ao mesmo tempo', async () => {
+      const first = await saved(buildClient());
+      const second = await saved(buildClient());
+
+      await tokens.replace(buildCode(first.id, '123456'));
+      await tokens.replace(buildCode(second.id, '123456'));
+
+      for (const user of [first, second]) {
+        const found = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+        expect(found?.userId).toBe(user.id);
+        expect(found?.matchesCode('123456')).toBe(true);
+      }
+    });
+
+    describe('saveFailedAttempt', () => {
+      it('deve somar um erro ao contador do token, sem mexer no resto', async () => {
+        const user = await saved(buildClient());
+        const other = await saved(buildClient());
+        const { token } = UserToken.issueCode({ userId: user.id, validForMinutes: 10 });
+        const untouched = UserToken.issueCode({ userId: other.id, validForMinutes: 10 }).token;
+        await tokens.replace(token);
+        await tokens.replace(untouched);
+
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          token.registerFailedAttempt();
+          await tokens.saveFailedAttempt(token);
+        }
+
+        await expect(tokens.findLatest(user.id, UserTokenType.LOGIN_CODE)).resolves.toMatchObject({
+          attempts: 2,
+          tokenHash: token.tokenHash,
+          expiresAt: token.expiresAt,
+          usedAt: null,
+          createdAt: token.createdAt,
+        });
+        await expect(tokens.findLatest(other.id, UserTokenType.LOGIN_CODE)).resolves.toMatchObject({
+          attempts: 0,
+        });
+      });
+
+      it('deve contar os erros de duas conferências que leram o mesmo contador', async () => {
+        const user = await saved(buildClient());
+        await tokens.replace(buildCode(user.id, '123456'));
+        // Como duas requisições simultâneas: as duas leem o contador em 0 antes de gravar.
+        const first = await findCode(user.id);
+        const second = await findCode(user.id);
+
+        first.registerFailedAttempt();
+        await tokens.saveFailedAttempt(first);
+        second.registerFailedAttempt();
+        await tokens.saveFailedAttempt(second);
+
+        expect(first.attempts).toBe(1);
+        expect(second.attempts).toBe(1);
+        await expect(findCode(user.id)).resolves.toMatchObject({ attempts: 2 });
+      });
+
+      it('deve parar de somar no limite de erros', async () => {
+        const user = await saved(buildClient());
+        const token = buildCode(user.id, '123456', { attempts: 4 });
+        await users.saveWithToken(user, token);
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          await tokens.saveFailedAttempt(token);
+        }
+
+        await expect(findCode(user.id)).resolves.toMatchObject({ attempts: 5 });
+      });
+
+      it('deve recusar o código certo depois de 5 erros gravados (RN25)', async () => {
+        const user = await saved(buildClient());
+        const { token, secret } = UserToken.issueCode({ userId: user.id, validForMinutes: 10 });
+        await tokens.replace(token);
+
+        for (let attempt = 1; attempt <= 5; attempt++) {
+          const current = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+          if (!current?.isUsable()) {
+            throw new Error(`O código deixou de valer antes do 5º erro (tentativa ${attempt}).`);
+          }
+
+          current.registerFailedAttempt();
+          await tokens.saveFailedAttempt(current);
+        }
+
+        const found = await tokens.findLatest(user.id, UserTokenType.LOGIN_CODE);
+        expect(found?.attempts).toBe(5);
+        expect(found?.matchesCode(secret)).toBe(true);
+        expect(found?.isUsable()).toBe(false);
+      });
+    });
+
+    describe('consume', () => {
+      it('deve gravar o uso do código que ainda vale', async () => {
+        const user = await saved(buildClient());
+        const other = await saved(buildClient());
+        await tokens.replace(buildCode(user.id, '123456', { attempts: 4 }));
+        await tokens.replace(buildCode(other.id, '123456'));
+        const token = await findCode(user.id);
+        token.use();
+
+        await expect(tokens.consume(token)).resolves.toBe(true);
+
+        await expect(findCode(user.id)).resolves.toMatchObject({
+          usedAt: token.usedAt,
+          attempts: 4,
+        });
+        await expect(findCode(other.id)).resolves.toMatchObject({ usedAt: null });
+      });
+
+      it('não deve gravar o uso de um código que outra conferência já usou', async () => {
+        const user = await saved(buildClient());
+        await tokens.replace(buildCode(user.id, '123456'));
+        // Como duas requisições simultâneas com o código certo: as duas o leem sem uso.
+        const first = await findCode(user.id);
+        const second = await findCode(user.id);
+        first.use(new Date('2026-10-06T12:00:00.000Z'));
+        second.use(new Date('2026-10-06T12:00:01.000Z'));
+
+        await expect(tokens.consume(first)).resolves.toBe(true);
+        await expect(tokens.consume(second)).resolves.toBe(false);
+
+        await expect(findCode(user.id)).resolves.toMatchObject({ usedAt: first.usedAt });
+      });
+
+      it('não deve gravar o uso do código que atingiu o limite de erros depois de lido', async () => {
+        const user = await saved(buildClient());
+        await tokens.replace(buildCode(user.id, '123456', { attempts: 4 }));
+        const right = await findCode(user.id);
+        const wrong = await findCode(user.id);
+        wrong.registerFailedAttempt();
+        await tokens.saveFailedAttempt(wrong);
+        right.use();
+
+        await expect(tokens.consume(right)).resolves.toBe(false);
+
+        await expect(findCode(user.id)).resolves.toMatchObject({ usedAt: null, attempts: 5 });
+      });
+
+      it('não deve gravar o uso de um código substituído por um reenvio', async () => {
+        const user = await saved(buildClient());
+        await tokens.replace(buildCode(user.id, '123456'));
+        const replaced = await findCode(user.id);
+        await tokens.replace(buildCode(user.id, '654321'));
+        replaced.use();
+
+        await expect(tokens.consume(replaced)).resolves.toBe(false);
+
+        await expect(findCode(user.id)).resolves.toMatchObject({ usedAt: null });
+      });
+    });
+  });
+
+  describe('TypeOrmLoginAttemptRepository', () => {
+    const NOW = new Date('2026-10-06T12:00:00.000Z');
+    const MINUTE_IN_MS = 60 * 1000;
+    let email: Email;
+    let otherEmail: Email;
+
+    beforeEach(() => {
+      email = Email.create(`maria.${randomUUID()}@example.com`);
+      otherEmail = Email.create(`joao.${randomUUID()}@example.com`);
+    });
+
+    /** Grava a tentativa com o horário escolhido pelo teste, em minutos antes de `NOW`. */
+    async function insertAttempt(
+      address: Email,
+      minutesAgo: number,
+      succeeded: boolean,
+    ): Promise<string> {
+      const id = randomUUID();
+      await queryRunner.manager.insert(LoginAttemptOrmEntity, {
+        id,
+        email: address.value,
+        ipAddress: '203.0.113.10',
+        userAgent: null,
+        succeeded,
+        createdAt: new Date(NOW.getTime() - minutesAgo * MINUTE_IN_MS),
+      });
+
+      return id;
+    }
+
+    function minutesAgo(minutes: number): Date {
+      return new Date(NOW.getTime() - minutes * MINUTE_IN_MS);
+    }
+
+    async function listIds(): Promise<string[]> {
+      const rows = await queryRunner.manager.find(LoginAttemptOrmEntity, {
+        where: [{ email: email.value }, { email: otherEmail.value }],
+        order: { createdAt: 'ASC' },
+      });
+
+      return rows.map((row) => row.id);
+    }
+
+    it('deve gravar a tentativa de login', async () => {
+      const attempt = LoginAttempt.record({
+        email,
+        ipAddress: '2001:db8:85a3::8a2e:370:7334',
+        userAgent: 'Mozilla/5.0 (Linux; Android 16)',
+        succeeded: false,
+      });
+
+      await loginAttempts.save(attempt);
+
+      const row = await queryRunner.manager.findOneByOrFail(LoginAttemptOrmEntity, {
+        id: attempt.id,
+      });
+      expect(row).toEqual({
+        id: attempt.id,
+        email: email.value,
+        ipAddress: '2001:db8:85a3::8a2e:370:7334',
+        userAgent: 'Mozilla/5.0 (Linux; Android 16)',
+        succeeded: false,
+        createdAt: attempt.createdAt,
+      });
+    });
+
+    describe('countRecentFailures', () => {
+      it('deve contar as falhas do e-mail depois da data informada', async () => {
+        await insertAttempt(email, 16, false);
+        await insertAttempt(email, 15, false);
+        await insertAttempt(email, 14, false);
+        await insertAttempt(email, 1, false);
+        await insertAttempt(otherEmail, 1, false);
+
+        await expect(loginAttempts.countRecentFailures(email, minutesAgo(15))).resolves.toBe(2);
+      });
+
+      it('deve contar só as falhas depois do último login com sucesso', async () => {
+        await insertAttempt(email, 10, false);
+        await insertAttempt(email, 9, false);
+        await insertAttempt(email, 8, true);
+        await insertAttempt(email, 7, false);
+        await insertAttempt(email, 6, true);
+        await insertAttempt(email, 5, false);
+        await insertAttempt(email, 4, false);
+        await insertAttempt(email, 3, false);
+
+        await expect(loginAttempts.countRecentFailures(email, minutesAgo(15))).resolves.toBe(3);
+      });
+
+      it('deve ignorar o login com sucesso de outro e-mail e o anterior à data informada', async () => {
+        await insertAttempt(email, 20, true);
+        await insertAttempt(email, 10, false);
+        await insertAttempt(otherEmail, 5, true);
+        await insertAttempt(email, 2, false);
+
+        await expect(loginAttempts.countRecentFailures(email, minutesAgo(15))).resolves.toBe(2);
+      });
+
+      it('deve retornar zero para um e-mail sem tentativas', async () => {
+        await expect(loginAttempts.countRecentFailures(email, minutesAgo(15))).resolves.toBe(0);
+      });
+    });
+
+    it('deve apagar só as falhas do e-mail depois da data informada', async () => {
+      const oldFailure = await insertAttempt(email, 20, false);
+      const success = await insertAttempt(email, 10, true);
+      await insertAttempt(email, 5, false);
+      await insertAttempt(email, 4, false);
+      const otherFailure = await insertAttempt(otherEmail, 3, false);
+
+      await loginAttempts.deleteFailuresSince(email, minutesAgo(15));
+
+      await expect(listIds()).resolves.toEqual([oldFailure, success, otherFailure]);
+      await expect(loginAttempts.countRecentFailures(email, minutesAgo(15))).resolves.toBe(0);
+    });
+
+    it('deve apagar todas as tentativas do e-mail e manter as dos outros (RN19)', async () => {
+      await insertAttempt(email, 60 * 24 * 10, false);
+      await insertAttempt(email, 5, true);
+      const other = await insertAttempt(otherEmail, 3, false);
+
+      await loginAttempts.deleteByEmail(email);
+
+      await expect(listIds()).resolves.toEqual([other]);
+    });
+
+    it('deve apagar as tentativas anteriores à data informada, de qualquer e-mail (RN19)', async () => {
+      await insertAttempt(email, 60 * 24 * 31, false);
+      await insertAttempt(otherEmail, 60 * 24 * 30 + 1, true);
+      const onTheLimit = await insertAttempt(email, 60 * 24 * 30, false);
+      const recent = await insertAttempt(otherEmail, 1, true);
+
+      await loginAttempts.deleteOlderThan(minutesAgo(60 * 24 * 30));
+
+      await expect(listIds()).resolves.toEqual([onTheLimit, recent]);
     });
   });
 
@@ -457,6 +874,35 @@ describe('Repositórios de usuários (integração)', () => {
     });
   });
 
+  /** Lê do banco o código vigente do usuário, numa entidade nova a cada chamada. */
+  async function findCode(userId: string): Promise<UserToken> {
+    const token = await tokens.findLatest(userId, UserTokenType.LOGIN_CODE);
+
+    if (!token) {
+      throw new Error('O usuário não tem código da segunda etapa.');
+    }
+
+    return token;
+  }
+
+  /** Código da segunda etapa com o valor escolhido pelo teste (o `issueCode` sorteia). */
+  function buildCode(
+    userId: string,
+    code: string,
+    overrides: Partial<UserTokenProps> = {},
+  ): UserToken {
+    return UserToken.restore(randomUUID(), {
+      userId,
+      type: UserTokenType.LOGIN_CODE,
+      tokenHash: UserToken.hashCode(userId, code),
+      attempts: 0,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      usedAt: null,
+      createdAt: new Date(),
+      ...overrides,
+    });
+  }
+
   function buildProfile(userId: string, cpf = '529.982.247-25'): ClientProfile {
     return ClientProfile.create({
       userId,
@@ -464,6 +910,15 @@ describe('Repositórios de usuários (integração)', () => {
       phone: Phone.create('(43) 99999-8888'),
       birthDate: BirthDate.create('1990-05-20'),
     });
+  }
+
+  /** Token do link de verificação de e-mail, gravado junto com o CLIENT no cadastro. */
+  function buildVerification(userId: string): UserToken {
+    return UserToken.issue({
+      userId,
+      type: UserTokenType.EMAIL_VERIFICATION,
+      validForMinutes: 24 * 60,
+    }).token;
   }
 
   /** Gera um CPF válido, para cada CLIENT do teste ter o seu (o CPF é UNIQUE). */

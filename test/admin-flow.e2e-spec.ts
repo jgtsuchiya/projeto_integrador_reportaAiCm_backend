@@ -51,7 +51,7 @@ describe('Fluxo do ADM (e2e)', () => {
     adminId = (response.body as { id: string }).id;
     expect(e2e.mailSender.messages).toHaveLength(1);
     expect(e2e.mailSender.messages[0].to).toBe(adminEmail);
-    invitationToken = e2e.lastInvitationToken();
+    invitationToken = e2e.lastLinkToken(adminEmail, '/convite');
   });
 
   it('deve aceitar o convite sem sessão, definindo a senha', async () => {

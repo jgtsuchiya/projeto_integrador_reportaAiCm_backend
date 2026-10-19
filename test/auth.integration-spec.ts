@@ -28,6 +28,7 @@ import { buildDataSourceOptions } from '@shared/infra/database/typeorm.options';
 
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
+import { deleteLoginAttempts } from './support/login-attempts';
 
 /** Rotas só de teste, para exercitar o AuthGuard e os decorators. */
 @Controller('test-auth')
@@ -61,6 +62,7 @@ describe('Autenticação e controle de acesso (integração)', () => {
   const env = envSchema.parse(process.env);
   const identityProvider = new SuperTokensIdentityProvider();
   const createdIds: string[] = [];
+  const emails: string[] = [];
   let dataSource: DataSource;
   let app: INestApplication;
   let baseUrl: string;
@@ -95,6 +97,7 @@ describe('Autenticação e controle de acesso (integração)', () => {
   afterAll(async () => {
     await dataSource?.getRepository(UserOrmEntity).delete({ id: In(createdIds) });
     await Promise.all(createdIds.map((id) => supertokens.deleteUser(id)));
+    await deleteLoginAttempts(dataSource, emails);
     await dataSource?.destroy();
     await app?.close();
   });
@@ -109,6 +112,7 @@ describe('Autenticação e controle de acesso (integração)', () => {
     } = {},
   ): Promise<TestUser> {
     const email = Email.create(`auth.${randomUUID()}@reportaai.invalid`);
+    emails.push(email.value);
     const id = await identityProvider.createCredentials(email, Password.create(PASSWORD));
     createdIds.push(id);
 
@@ -234,12 +238,16 @@ describe('Autenticação e controle de acesso (integração)', () => {
     });
 
     it('deve responder a senha incorreta no formato do SuperTokens', async () => {
+      // E-mail novo a cada execução: as falhas de um e-mail fixo se somariam até o bloqueio.
+      const email = `ninguem.${randomUUID()}@reportaai.invalid`;
+      emails.push(email);
+
       const response = await fetch(`${baseUrl}/api/auth/signin`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', rid: 'emailpassword' },
         body: JSON.stringify({
           formFields: [
-            { id: 'email', value: 'ninguem@reportaai.invalid' },
+            { id: 'email', value: email },
             { id: 'password', value: 'senha-qualquer-1' },
           ],
         }),
