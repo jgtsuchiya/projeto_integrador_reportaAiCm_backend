@@ -11,14 +11,14 @@ Como o painel web e o app fazem login e chamam a API do ReportaAi Cm. O funciona
 - Quem tem a verificação em duas etapas ativa ainda digita um código depois da senha ([verificação em duas etapas](#verificação-em-duas-etapas)).
 - Os links dos e-mails da API (convite, redefinição de senha e verificação de e-mail) abrem páginas do painel web, inclusive para o Client, no navegador do celular ([páginas dos links](#páginas-abertas-pelos-links-dos-e-mails)).
 
-|                      | Painel web                                | App mobile                                  |
-| -------------------- | ----------------------------------------- | ------------------------------------------- |
-| SDK                  | `supertokens-web-js`                      | `supertokens-react-native`                  |
-| Onde os tokens ficam | Cookies httpOnly, que o JavaScript não lê | Headers, guardados pelo SDK no AsyncStorage |
-| Papéis               | `SUPER_ADMIN` e `ADMIN`                   | `CLIENT`                                    |
-| Cadastro             | Convite por e-mail (ADM)                  | Autocadastro (`POST /api/clients`)          |
+|                      | Painel web                                | App mobile (Flutter)                             |
+| -------------------- | ----------------------------------------- | ------------------------------------------------ |
+| SDK                  | `supertokens-web-js`                      | `supertokens_flutter`, com o `Dio`               |
+| Onde os tokens ficam | Cookies httpOnly, que o JavaScript não lê | Headers, guardados pelo SDK no SharedPreferences |
+| Papéis               | `SUPER_ADMIN` e `ADMIN`                   | `CLIENT`                                         |
+| Cadastro             | Convite por e-mail (ADM)                  | Autocadastro (`POST /api/clients`)               |
 
-Os exemplos abaixo seguem a API pública do `supertokens-web-js` 0.16 e do `supertokens-react-native` 5.1, as versões atuais, compatíveis com o `supertokens-node` 24.0.3 do backend.
+Os exemplos abaixo seguem a API pública do `supertokens-web-js` 0.16 e do `supertokens_flutter` 0.6.5, compatíveis com o `supertokens-node` 24.0.3 do backend. As seções que valem para os dois fronts mostram a chamada com o `fetch`, em TypeScript: no app, a mesma chamada vai pelo `Dio`, com o mesmo corpo e as mesmas respostas.
 
 > A API não sabe de qual front veio o login: um Client consegue se autenticar pelo painel, e um ADM, pelo app. As rotas já barram o papel errado (403), mas cabe a cada front conferir o `role` do `/users/me` e recusar quem não é do seu público.
 
@@ -133,80 +133,103 @@ O e-mail de convite leva o ADM para **`<WEB_APP_URL>/convite?token=<token>`**. E
 
 ## App mobile
 
-```bash
-npm install supertokens-react-native @react-native-async-storage/async-storage
+O app é em Flutter e usa o `supertokens_flutter` com o `Dio`. No `pubspec.yaml`:
+
+```yaml
+dependencies:
+  dio: 5.11.1
+  supertokens_flutter: 0.6.5
 ```
 
-O SDK guarda os tokens no AsyncStorage (versões de 1.13 a 2.2). Inicialize-o uma vez, na entrada do app:
+O SDK guarda os tokens no SharedPreferences. Inicialize-o uma vez, no `main`, antes do `runApp`, e registre o interceptor dele no `Dio` que chama a API:
 
-```ts
-import SuperTokens from 'supertokens-react-native';
+```dart
+import 'package:dio/dio.dart';
+import 'package:supertokens_flutter/dio.dart';
+import 'package:supertokens_flutter/supertokens.dart';
 
-SuperTokens.init({
-  apiDomain: API_URL, // ex.: http://10.0.2.2:3000 no emulador Android, sem o /api
+SuperTokens.init(
+  apiDomain: apiUrl, // ex.: http://10.0.2.2:3000 no emulador Android, sem o /api
   apiBasePath: '/api/auth',
-});
+  tokenTransferMethod: SuperTokensTokenTransferMethod.HEADER, // o padrão do SDK
+  eventHandler: onSessionEvent, // ver "Quando a sessão acaba"
+);
+
+final dio = Dio(BaseOptions(baseUrl: '$apiUrl/api'));
+dio.interceptors.add(SuperTokensInterceptorWrapper(client: dio));
 ```
 
 **Cadastro.** O cidadão cria a conta pelo `POST /api/clients`, que é público, e o app faz o login em seguida:
 
-```ts
-const response = await fetch(`${API_URL}/api/clients`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    name: 'Maria da Silva',
-    email: 'maria.silva@exemplo.com',
-    password: 'SenhaForte123',
-    cpf: '529.982.247-25',
-    phone: '(44) 99999-8888',
-    birthDate: '1990-05-20',
-  }),
-});
-// 201: conta criada. 400: campos inválidos. 409: e-mail ou CPF já cadastrado.
+```dart
+final response = await dio.post<Map<String, dynamic>>(
+  '/clients',
+  data: {
+    'name': 'Maria da Silva',
+    'email': 'maria.silva@exemplo.com',
+    'password': 'SenhaForte123',
+    'cpf': '529.982.247-25',
+    'phone': '(44) 99999-8888',
+    'birthDate': '1990-05-20',
+  },
+);
+// 201: conta criada. No 400 (campos inválidos) e no 409 (e-mail ou CPF já cadastrado), o Dio
+// lança a DioException, com o corpo do erro no error.response.
 ```
 
-**Login.** O SDK de React Native cuida só da sessão, então o login é uma chamada direta à rota:
+**Login.** O SDK de Flutter cuida só da sessão, então o login é uma chamada direta à rota, pelo mesmo `Dio`. O interceptor guarda os tokens que voltam nos headers:
 
-```ts
-const response = await fetch(`${API_URL}/api/auth/signin`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    formFields: [
-      { id: 'email', value: email },
-      { id: 'password', value: password },
-    ],
-  }),
-});
+```dart
+try {
+  final response = await dio.post<Map<String, dynamic>>(
+    '/auth/signin',
+    data: {
+      'formFields': [
+        {'id': 'email', 'value': email},
+        {'id': 'password', 'value': password},
+      ],
+    },
+  );
+  final result = response.data!;
 
-if (response.status === 429) {
-  // Limite por IP: o header Retry-After traz os segundos de espera.
-} else {
-  const result = await response.json();
-
-  if (result.status === 'OK') {
+  if (result['status'] == 'OK') {
     // Sessão criada: o SDK já guardou os tokens.
-  } else if (result.status === 'GENERAL_ERROR') {
-    // E-mail bloqueado por tentativas: mostre o result.message.
+  } else if (result['status'] == 'GENERAL_ERROR') {
+    // E-mail bloqueado por tentativas: mostre o result['message'].
   } else {
     // WRONG_CREDENTIALS_ERROR ou FIELD_ERROR (o status HTTP é 200 nos dois casos).
+  }
+} on DioException catch (error) {
+  if (error.response?.statusCode == 429) {
+    // Limite por IP: o header Retry-After traz os segundos de espera.
+    final retryAfter = error.response?.headers.value('retry-after');
+  } else {
+    rethrow;
   }
 }
 ```
 
-O `GENERAL_ERROR` aparece depois de 5 falhas de login para o mesmo e-mail em 15 minutos e dura até uma delas sair da janela, mesmo com a senha correta. O 429 vem do limite por IP, acima de 20 tentativas por minuto, e tem o corpo no [formato de erro da aplicação](#erros), sem o campo `status`: confira o status HTTP antes de ler o resultado.
+O `GENERAL_ERROR` aparece depois de 5 falhas de login para o mesmo e-mail em 15 minutos e dura até uma delas sair da janela, mesmo com a senha correta. O 429 vem do limite por IP, acima de 20 tentativas por minuto, e tem o corpo no [formato de erro da aplicação](#erros), sem o campo `status`: com o `Dio`, ele chega como `DioException`, e não como resultado.
 
-O SDK intercepta o `fetch` das requisições para o `apiDomain`: pede os tokens por header (`st-auth-mode: header`), guarda os que voltam na resposta, envia o access token no `Authorization` das chamadas seguintes e renova a sessão quando recebe 401. Com o axios, registre o interceptor uma vez: `SuperTokens.addAxiosInterceptors(axios)`.
+O interceptor cuida das requisições do `Dio` para o `apiDomain`: pede os tokens por header (`st-auth-mode: header`), guarda os que voltam na resposta, envia o access token no `Authorization` das chamadas seguintes e, num 401, renova a sessão e repete a chamada. A renovação e o signout saem por dentro do SDK, pelo pacote `http`, e não passam pelos interceptors do `Dio`.
+
+Quando a sessão não renova mais, o interceptor do SDK entrega o 401 como uma resposta comum, sem lançar a `DioException`. Confira o status, ou registre depois do interceptor do SDK um interceptor que transforme o 401 em erro, como o app faz.
 
 **Sessão:**
 
-```ts
+```dart
 await SuperTokens.doesSessionExist(); // true se há sessão guardada (decide a tela inicial)
 await SuperTokens.signOut(); // encerra a sessão na API e apaga os tokens
 ```
 
-**Em dev**, o `localhost` do aparelho não é o da sua máquina. Use `http://10.0.2.2:3000` no emulador Android, `http://localhost:3000` no simulador do iOS e o IP da máquina na rede num aparelho físico. O app não passa pelo CORS.
+Os dois métodos não lançam erro sem rede:
+
+- com o access token vencido e sem rede para renovar, o `doesSessionExist` responde `false`, mas não apaga os tokens: a sessão continua guardada para a próxima tentativa;
+- o `signOut` só apaga os tokens depois que a API responde. Sem resposta, ele não lança erro e mantém os tokens no aparelho. O erro vai só para o `completionHandler`, e nem sempre: com o access token vencido e sem rede para renovar, o SDK nem chama a API.
+
+Para saber se ainda há tokens guardados, sem chamar a API, use o `SuperTokens.getUserId()`: ele lê o front token e lança a `SuperTokensException` quando não há sessão.
+
+**Em dev**, o `localhost` do aparelho não é o da sua máquina. Use `http://10.0.2.2:3000` no emulador Android, `http://localhost:3000` no simulador do iOS ou no celular com o `adb reverse tcp:3000 tcp:3000`, e o IP da máquina na rede num aparelho físico pelo Wi-Fi. O app não passa pelo CORS. O passo a passo está no [README do app](https://github.com/jgtsuchiya/projeto_integrador_reportaAiCm_mobile#conectando-à-api-local).
 
 ## Esqueci minha senha
 
@@ -347,9 +370,15 @@ O login de quem ativou segue os três passos abaixo.
 **1. Depois do login, confira se a sessão está pendente.** A situação vem na claim `mfa-verified` do access token, que o SDK lê sem chamar a API:
 
 ```ts
-// Web: Session.getAccessTokenPayloadSecurely(). App: SuperTokens.getAccessTokenPayloadSecurely().
+// Painel web.
 const payload = await Session.getAccessTokenPayloadSecurely();
 const pending = payload['mfa-verified']?.v === false;
+```
+
+```dart
+// App.
+final payload = await SuperTokens.getAccessTokenPayloadSecurely();
+final pending = payload['mfa-verified']?['v'] == false;
 ```
 
 - Com `pending`, leve o usuário para a tela do código, em vez de chamar o `GET /api/users/me`.
@@ -469,16 +498,27 @@ A renovação do access token é automática e o usuário não percebe. A sessã
 - a verificação em duas etapas é ativada em outro aparelho: as outras sessões caem do mesmo jeito, e a de quem ativou continua;
 - a senha é redefinida pelo link do e-mail: todas as sessões caem na renovação seguinte, em até 15 minutos.
 
-Nesses casos, a API responde 401, o SDK apaga os tokens e avisa pelo `onHandleEvent`, com a ação `UNAUTHORISED`. Use o evento para levar o usuário à tela de login:
+Nesses casos, a API responde 401, o SDK apaga os tokens e avisa o evento `UNAUTHORISED`: no painel, pelo `onHandleEvent`, e no app, pelo `eventHandler`. Use o evento para levar o usuário à tela de login:
 
 ```ts
-// Web: Session.init({ onHandleEvent }). App: SuperTokens.init({ ..., onHandleEvent }).
+// Painel web: Session.init({ onHandleEvent }).
 function onHandleEvent(event: { action: string }) {
   if (event.action === 'UNAUTHORISED' || event.action === 'SIGN_OUT') {
     // Ir para a tela de login.
   }
 }
 ```
+
+```dart
+// App: SuperTokens.init(..., eventHandler: onSessionEvent).
+void onSessionEvent(Eventype event) {
+  if (event == Eventype.UNAUTHORISED) {
+    // Ir para a tela de login, com o aviso de que a sessão expirou.
+  }
+}
+```
+
+No app, o `Eventype.SIGN_OUT` chega também quando o `signOut` não alcançou a API e os tokens continuam no aparelho. Antes de levar ao login por ele, confira se ainda há sessão guardada.
 
 ## Rotas de cada front
 

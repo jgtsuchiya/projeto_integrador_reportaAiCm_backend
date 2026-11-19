@@ -235,10 +235,10 @@ Acima do limite, a resposta é 429 no formato de erro da aplicação, inclusive 
 
 A sessão aceita os tokens por **cookie** (painel web) e por **header** (app). Quem escolhe é o front, pelo header `st-auth-mode` enviado no login:
 
-| `st-auth-mode`      | Quem envia                               | Como os tokens voltam                              | Como voltam para a API                 |
-| ------------------- | ---------------------------------------- | -------------------------------------------------- | -------------------------------------- |
-| `cookie`            | `supertokens-web-js` (padrão dele)       | Cookies `sAccessToken` e `sRefreshToken`, httpOnly | O navegador envia os cookies sozinho   |
-| `header` ou ausente | `supertokens-react-native` (padrão dele) | Headers `st-access-token` e `st-refresh-token`     | `Authorization: Bearer <access token>` |
+| `st-auth-mode`      | Quem envia                                  | Como os tokens voltam                              | Como voltam para a API                 |
+| ------------------- | ------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
+| `cookie`            | `supertokens-web-js` (padrão dele)          | Cookies `sAccessToken` e `sRefreshToken`, httpOnly | O navegador envia os cookies sozinho   |
+| `header` ou ausente | `supertokens_flutter`, do app (padrão dele) | Headers `st-access-token` e `st-refresh-token`     | `Authorization: Bearer <access token>` |
 
 Na verificação, a API procura a sessão nos dois lugares, então as rotas da aplicação não mudam conforme o modo.
 
