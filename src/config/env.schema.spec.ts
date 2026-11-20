@@ -35,6 +35,79 @@ describe('envSchema', () => {
       SMTP_SECURE: false,
       SMTP_USER: '',
       SMTP_PASSWORD: '',
+      REPORT_AREA_BOUNDS: {
+        minLatitude: -24.3,
+        minLongitude: -52.65,
+        maxLatitude: -23.8,
+        maxLongitude: -52.11,
+      },
+      REPORT_MAX_ACCURACY_METERS: 50,
+      REPORT_PHOTO_MAX_BYTES: 2097152,
+      REPORT_THUMBNAIL_MAX_BYTES: 102400,
+      REPORT_DAILY_LIMIT: 10,
+      REPORT_CONFIRMATIONS_REQUIRED: 10,
+      REPORT_REJECTIONS_REQUIRED: 10,
+    });
+  });
+
+  describe('variáveis dos reportes', () => {
+    it('deve converter as variáveis dos reportes para os tipos corretos', () => {
+      const env = envSchema.parse({
+        ...validEnv,
+        REPORT_AREA_BOUNDS: ' -25.5 , -50 , -25 , -49.5 ',
+        REPORT_MAX_ACCURACY_METERS: '30',
+        REPORT_PHOTO_MAX_BYTES: '1048576',
+        REPORT_THUMBNAIL_MAX_BYTES: '51200',
+        REPORT_DAILY_LIMIT: '5',
+        REPORT_CONFIRMATIONS_REQUIRED: '3',
+        REPORT_REJECTIONS_REQUIRED: '4',
+      });
+
+      expect(env).toMatchObject({
+        REPORT_AREA_BOUNDS: {
+          minLatitude: -25.5,
+          minLongitude: -50,
+          maxLatitude: -25,
+          maxLongitude: -49.5,
+        },
+        REPORT_MAX_ACCURACY_METERS: 30,
+        REPORT_PHOTO_MAX_BYTES: 1048576,
+        REPORT_THUMBNAIL_MAX_BYTES: 51200,
+        REPORT_DAILY_LIMIT: 5,
+        REPORT_CONFIRMATIONS_REQUIRED: 3,
+        REPORT_REJECTIONS_REQUIRED: 4,
+      });
+    });
+
+    it.each([
+      ['com três números', '-24.3,-52.65,-23.8'],
+      ['com cinco números', '-24.3,-52.65,-23.8,-52.11,0'],
+      ['com um texto', '-24.3,-52.65,norte,-52.11'],
+      ['com um número vazio', '-24.3,,-23.8,-52.11'],
+      ['com a latitude fora da faixa', '-91,-52.65,-23.8,-52.11'],
+      ['com a longitude fora da faixa', '-24.3,-181,-23.8,-52.11'],
+      ['com a latitude mínima maior que a máxima', '-23.8,-52.65,-24.3,-52.11'],
+      ['com a longitude mínima igual à máxima', '-24.3,-52.11,-23.8,-52.11'],
+    ])('deve rejeitar a REPORT_AREA_BOUNDS %s', (_case, bounds) => {
+      const result = envSchema.safeParse({ ...validEnv, REPORT_AREA_BOUNDS: bounds });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(['REPORT_AREA_BOUNDS']);
+    });
+
+    it.each([
+      ['REPORT_MAX_ACCURACY_METERS', '0'],
+      ['REPORT_MAX_ACCURACY_METERS', '1.5'],
+      ['REPORT_PHOTO_MAX_BYTES', '-1'],
+      ['REPORT_PHOTO_MAX_BYTES', '16777216'],
+      ['REPORT_THUMBNAIL_MAX_BYTES', 'abc'],
+      ['REPORT_DAILY_LIMIT', '0'],
+      ['REPORT_CONFIRMATIONS_REQUIRED', '-1'],
+      ['REPORT_REJECTIONS_REQUIRED', '2.5'],
+    ])('deve rejeitar %s=%p', (variable, value) => {
+      const result = envSchema.safeParse({ ...validEnv, [variable]: value });
+
+      expect(result.success).toBe(false);
     });
   });
 

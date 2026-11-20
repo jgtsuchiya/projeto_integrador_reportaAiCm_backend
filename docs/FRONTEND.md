@@ -10,6 +10,7 @@ Como o painel web e o app fazem login e chamam a API do ReportaAi Cm. O funciona
 - Depois do login, chame o `GET /api/users/me` para saber **quem entrou e com qual papel**.
 - Quem tem a verificação em duas etapas ativa ainda digita um código depois da senha ([verificação em duas etapas](#verificação-em-duas-etapas)).
 - Os links dos e-mails da API (convite, redefinição de senha e verificação de e-mail) abrem páginas do painel web, inclusive para o Client, no navegador do celular ([páginas dos links](#páginas-abertas-pelos-links-dos-e-mails)).
+- O app abre os reportes com a foto em base64, no JSON, e só com o e-mail confirmado ([reportes](#reportes)).
 
 |                      | Painel web                                | App mobile (Flutter)                             |
 | -------------------- | ----------------------------------------- | ------------------------------------------------ |
@@ -486,6 +487,169 @@ GET /api/users/me/sessions
 
 O aparelho da sessão encerrada não cai na hora: ele perde o acesso na renovação seguinte do token, em até 15 minutos.
 
+## Reportes
+
+O cidadão abre um reporte de buraco com a foto e a localização do aparelho, e acompanha, edita e exclui os próprios reportes. As rotas são só do Client: o ADM e o SuperAdm recebem 403. Como a API trata a foto e a localização por dentro está no [REPORTS.md](REPORTS.md).
+
+```mermaid
+sequenceDiagram
+    actor C as Cidadão
+    participant APP as App
+    participant API
+
+    C->>APP: tira a foto
+    APP->>APP: gera a foto e a miniatura (JPEG, sem EXIF)<br/>e captura a localização
+    APP->>API: GET /api/reports/nearby (raio de 30 m)
+    API-->>APP: reportes já abertos ali
+    APP->>C: "Já existe um reporte aqui. É o mesmo buraco?"
+    C->>APP: segue com um reporte novo
+    APP->>API: POST /api/reports + Idempotency-Key
+    API-->>APP: 201, o reporte PENDING
+```
+
+### Antes de abrir
+
+- **E-mail confirmado.** Sem ele, o `POST /api/reports` responde 422 "Confirme o seu e-mail para abrir reportes.". Confira o `emailVerifiedAt` do `GET /api/users/me` antes de mostrar o formulário ([verificação de e-mail](#verificação-de-e-mail)). Depois da confirmação, a mesma sessão já abre reportes.
+- **A foto e a miniatura, geradas no app.** A API não redimensiona nem gira a imagem: ela só confere e tira os metadados.
+
+| Imagem      | Formato | Tamanho máximo | Maior lado | Campo             |
+| ----------- | ------- | -------------- | ---------- | ----------------- |
+| A foto      | JPEG    | 2 MB           | 2048 px    | `photo.content`   |
+| A miniatura | JPEG    | 100 KB         | 480 px     | `photo.thumbnail` |
+
+- Aplique a orientação nos pixels: a API não lê a orientação do EXIF. Tire o EXIF no app também (ele pode ter o GPS e o modelo do aparelho): a API o tira de novo, por garantia.
+- A API confere o formato pelos bytes: PNG, WebP e HEIC são recusados, mesmo com outro nome. Os tamanhos são os da imagem, antes do base64.
+- **A localização.** Precisão de até 50 m e dentro de Campo Mourão. A precisão vai em metros (`accuracyMeters`, maior que zero) e volta arredondada para cima.
+- **Reporte repetido.** Antes de enviar, consulte o `GET /api/reports/nearby` com raio de 30 m e pergunte ao cidadão se o buraco é o mesmo.
+
+### Abrir o reporte
+
+```http
+POST /api/reports
+Idempotency-Key: 3b241101-e2bb-4255-8caf-4136c566a962
+```
+
+```json
+{
+  "description": "Buraco grande na faixa da direita, perto do semáforo.",
+  "location": { "latitude": -24.045812, "longitude": -52.378901, "accuracyMeters": 8.5 },
+  "photo": {
+    "content": "/9j/4AAQSkZJRgABAQAAAQABAAD...",
+    "thumbnail": "/9j/4AAQSkZJRgABAQAAAQABAAD..."
+  }
+}
+```
+
+- O base64 é o padrão (RFC 4648), com o `=` do fim, sem quebra de linha e sem o prefixo `data:image/jpeg;base64,`. No Dart, é o que o `base64Encode` do `dart:convert` gera.
+- A `description` é opcional, de até 500 caracteres. Vazia ou `null`, o reporte fica sem descrição.
+- **`Idempotency-Key`.** Crie um UUID quando a tela abre e envie o mesmo em todas as tentativas daquele reporte. Se a resposta se perder (timeout, rede caiu) e o app repetir, a API devolve o reporte já criado, com 201, em vez de criar outro, e ele não conta de novo no limite por dia. Uma chave que não é UUID responde 400. Se o cidadão excluiu o reporte da chave, a repetição responde 404.
+- **Tempo limite.** A foto pode levar alguns segundos para subir em rede móvel: use um tempo limite maior que o padrão do `Dio` no envio e na resposta (o plano do app usa 60 s).
+- **Não registre no log** o base64 nem as coordenadas, nem no corpo, nem na query.
+
+```dart
+final response = await dio.post<Map<String, dynamic>>(
+  '/reports',
+  data: {
+    'description': description,
+    'location': {'latitude': lat, 'longitude': lng, 'accuracyMeters': accuracy},
+    'photo': {'content': base64Encode(photoBytes), 'thumbnail': base64Encode(thumbnailBytes)},
+  },
+  options: Options(
+    headers: {'Idempotency-Key': idempotencyKey},
+    sendTimeout: const Duration(seconds: 60),
+    receiveTimeout: const Duration(seconds: 60),
+  ),
+);
+```
+
+A resposta (201) é o reporte, no mesmo formato de todas as rotas de reportes:
+
+```json
+{
+  "id": "8f0e2c4a-6b1d-4c7e-9a52-3d6f1e0b7a91",
+  "status": "PENDING",
+  "description": "Buraco grande na faixa da direita, perto do semáforo.",
+  "location": { "latitude": -24.045812, "longitude": -52.378901, "accuracyMeters": 9 },
+  "photo": { "id": "c1b7d0e2-2f4a-4b8e-9d61-5a3c7e8f9b10", "width": 1600, "height": 1200 },
+  "votes": {
+    "confirmations": 0,
+    "rejections": 0,
+    "confirmationsRequired": 10,
+    "rejectionsRequired": 10
+  },
+  "isMine": true,
+  "canEdit": true,
+  "canDelete": true,
+  "createdAt": "2026-11-09T14:30:00.000Z",
+  "updatedAt": "2026-11-09T14:30:00.000Z",
+  "statusChangedAt": null
+}
+```
+
+- `status`: `PENDING` ("Em validação"), `CONFIRMED` ou `REJECTED`. Os status do atendimento pela prefeitura entram depois: trate um valor desconhecido sem quebrar.
+- `votes` traz as contagens e quantas são necessárias, para o app mostrar "3 de 10 confirmações". As contagens mudam com a validação comunitária.
+- **`isMine`, `canEdit` e `canDelete`** já vêm calculados para quem está logado. Mostre os botões de editar e excluir a partir deles, sem repetir as regras no app.
+- A resposta nunca traz quem abriu o reporte: o `isMine` basta.
+- `photo` traz só o id e as dimensões da foto. As imagens vêm pelo `GET /api/reports/:id/photo`.
+
+### Consultar
+
+| Rota                                                                 | Resposta                                                                                                                                                                                       |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/reports/mine?page=1&pageSize=20&status=PENDING`            | Os reportes do cidadão, em qualquer status, do mais novo ao mais antigo: `{ items, page, pageSize, total }`. O `status` é opcional                                                             |
+| `GET /api/reports/nearby?latitude=...&longitude=...&radiusMeters=30` | Os reportes PENDING e CONFIRMED de qualquer cidadão, do mais perto ao mais longe, até 50: `{ items }`, cada um com o `distanceMeters` (inteiro). O raio vai de 10 a 5000 m, com padrão de 1000 |
+| `GET /api/reports/:id`                                               | O reporte                                                                                                                                                                                      |
+| `GET /api/reports/:id/photo?size=thumbnail`                          | `{ id, mimeType, content }`, com o `content` em base64. `size` é `full` (padrão) ou `thumbnail`                                                                                                |
+
+- O cidadão vê os próprios reportes em qualquer status, e os dos outros só em PENDING e CONFIRMED. Fora disso, e no reporte excluído, a resposta é 404.
+- **Cache das fotos.** O `id` da foto muda quando ela é trocada: use-o como chave do cache, e o cache nunca mostra a foto antiga. Nas listas, carregue as miniaturas (`size=thumbnail`) só quando o item aparece.
+
+```dart
+final response = await dio.get<Map<String, dynamic>>(
+  '/reports/$reportId/photo',
+  queryParameters: {'size': 'thumbnail'},
+);
+final bytes = base64Decode(response.data!['content'] as String);
+// Image.memory(bytes), em cache pelo response.data!['id'].
+```
+
+### Editar e excluir
+
+```http
+PATCH /api/reports/8f0e2c4a-6b1d-4c7e-9a52-3d6f1e0b7a91
+```
+
+```json
+{ "description": "" }
+```
+
+- O `PATCH` aceita a `description` e a `photo` (no mesmo formato do `POST`), pelo menos uma, e responde o reporte. `""` (ou `null`) apaga a descrição, e o campo ausente não muda. A localização não muda.
+- A foto nova ganha outro `photo.id`: atualize a chave do cache.
+- O `DELETE /api/reports/:id` responde 204. O reporte some de todas as rotas, e continua contando no limite de 10 por dia.
+- Só o autor edita e exclui, e só enquanto o reporte está em validação. A edição também exige que ninguém tenha votado. O `canEdit` e o `canDelete` já dizem isso.
+
+### Erros dos reportes
+
+| Status | Quando                                                                                                        | O que o app faz                                                   |
+| ------ | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 400    | Campo inválido. O `details` traz o campo (ex.: `photo.content`, `location.accuracyMeters`, `Idempotency-Key`) | Mostra a `message` de cada campo. Na foto, gere a imagem de novo  |
+| 403    | Editar ou excluir o reporte de outro cidadão                                                                  | Não deveria acontecer se o app seguir o `canEdit` e o `canDelete` |
+| 404    | O reporte não existe, foi excluído ou não está visível para o cidadão                                         | Volta para a lista e a atualiza                                   |
+| 413    | O corpo passa do limite das rotas de reportes (cerca de 2,8 MB)                                               | Gera a foto com mais compressão e tenta de novo                   |
+| 422    | Regra de negócio, com a `message` pronta para exibir (tabela abaixo)                                          | Mostra a `message`                                                |
+
+| Situação (422)            | `message`                                                       |
+| ------------------------- | --------------------------------------------------------------- |
+| E-mail não confirmado     | "Confirme o seu e-mail para abrir reportes."                    |
+| Fora de Campo Mourão      | "Este lugar fica fora de Campo Mourão."                         |
+| Precisão pior que 50 m    | "A localização está imprecisa. Tente de novo num lugar aberto." |
+| Limite por dia            | "Você chegou ao limite de 10 reportes por dia."                 |
+| Editar com votos          | "O reporte já recebeu votos e não pode mais ser editado."       |
+| Editar fora de validação  | "Só é possível editar um reporte em validação."                 |
+| Excluir fora de validação | "Só é possível excluir um reporte em validação."                |
+
+As mensagens de 400 da foto dizem qual das imagens falhou: "A foto precisa ser uma imagem JPEG.", "A foto passa de 2 MB.", "A foto passa de 2048 px no maior lado.", "A foto precisa estar em base64, sem o prefixo "data:"." e as equivalentes para a miniatura.
+
 ## Quando a sessão acaba
 
 A renovação do access token é automática e o usuário não percebe. A sessão termina de vez quando:
@@ -539,6 +703,9 @@ No app, o `Eventype.SIGN_OUT` chega também quando o `signOut` não alcançou a 
 | `POST /api/invitations/accept`                                              |     ✔      |     | Página `/convite`, sem sessão                                   |
 | `GET /api/clients`, `GET /api/clients/:id`, `PATCH /api/clients/:id/status` |     ✔      |     | `ADMIN` e `SUPER_ADMIN`                                         |
 | `/api/admins` (convite, listagem, edição, status, reenvio, exclusão)        |     ✔      |     | Só o `SUPER_ADMIN`                                              |
+| `POST /api/reports`                                                         |            |  ✔  | Abre o reporte, com a foto em base64. Exige o e-mail confirmado |
+| `GET /api/reports/mine`, `/nearby`, `/:id` e `/:id/photo`                   |            |  ✔  | Os próprios reportes, os de perto, o detalhe e a foto           |
+| `PATCH` e `DELETE /api/reports/:id`                                         |            |  ✔  | Só o autor, com o reporte em validação ([reportes](#reportes))  |
 
 As listagens recebem `?page=1&pageSize=20` (até 100 por página) e respondem `{ items, page, pageSize, total }`. O corpo e a resposta de cada rota estão na coleção [api.http](api.http), e quem pode chamar cada uma, na [matriz de permissões](AUTH.md#matriz-de-permissões).
 
@@ -554,6 +721,8 @@ A API valida tudo de novo, mas validar no front evita uma ida ao servidor:
 | `cpf`       | Com ou sem máscara (`529.982.247-25` ou `52998224725`), com os dígitos verificadores válidos. Único e não pode ser alterado |
 | `phone`     | DDD + número, com ou sem máscara. Celular com 9 dígitos, começando por 9, ou fixo com 8 dígitos                             |
 | `birthDate` | `AAAA-MM-DD`, no passado                                                                                                    |
+
+Os campos dos reportes (a descrição, a localização e as duas imagens) estão em [antes de abrir](#antes-de-abrir).
 
 ## Erros
 
@@ -579,8 +748,11 @@ As rotas da aplicação respondem os erros sempre no mesmo formato, com a `messa
 | 403    | Sessão pendente da segunda etapa (ver abaixo) | Formato do SuperTokens, sem `statusCode`                      |
 | 404    | Recurso não encontrado                        | (ausente)                                                     |
 | 409    | E-mail ou CPF já cadastrado                   | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
+| 413    | Corpo maior que o limite da rota (ver abaixo) | (ausente)                                                     |
 | 422    | Regra de negócio (ex.: link expirado)         | Depende da regra                                              |
 | 429    | Muitas requisições do mesmo IP (ver abaixo)   | (ausente)                                                     |
+
+O 413 vem do limite do corpo: 100 KB nas rotas em geral e cerca de 2,8 MB nas de reportes, que recebem a foto em base64. O JSON malformado responde 400 "O corpo da requisição não é um JSON válido.".
 
 O 429 vem do limite por IP do login, do cadastro do Client, do aceite do convite, das duas rotas da redefinição de senha e da confirmação do e-mail: cada uma dessas rotas aceita 20 requisições por minuto por IP. A resposta traz o header `Retry-After`, com os segundos que faltam para a próxima tentativa.
 

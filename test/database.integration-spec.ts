@@ -160,6 +160,71 @@ describe('Banco de dados (integração)', () => {
     });
   });
 
+  describe('CreateReportsTables', () => {
+    const MIGRATION = 'CreateReportsTables1795056607763';
+    const CLIENT_ROLE_ID = 3;
+    const userId = randomUUID();
+
+    afterEach(async () => {
+      await dataSource.runMigrations();
+      await dataSource.query('DELETE FROM reports WHERE author_id = ?', [userId]);
+      await dataSource.query('DELETE FROM users WHERE id = ?', [userId]);
+    });
+
+    it('deve criar a coluna espacial com o SRID 4326 e o índice espacial', async () => {
+      await dataSource.runMigrations();
+
+      const [table] = await dataSource.query<Array<{ 'Create Table': string }>>(
+        'SHOW CREATE TABLE reports',
+      );
+
+      expect(table?.['Create Table']).toMatch(
+        /`location` point NOT NULL \/\*!80003 SRID 4326 \*\//,
+      );
+      expect(table?.['Create Table']).toContain('SPATIAL KEY `sidx_reports_location` (`location`)');
+    });
+
+    it('deve reverter e aplicar de novo num banco com usuários e reportes', async () => {
+      await dataSource.runMigrations();
+      await dataSource.query(
+        'INSERT INTO users (id, role_id, name, email, status) VALUES (?, ?, ?, ?, ?)',
+        [userId, CLIENT_ROLE_ID, 'Maria da Silva', `client.${userId}@example.com`, 'ACTIVE'],
+      );
+      await dataSource.query(
+        `INSERT INTO reports (id, author_id, location, accuracy_meters)
+           VALUES (?, ?, ST_GeomFromText('POINT(-52.378901 -24.045812)', 4326, 'axis-order=long-lat'), 9)`,
+        [randomUUID(), userId],
+      );
+
+      await revertDownTo(MIGRATION);
+      const tablesAfterRevert = await listTables();
+      await dataSource.runMigrations();
+
+      expect(tablesAfterRevert).not.toContain('reports');
+      expect(tablesAfterRevert).not.toContain('report_photos');
+      await expect(listTables()).resolves.toEqual(
+        expect.arrayContaining(['reports', 'report_photos']),
+      );
+      const [user] = await dataSource.query<Array<{ id: string }>>(
+        'SELECT id FROM users WHERE id = ?',
+        [userId],
+      );
+      expect(user?.id).toBe(userId);
+    });
+
+    it('deve recusar o reporte de um usuário que não existe', async () => {
+      await dataSource.runMigrations();
+
+      await expect(
+        dataSource.query(
+          `INSERT INTO reports (id, author_id, location, accuracy_meters)
+             VALUES (?, ?, ST_GeomFromText('POINT(-52.37 -24.04)', 4326, 'axis-order=long-lat'), 9)`,
+          [randomUUID(), randomUUID()],
+        ),
+      ).rejects.toThrow(/fk_reports_author_id/);
+    });
+  });
+
   it('deve usar o charset utf8mb4 no banco', async () => {
     const [schema] = await dataSource.query<{ charset: string }[]>(
       'SELECT DEFAULT_CHARACTER_SET_NAME AS charset FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = DATABASE()',

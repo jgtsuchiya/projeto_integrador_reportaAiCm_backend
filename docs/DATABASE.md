@@ -89,6 +89,8 @@ erDiagram
     users ||--o| client_profiles : "user_id"
     users ||--o{ user_tokens : "user_id"
     users |o--o{ users : "created_by_id"
+    users ||--o{ reports : "author_id"
+    reports ||--|| report_photos : "report_id"
 
     roles {
         smallint id PK
@@ -135,17 +137,47 @@ erDiagram
         boolean succeeded
         datetime created_at
     }
+    reports {
+        char id PK
+        char author_id FK
+        enum status
+        varchar description
+        point location
+        smallint accuracy_meters
+        smallint confirmations_count
+        smallint rejections_count
+        char idempotency_key
+        datetime status_changed_at
+        datetime created_at
+        datetime updated_at
+        datetime deleted_at
+    }
+    report_photos {
+        char id PK
+        char report_id FK, UK
+        varchar mime_type
+        smallint width
+        smallint height
+        int size_bytes
+        mediumblob content
+        mediumblob thumbnail
+        datetime created_at
+    }
 ```
 
-| Tabela            | Conteúdo                                                                                                                                                                                                                                                                                                          |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `roles`           | Papéis de acesso, carregados pela própria migration: `1` = `SUPER_ADMIN`, `2` = `ADMIN`, `3` = `CLIENT`. O `code` é o mesmo nome do papel no SuperTokens                                                                                                                                                          |
-| `users`           | Dados comuns a todos os papéis. O `id` é o mesmo do usuário no SuperTokens, e não há coluna de senha. `deleted_at` marca a exclusão lógica                                                                                                                                                                        |
-| `client_profiles` | Dados exclusivos do Client (1:1 com `users`, com a PK igual à FK): CPF e telefone só com dígitos, e a data de nascimento                                                                                                                                                                                          |
-| `user_tokens`     | Tokens de uso único enviados por e-mail. O `type` diz o uso: `INVITATION` (convite de ADM), `PASSWORD_RESET` (redefinição de senha), `EMAIL_VERIFICATION` (verificação de e-mail) e `LOGIN_CODE` (código da segunda etapa do login, o único que usa o contador de erros `attempts`). Guarda só o SHA-256 do token |
-| `login_attempts`  | Uma linha por tentativa de login: o e-mail informado (com conta ou não), o IP, o user agent e o resultado. Tem índices em (`email`, `created_at`), para contar as falhas recentes de um e-mail, e em `created_at`, para apagar as linhas antigas                                                                  |
+| Tabela            | Conteúdo                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `roles`           | Papéis de acesso, carregados pela própria migration: `1` = `SUPER_ADMIN`, `2` = `ADMIN`, `3` = `CLIENT`. O `code` é o mesmo nome do papel no SuperTokens                                                                                                                                                                                                                                         |
+| `users`           | Dados comuns a todos os papéis. O `id` é o mesmo do usuário no SuperTokens, e não há coluna de senha. `deleted_at` marca a exclusão lógica                                                                                                                                                                                                                                                       |
+| `client_profiles` | Dados exclusivos do Client (1:1 com `users`, com a PK igual à FK): CPF e telefone só com dígitos, e a data de nascimento                                                                                                                                                                                                                                                                         |
+| `user_tokens`     | Tokens de uso único enviados por e-mail. O `type` diz o uso: `INVITATION` (convite de ADM), `PASSWORD_RESET` (redefinição de senha), `EMAIL_VERIFICATION` (verificação de e-mail) e `LOGIN_CODE` (código da segunda etapa do login, o único que usa o contador de erros `attempts`). Guarda só o SHA-256 do token                                                                                |
+| `login_attempts`  | Uma linha por tentativa de login: o e-mail informado (com conta ou não), o IP, o user agent e o resultado. Tem índices em (`email`, `created_at`), para contar as falhas recentes de um e-mail, e em `created_at`, para apagar as linhas antigas                                                                                                                                                 |
+| `reports`         | Os reportes de buracos. O `status` é `PENDING` (em validação), `CONFIRMED` ou `REJECTED`. A `location` é um `POINT SRID 4326`, com índice espacial. As contagens dos votos são cópias, atualizadas com cada voto. `deleted_at` marca a exclusão lógica pelo autor. Tem índice em (`author_id`, `created_at`), para "meus reportes" e o limite por dia, e o UNIQUE da `Idempotency-Key` por autor |
+| `report_photos`   | A foto de cada reporte (uma por reporte, por enquanto), em binário: a imagem (até 2 MB) e a miniatura (até 100 KB), sem os metadados. A largura, a altura e o tamanho são os da foto. A troca da foto apaga a linha e grava outra, com outro id                                                                                                                                                  |
 
 As FKs de `client_profiles` e `user_tokens` usam `ON DELETE CASCADE`, porque esses registros não existem sem o usuário. As de `users` (`role_id` e `created_by_id`) usam `RESTRICT`. Na prática, os usuários não são apagados fisicamente: a exclusão é lógica.
+
+A FK de `reports.author_id` usa `RESTRICT`, como as de `users`: os usuários não são apagados fisicamente, e os reportes continuam ligados à conta anonimizada (RN11). Nenhum dado pessoal fica nas tabelas de reportes. A FK de `report_photos` usa `ON DELETE CASCADE`.
 
 `login_attempts` não tem FK para `users` de propósito: o bloqueio do login conta as tentativas de qualquer e-mail informado, com conta ou não ([AUTH.md](AUTH.md#bloqueio-do-login-por-tentativas)). Como a tabela guarda dado pessoal (e-mail e IP), as linhas têm prazo: as com mais de 30 dias são apagadas quando a API sobe e, depois, uma vez por dia (RN19).
 
@@ -167,6 +199,17 @@ As credenciais e as sessões ficam no PostgreSQL do SuperTokens, criado e mantid
 - **O uso** fica em `used_at`. O token usado continua na tabela até ser substituído por um novo do mesmo tipo ou, no ADM, até a exclusão da conta.
 
 As regras de cada fluxo estão no [AUTH.md](AUTH.md): [convite](AUTH.md#convite-de-adm), [recuperação de senha](AUTH.md#recuperação-de-senha), [verificação de e-mail](AUTH.md#verificação-de-e-mail) e [verificação em duas etapas](AUTH.md#verificação-em-duas-etapas).
+
+### Reportes e a coluna espacial
+
+As tabelas dos reportes vêm do [plano da sprint 4](sprints/sprint-4-reportes.md#3-modelagem-mysql). Como o módulo usa cada uma está no [REPORTS.md](REPORTS.md).
+
+- **SRID e índice espacial.** A coluna é `location point NOT NULL SRID 4326` (WGS 84, o sistema do GPS), com o índice `sidx_reports_location`. O MySQL só usa o índice espacial numa coluna `NOT NULL` e restrita a um SRID. O TypeORM não gera o `SRID` no MySQL, então a migration foi escrita à mão, e o `migration:generate` não acusa diferença por causa dele (ele também não o lê do banco).
+- **Ordem dos eixos.** No SRID 4326, o MySQL lê e escreve o WKT na ordem latitude-longitude, ao contrário do GeoJSON: o `ST_X()` devolve a latitude. Escreva com `ST_GeomFromText(?, 4326, 'axis-order=long-lat')` e leia com `ST_Latitude()` e `ST_Longitude()`, nunca com `ST_X()` e `ST_Y()`. As expressões ficam no repositório, pelo QueryBuilder, e a entidade ORM marca a coluna com `select: false`, para o TypeORM não a ler com o `ST_AsText()` dele.
+- **Distância em metros.** No SRID 4326, o `ST_Distance()` entre dois pontos responde em metros, no elipsoide. Para usar o índice espacial, a consulta filtra antes por um retângulo em volta do ponto (`MBRContains`) e só depois pela distância. Com poucas linhas, o otimizador prefere ler a tabela inteira: confira o plano com milhares de linhas e as estatísticas em dia (`ANALYZE TABLE`), como faz o `test/reports-repositories.integration-spec.ts`. No MySQL 9.7, o `EXPLAIN` sai no formato de árvore: use `EXPLAIN FORMAT=TRADITIONAL` para ver as colunas `type` e `key`.
+- **UNIQUE da `Idempotency-Key`.** O índice é `uq_reports_idempotency_key_author_id` (`idempotency_key`, `author_id`), com a chave na frente. Na ordem (`author_id`, `idempotency_key`), o MySQL 9.7 o usa para a FK do autor e deixa de conferi-la nas linhas com a chave nula: um reporte sem a chave entrava com um `author_id` inexistente. Com a chave na frente, a FK usa o índice (`author_id`, `created_at`), que não tem coluna nula.
+- **FK para outro módulo.** A entidade `ReportOrmEntity` declara a FK para `users` pelo nome da tabela (`@ForeignKey('users', ...)`), sem relação com a entidade do módulo `users`. Quem monta um `DataSource` com a lista de entidades (como os testes de integração) inclui a `UserOrmEntity` e a `RoleOrmEntity`.
+- **Imagens.** As colunas `content` e `thumbnail` são `MEDIUMBLOB` (até 16 MB; a miniatura passa dos 64 KB do `BLOB`) e usam `select: false`: nenhuma consulta traz as imagens sem pedir. A foto é lida uma imagem por vez.
 
 ### Status do usuário
 
@@ -234,4 +277,4 @@ npm run test:integration
 
 O script carrega o `.env` e, em seguida, o [.env.test](../.env.test), que troca o banco para `reportaai_cm_test` e deixa alto o limite por IP (`RATE_LIMIT_MAX_REQUESTS`), para ele não interferir nos testes. O teste do limite (`test/rate-limit.integration-spec.ts`) baixa o valor só nele, com o `ConfigService.set`, antes do `configureApp`. Como proteção, o teste **aborta se o nome do banco não terminar em `_test`**, para nunca rodar migrations no banco de desenvolvimento.
 
-Os testes e2e (`npm run test:e2e`) usam o mesmo banco e a mesma proteção. Eles apagam todos os usuários do banco de teste ao começar e ao terminar ([TESTING.md](TESTING.md#testes-e2e)).
+Os testes e2e (`npm run test:e2e`) usam o mesmo banco e a mesma proteção. Eles apagam todos os usuários e os reportes do banco de teste ao começar e ao terminar ([TESTING.md](TESTING.md#testes-e2e)). Os reportes saem antes dos usuários, por causa da FK com `RESTRICT`.

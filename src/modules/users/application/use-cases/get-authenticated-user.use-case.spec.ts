@@ -21,13 +21,28 @@ describe('GetAuthenticatedUserUseCase', () => {
     });
   }
 
-  it('deve retornar o id, o papel e a sessão de um usuário ACTIVE', async () => {
+  it('deve retornar o id, o papel, a sessão e o e-mail não verificado de um usuário ACTIVE', async () => {
     userRepository.findById.mockResolvedValue(createClient());
 
     const result = await sut.execute({ userId: 'client-1', sessionHandle: 'session-1' });
 
-    expect(result).toEqual({ id: 'client-1', role: Role.CLIENT, sessionHandle: 'session-1' });
+    expect(result).toEqual({
+      id: 'client-1',
+      role: Role.CLIENT,
+      sessionHandle: 'session-1',
+      emailVerified: false,
+    });
     expect(userRepository.findById).toHaveBeenCalledWith('client-1');
+  });
+
+  it('deve informar o e-mail verificado', async () => {
+    const client = createClient();
+    client.verifyEmail();
+    userRepository.findById.mockResolvedValue(client);
+
+    const result = await sut.execute({ userId: 'client-1', sessionHandle: 'session-1' });
+
+    expect(result).toMatchObject({ emailVerified: true });
   });
 
   it('deve retornar null quando o usuário não existe ou foi excluído', async () => {

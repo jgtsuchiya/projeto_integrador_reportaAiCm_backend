@@ -1,4 +1,4 @@
-# Coleção de requisições da API do ReportaAi Cm: usuários e autenticação (sprints 2 e 3).
+# Coleção de requisições da API do ReportaAi Cm: usuários, autenticação e reportes (sprints 2 a 4).
 #
 # Como usar
 #   1. Instale a extensão "REST Client" do VS Code (humao.rest-client, já recomendada em
@@ -13,8 +13,8 @@
 # O painel web usa cookies, que o SDK dele controla (ver docs/AUTH.md e docs/FRONTEND.md).
 #
 # Os passos manuais são os segredos que só existem nos e-mails: o token do convite do ADM
-# (seção 3), o da verificação de e-mail (seção 5), o da redefinição de senha (seção 6) e o código
-# da segunda etapa do login (seção 10).
+# (seção 3), o da verificação de e-mail (seção 5), o da redefinição de senha (seção 6), o código
+# da segunda etapa do login (seção 10) e a verificação de e-mail do Client dos reportes (seção 13).
 
 @baseUrl = http://localhost:3000/api
 
@@ -45,6 +45,21 @@
 
 # Código de 6 dígitos da segunda etapa do login, copiado do e-mail (seção 10).
 @mfaCode = 000000
+
+# Client dos reportes (seção 13). Ele é outro, porque a seção 8 exclui o Client da seção 4.
+@reporterEmail = joao.reportes@reportaai.local
+@reporterCpf = 111.444.777-35
+@reporterPassword = SenhaForte123
+
+# Token do link de verificação de e-mail do Client dos reportes, copiado do e-mail (seção 13).
+@reporterVerificationToken = cole-aqui-o-token-da-verificacao-do-client-dos-reportes
+
+# Idempotency-Key do reporte da seção 13: troque por outro UUID para abrir outro reporte.
+@reportIdempotencyKey = 3b241101-e2bb-4255-8caf-4136c566a962
+
+# Imagem JPEG pequena (48 x 36 px) em base64, usada como foto e como miniatura (seção 13).
+# É a test/fixtures/report-thumbnail.jpg.
+@jpegBase64 = /9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAkADADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDyqKz9qtxWftWjFZ+1XIrP2rk9qZ4bFmdFZ+1W4rP2rRis/arkVn7VPtT6LDYszorP2q3FZ+1aMVn7Vcis/al7U+hw2LMKKz9qtxWftWjFZ+1XIrP2rzfan4phsWZ0Vn7Vbis/atGKz9quRWftS9qfQ4bFmdFZ+1W4rP2rRis/arkVn7VPtT6HDYs52KJfSrkUS+lFFch+RYZstxRL6VciiT0ooqT6HDNluKJfSrkUS+lFFJn0OGbP/9k=
 
 ###
 # ==============================================================================================
@@ -577,3 +592,170 @@ Content-Type: application/json
 {
   "formFields": [{ "id": "email", "value": "{{clientEmail}}" }]
 }
+
+###
+# ==============================================================================================
+# 13. Reportes (só o Client, com o e-mail confirmado)
+# ==============================================================================================
+# Um Client novo, para os reportes não dependerem das seções anteriores. ADM e SuperAdm recebem
+# 403 em todas as rotas de /reports.
+
+### Cadastra o Client dos reportes
+# @name registerReporter
+POST {{baseUrl}}/clients
+Content-Type: application/json
+
+{
+  "name": "João Pereira",
+  "email": "{{reporterEmail}}",
+  "password": "{{reporterPassword}}",
+  "cpf": "{{reporterCpf}}",
+  "phone": "(44) 98888-7777",
+  "birthDate": "1988-03-15"
+}
+
+### Login do Client dos reportes
+# @name loginReporter
+POST {{baseUrl}}/auth/signin
+Content-Type: application/json
+st-auth-mode: header
+
+{
+  "formFields": [
+    { "id": "email", "value": "{{reporterEmail}}" },
+    { "id": "password", "value": "{{reporterPassword}}" }
+  ]
+}
+
+###
+
+@reporterToken = {{loginReporter.response.headers.st-access-token}}
+
+### Abrir um reporte antes de confirmar o e-mail
+# Resposta: 422, com "Confirme o seu e-mail para abrir reportes." (RN26).
+POST {{baseUrl}}/reports
+Content-Type: application/json
+Authorization: Bearer {{reporterToken}}
+
+{
+  "location": { "latitude": -24.045812, "longitude": -52.378901, "accuracyMeters": 8.5 },
+  "photo": { "content": "{{jpegBase64}}", "thumbnail": "{{jpegBase64}}" }
+}
+
+### Lê o último e-mail capturado pelo Mailpit (não é rota da API)
+# Copie o token do link (.../verificar-email?token=<token>) para a variável
+# @reporterVerificationToken, no topo do arquivo.
+GET http://localhost:8025/view/latest.txt
+
+### Confirma o e-mail do Client dos reportes (público)
+# A mesma sessão passa a abrir reportes: o guard lê o e-mail verificado a cada requisição.
+# Resposta: 204.
+POST {{baseUrl}}/email-verifications/confirm
+Content-Type: application/json
+
+{
+  "token": "{{reporterVerificationToken}}"
+}
+
+### Reportes já abertos perto do lugar (raio de 30 m): o app pergunta se é o mesmo buraco
+# Resposta: 200, com { "items": [...] }: os reportes PENDING e CONFIRMED de qualquer Client, do
+# mais perto ao mais longe, até 50, cada um com o distanceMeters. O raio vai de 10 a 5000 m
+# (padrão 1000). Latitude fora da faixa ou raio acima de 5000: 400.
+GET {{baseUrl}}/reports/nearby?latitude=-24.045812&longitude=-52.378901&radiusMeters=30
+Authorization: Bearer {{reporterToken}}
+
+### Abre o reporte, com a foto em base64 e a Idempotency-Key
+# A foto e a miniatura são JPEG em base64 (RFC 4648, com o "=" do fim, sem "data:"): a foto até
+# 2 MB e 2048 px no maior lado, a miniatura até 100 KB e 480 px. A localização precisa estar em
+# Campo Mourão, com precisão de até 50 m.
+# Resposta: 201, com o reporte PENDING, o canEdit e o canDelete. Campo inválido (ex.: imagem que
+# não é JPEG): 400, com o campo em details. Fora da área, precisão ruim ou 11º reporte do dia:
+# 422. Corpo acima de 2,8 MB: 413.
+# @name openReport
+POST {{baseUrl}}/reports
+Content-Type: application/json
+Authorization: Bearer {{reporterToken}}
+Idempotency-Key: {{reportIdempotencyKey}}
+
+{
+  "description": "Buraco grande na faixa da direita, perto do semáforo.",
+  "location": { "latitude": -24.045812, "longitude": -52.378901, "accuracyMeters": 8.5 },
+  "photo": { "content": "{{jpegBase64}}", "thumbnail": "{{jpegBase64}}" }
+}
+
+###
+
+@reportId = {{openReport.response.body.$.id}}
+
+### Repete o envio com a mesma Idempotency-Key: devolve o mesmo reporte, sem criar outro
+# É o que o app faz quando a resposta se perde. Resposta: 201, com o mesmo id (RN31). Se o
+# reporte da chave foi excluído: 404.
+POST {{baseUrl}}/reports
+Content-Type: application/json
+Authorization: Bearer {{reporterToken}}
+Idempotency-Key: {{reportIdempotencyKey}}
+
+{
+  "description": "Buraco grande na faixa da direita, perto do semáforo.",
+  "location": { "latitude": -24.045812, "longitude": -52.378901, "accuracyMeters": 8.5 },
+  "photo": { "content": "{{jpegBase64}}", "thumbnail": "{{jpegBase64}}" }
+}
+
+### Lista os próprios reportes: paginação e filtro por status (PENDING, CONFIRMED ou REJECTED)
+# Resposta: 200, com { items, page, pageSize, total }, do mais novo ao mais antigo.
+GET {{baseUrl}}/reports/mine?page=1&pageSize=20&status=PENDING
+Authorization: Bearer {{reporterToken}}
+
+### Consulta o reporte
+# Os outros Clients veem o reporte só em PENDING ou CONFIRMED, sem nenhum dado do autor.
+# Resposta: 200. Reporte excluído ou que o Client não pode ver: 404.
+GET {{baseUrl}}/reports/{{reportId}}
+Authorization: Bearer {{reporterToken}}
+
+### Busca a miniatura em base64
+# Resposta: 200, com { "id": "<id da foto>", "mimeType": "image/jpeg", "content": "<base64>" }.
+# Sem o size (ou com size=full), a foto inteira.
+GET {{baseUrl}}/reports/{{reportId}}/photo?size=thumbnail
+Authorization: Bearer {{reporterToken}}
+
+### Edita a descrição: só o autor, com o reporte em validação e sem votos
+# Resposta: 200, com o reporte. Com votos: 422. Fora de validação: 422. Reporte de outro Client
+# que ele vê: 403.
+PATCH {{baseUrl}}/reports/{{reportId}}
+Content-Type: application/json
+Authorization: Bearer {{reporterToken}}
+
+{
+  "description": "Buraco no meio da faixa."
+}
+
+### Troca a foto: a nova ganha outro id (o app troca o cache)
+# Resposta: 200, com o photo.id novo. As regras da foto são as da abertura.
+PATCH {{baseUrl}}/reports/{{reportId}}
+Content-Type: application/json
+Authorization: Bearer {{reporterToken}}
+
+{
+  "photo": { "content": "{{jpegBase64}}", "thumbnail": "{{jpegBase64}}" }
+}
+
+### Apaga a descrição
+# Resposta: 200, com "description": null.
+PATCH {{baseUrl}}/reports/{{reportId}}
+Content-Type: application/json
+Authorization: Bearer {{reporterToken}}
+
+{
+  "description": ""
+}
+
+### Exclui o reporte: só o autor, com o reporte em validação
+# Exclusão lógica: o reporte some de todas as rotas e continua contando no limite por dia.
+# Resposta: 204. Fora de validação: 422.
+DELETE {{baseUrl}}/reports/{{reportId}}
+Authorization: Bearer {{reporterToken}}
+
+### Depois da exclusão, o reporte não aparece mais
+# Resposta: 404.
+GET {{baseUrl}}/reports/{{reportId}}
+Authorization: Bearer {{reporterToken}}

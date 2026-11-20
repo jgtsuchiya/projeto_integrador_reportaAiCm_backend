@@ -83,6 +83,8 @@ expect(mailSender.messages).toHaveLength(1);
 
 Os fakes de um único módulo ficam em `src/modules/<feature>/testing`, também fora do build. No módulo `users`, o [`in-memory-users.ts`](../src/modules/users/testing/in-memory-users.ts) traz os repositórios em memória (que compartilham um `InMemoryUsersDatabase`, como as tabelas do MySQL) e o `FakeIdentityProvider`, no lugar do SuperTokens. As sessões do fake são os handles de cada usuário, que o teste cria direto em `sessions`. O teste que confere os dados de uma sessão (datas, IP e user agent) a abre com o `openSession`.
 
+No módulo `reports`, o [`in-memory-reports.ts`](../src/modules/reports/testing/in-memory-reports.ts) traz o `InMemoryReportRepository` e o `InMemoryReportPhotoRepository`, que compartilham um `InMemoryReportsDatabase`. A busca por proximidade mede a distância por haversine, na esfera: o MySQL mede no elipsoide, e os dois diferem em menos de 0,5% (400 m no elipsoide dão 402 m no fake). O [`report-fixtures.ts`](../src/modules/reports/testing/report-fixtures.ts) lê as [imagens das fixtures](#fixtures-de-imagem) e monta os dados de teste: a configuração padrão (`TEST_REPORTS_CONFIG`), um reporte aberto em Campo Mourão (`openTestReport`), o mesmo reporte com o status e as contagens que só a validação muda (`withReportChanges`) e um ponto a tantos metros ao norte de outro, no elipsoide (`pointNorthOf`).
+
 Os repositórios em memória guardam as entidades por referência, então não reproduzem duas requisições lendo o mesmo dado ao mesmo tempo. O que depende disso, como o limite de erros do código da segunda etapa (`saveFailedAttempt` e `consume`), é testado contra o MySQL, no `test/users-repositories.integration-spec.ts` e no `test/mfa.integration-spec.ts`.
 
 ## Testes que fazem login
@@ -131,21 +133,46 @@ O código da segunda etapa também só existe no e-mail. No texto da mensagem, e
 - **Intervalo de 1 minuto.** Vale o mesmo recuo do `created_at` dos links: o login já envia um código, então o reenvio logo em seguida responde 422.
 - **Estado da sessão.** A claim `mfa-verified` vai no payload do access token, que é um JWT: o teste de integração a lê decodificando o token, sem chamar a API.
 
+## Fixtures de imagem
+
+As imagens dos testes de reportes ficam em [`test/fixtures`](../test/fixtures). Foram geradas com o Pillow (Python), pequenas, para os testes não pesarem:
+
+| Arquivo                        | Conteúdo                                                                                                  |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `report-photo.jpg`             | Foto JPEG baseline de 160 × 120, só com o JFIF                                                            |
+| `report-thumbnail.jpg`         | Miniatura JPEG baseline de 48 × 36                                                                        |
+| `report-photo-progressive.jpg` | JPEG progressivo de 200 × 150                                                                             |
+| `report-photo-metadata.jpg`    | JPEG de 160 × 120 com EXIF com GPS e XMP (APP1), perfil de cor (APP2) e IPTC com um nome de autor (APP13) |
+| `photo.png` e `photo.webp`     | Imagens em outros formatos, que a API recusa                                                              |
+| `photo.heic`                   | Só o cabeçalho de um HEIC (a caixa `ftyp` com a marca `heic`), que é o que identifica o formato           |
+
+- O JPEG cortado e o arquivo qualquer são montados no próprio teste (um pedaço da foto e um texto).
+- Para testar as dimensões máximas sem gerar outra imagem, o teste do `ReportImage` troca a largura e a altura no marcador SOF de uma cópia da fixture (`withDimensions`). O tamanho máximo é testado com um limite menor que a fixture.
+- Nos testes unitários, as fixtures são lidas pelo `readFixture` do `report-fixtures.ts`, e nos e2e, pelo `fixtureBase64` do `E2eApp`, já em base64.
+
+## Testes de integração dos reportes
+
+- **Repositórios** (`test/reports-repositories.integration-spec.ts`). Cada teste roda numa transação desfeita no final, como os de usuários. O `DataSource` do teste guarda as queries num logger próprio (`QueryRecorder`), para conferir que as listagens não leem as colunas das imagens e para rodar o `EXPLAIN` da busca por proximidade com os mesmos parâmetros.
+- **Índice espacial.** Com poucas linhas, o otimizador prefere ler a tabela inteira, que é mais barato. O teste do plano grava uma grade de 5 mil reportes, roda o `ANALYZE TABLE` e confere o `EXPLAIN FORMAT=TRADITIONAL` (`type: range`, `key: sidx_reports_location`). O `ANALYZE TABLE` confirma a transação aberta, então esse teste roda fora dela e apaga os dados no final.
+- **Pedidos simultâneos.** O teste da mesma `Idempotency-Key` em pedidos simultâneos roda fora da transação, porque cada pedido precisa da própria conexão, como na API.
+- **Rotas** (`test/reports.integration-spec.ts`). Sobe a aplicação pelo `E2eApp`, com o `MemoryLogger`, e confere a validação da foto campo a campo, o 413, os metadados da foto gravada, os pedidos simultâneos pela API e, por último, que nada da foto ou das coordenadas foi para o log.
+
 ## Testes e2e
 
 Os e2e sobem a API inteira e a chamam por HTTP com o **supertest**, contra o MySQL de teste e o SuperTokens Core. O único fake é o `FakeMailSender`, no lugar do SMTP. Eles cobrem os fluxos de ponta a ponta e as permissões. Os detalhes de cada rota (validação, erros e casos de borda) ficam nos testes de integração.
 
-| Arquivo                               | O que cobre                                                                                                                                          |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test/client-flow.e2e-spec.ts`        | Fluxo do Client: cadastro → login → `/users/me` → refresh → signout                                                                                  |
-| `test/admin-flow.e2e-spec.ts`         | Fluxo do ADM: seed do SuperAdm → convite → aceite → login                                                                                            |
-| `test/inactivation.e2e-spec.ts`       | O usuário inativado perde o acesso na requisição seguinte                                                                                            |
-| `test/permissions.e2e-spec.ts`        | Matriz de permissões: cada rota protegida sem sessão (401), com cada papel (sucesso ou 403) e com uma sessão pendente (403 `invalid claim`)          |
-| `test/password-reset.e2e-spec.ts`     | Recuperação de senha: pedido → e-mail → redefinição → login com a senha nova, com as sessões antigas encerradas                                      |
-| `test/email-verification.e2e-spec.ts` | Verificação de e-mail: cadastro → e-mail → confirmação → `emailVerifiedAt` preenchido. O reenvio invalida o link anterior                            |
-| `test/login-lock.e2e-spec.ts`         | Bloqueio por tentativas: 5 falhas → bloqueio → liberação pela redefinição de senha                                                                   |
-| `test/sessions.e2e-spec.ts`           | Sessões: dois logins → listagem → encerrar a outra → ela não renova mais. Também o encerramento de todas as outras e a sessão de outro usuário (404) |
-| `test/mfa.e2e-spec.ts`                | Verificação em duas etapas: ativação → login → 403 com a sessão pendente → código → acesso liberado. Também o reenvio do código e a desativação      |
+| Arquivo                               | O que cobre                                                                                                                                                                                        |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/client-flow.e2e-spec.ts`        | Fluxo do Client: cadastro → login → `/users/me` → refresh → signout                                                                                                                                |
+| `test/admin-flow.e2e-spec.ts`         | Fluxo do ADM: seed do SuperAdm → convite → aceite → login                                                                                                                                          |
+| `test/inactivation.e2e-spec.ts`       | O usuário inativado perde o acesso na requisição seguinte                                                                                                                                          |
+| `test/permissions.e2e-spec.ts`        | Matriz de permissões: cada rota protegida sem sessão (401), com cada papel (sucesso ou 403) e com uma sessão pendente (403 `invalid claim`)                                                        |
+| `test/password-reset.e2e-spec.ts`     | Recuperação de senha: pedido → e-mail → redefinição → login com a senha nova, com as sessões antigas encerradas                                                                                    |
+| `test/email-verification.e2e-spec.ts` | Verificação de e-mail: cadastro → e-mail → confirmação → `emailVerifiedAt` preenchido. O reenvio invalida o link anterior                                                                          |
+| `test/login-lock.e2e-spec.ts`         | Bloqueio por tentativas: 5 falhas → bloqueio → liberação pela redefinição de senha                                                                                                                 |
+| `test/sessions.e2e-spec.ts`           | Sessões: dois logins → listagem → encerrar a outra → ela não renova mais. Também o encerramento de todas as outras e a sessão de outro usuário (404)                                               |
+| `test/mfa.e2e-spec.ts`                | Verificação em duas etapas: ativação → login → 403 com a sessão pendente → código → acesso liberado. Também o reenvio do código e a desativação                                                    |
+| `test/reports.e2e-spec.ts`            | Reportes: abrir → listar → detalhe → foto → editar → excluir. Também o e-mail não verificado, a área, a precisão, o limite por dia, a `Idempotency-Key`, a visibilidade entre dois Clients e o 413 |
 
 ```bash
 npm run db:up
@@ -180,13 +207,17 @@ describe('Perfil (e2e)', () => {
 });
 ```
 
-- **Banco de teste:** o script carrega o `.env.test` e usa a mesma proteção dos testes de integração (aborta se o banco não terminar em `_test`). Cada arquivo começa e termina **apagando todos os usuários** do banco de teste, as credenciais deles no SuperTokens e as tentativas de login.
+- **Banco de teste:** o script carrega o `.env.test` e usa a mesma proteção dos testes de integração (aborta se o banco não terminar em `_test`). Cada arquivo começa e termina **apagando todos os usuários** do banco de teste, os reportes, as credenciais deles no SuperTokens e as tentativas de login.
 - **Contas:** são criadas pelos mesmos caminhos da aplicação: `seedSuperAdmin()` (o caso de uso do `npm run seed`), `createAdmin()` (convite e aceite) e `registerClient()` (autocadastro). É o seed que cria os papéis no SuperTokens, então ele vem antes de qualquer cadastro, como em produção.
 - **Login:** no modo header (`st-auth-mode: header`), como o app mobile. O access token vai no `Authorization: Bearer`.
 - **Sessões:** o `currentSessionId(tokens)` devolve o id da sessão dos tokens, como o `GET /api/users/me/sessions` a identifica. O teste que encerra uma sessão abre uma só para isso, com o `logIn`: a sessão que os outros testes compartilham continua valendo.
 - **Sessão pendente:** o `logInPending(account)` abre a sessão de quem já passou pela senha e ainda não conferiu o código da segunda etapa, e o `lastLoginCode(email)` lê o código do e-mail ([testes da segunda etapa](#testes-da-segunda-etapa-do-login)).
 - **Conta com a verificação em duas etapas:** o `registerClientWithMfa()` cadastra um Client, confirma o e-mail pelo link e ativa a verificação pelo `PATCH /api/users/me/mfa`. Devolve a sessão que ativou, que continua completa. Os logins seguintes abrem sessões pendentes.
 - **E-mails:** o `lastLinkToken(email, page)` lê o token do último link enviado ao endereço ([links por e-mail](#testes-de-rotas-que-enviam-link-por-e-mail)). O pedido de redefinição de senha envia o e-mail depois de responder, então o teste chama o `waitForBackgroundTasks()` antes de ler o link.
+- **E-mail confirmado:** o `confirmEmail(account)` confirma o e-mail pelo link do cadastro, e o `registerVerifiedClient()` cadastra o Client já com o e-mail confirmado. Abrir reportes exige o e-mail confirmado (RN26), e a sessão do Client continua a mesma depois da confirmação.
+- **Reportes:** o `buildReportPayload(overrides)` monta o corpo de um reporte válido em Campo Mourão, com a foto e a miniatura das [fixtures](#fixtures-de-imagem) em base64 (`fixtureBase64(nome)`), e o `openReport(client)` abre um pela rota. O `updateReportVoting(id, { status, confirmationsCount })` muda direto no banco o que só a validação comunitária mudaria, como o status `REJECTED` ou um voto que impede a edição. O `storedReportPhoto(id)` lê a foto gravada, e o `countReports(authorId)` conta os reportes do Client, inclusive os excluídos. O mesmo Client abre no máximo 10 reportes por dia: o teste que abre muitos usa um Client só para ele.
+- **Log:** o `E2eApp.start({ logger })` sobe a aplicação com o logger informado, como o `MemoryLogger`. Sem ele, o log fica desligado.
+- **Corpo:** o `E2eApp` cria a aplicação com `bodyParser: false`, como o `main.ts`: os parsers do corpo, com o limite de cada rota, vêm do `configureApp`.
 - **Rota nova:** toda rota protegida entra na matriz do `permissions.e2e-spec.ts`, com os papéis permitidos e o status de sucesso. Quando um papel permitido para numa regra da própria rota, o status dela vai em `refused`: é o caso do reenvio da verificação de e-mail, que responde 422 ao ADM e ao SuperAdm, já verificados. A matriz também chama cada rota com uma sessão pendente e espera o 403 `invalid claim`. Só as rotas marcadas com `acceptsPending` ficam de fora: o signout e as de `/api/mfa`.
 
 ## Comandos
