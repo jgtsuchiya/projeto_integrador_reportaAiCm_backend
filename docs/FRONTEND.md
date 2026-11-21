@@ -10,7 +10,7 @@ Como o painel web e o app fazem login e chamam a API do ReportaAi Cm. O funciona
 - Depois do login, chame o `GET /api/users/me` para saber **quem entrou e com qual papel**.
 - Quem tem a verificação em duas etapas ativa ainda digita um código depois da senha ([verificação em duas etapas](#verificação-em-duas-etapas)).
 - Os links dos e-mails da API (convite, redefinição de senha e verificação de e-mail) abrem páginas do painel web, inclusive para o Client, no navegador do celular ([páginas dos links](#páginas-abertas-pelos-links-dos-e-mails)).
-- O app abre os reportes com a foto em base64, no JSON, e só com o e-mail confirmado ([reportes](#reportes)).
+- O app abre os reportes com a foto em base64, no JSON, e só com o e-mail confirmado ([reportes](#reportes)). Os cidadãos perto de um buraco confirmam ou negam o reporte de outro ([validação](#validar-os-reportes-de-outros-cidadãos)).
 
 |                      | Painel web                                | App mobile (Flutter)                             |
 | -------------------- | ----------------------------------------- | ------------------------------------------------ |
@@ -489,7 +489,7 @@ O aparelho da sessão encerrada não cai na hora: ele perde o acesso na renovaç
 
 ## Reportes
 
-O cidadão abre um reporte de buraco com a foto e a localização do aparelho, e acompanha, edita e exclui os próprios reportes. As rotas são só do Client: o ADM e o SuperAdm recebem 403. Como a API trata a foto e a localização por dentro está no [REPORTS.md](REPORTS.md).
+O cidadão abre um reporte de buraco com a foto e a localização do aparelho, e acompanha, edita e exclui os próprios reportes. Os outros cidadãos, perto do buraco, dizem se ele está lá ou não ([validação](#validar-os-reportes-de-outros-cidadãos)). As rotas são só do Client: o ADM e o SuperAdm recebem 403. Como a API trata a foto, a localização e os votos por dentro está no [REPORTS.md](REPORTS.md).
 
 ```mermaid
 sequenceDiagram
@@ -575,11 +575,13 @@ A resposta (201) é o reporte, no mesmo formato de todas as rotas de reportes:
     "confirmations": 0,
     "rejections": 0,
     "confirmationsRequired": 10,
-    "rejectionsRequired": 10
+    "rejectionsRequired": 10,
+    "mine": null
   },
   "isMine": true,
   "canEdit": true,
   "canDelete": true,
+  "canVote": false,
   "createdAt": "2026-11-09T14:30:00.000Z",
   "updatedAt": "2026-11-09T14:30:00.000Z",
   "statusChangedAt": null
@@ -587,8 +589,9 @@ A resposta (201) é o reporte, no mesmo formato de todas as rotas de reportes:
 ```
 
 - `status`: `PENDING` ("Em validação"), `CONFIRMED` ou `REJECTED`. Os status do atendimento pela prefeitura entram depois: trate um valor desconhecido sem quebrar.
-- `votes` traz as contagens e quantas são necessárias, para o app mostrar "3 de 10 confirmações". As contagens mudam com a validação comunitária.
-- **`isMine`, `canEdit` e `canDelete`** já vêm calculados para quem está logado. Mostre os botões de editar e excluir a partir deles, sem repetir as regras no app.
+- `votes` traz as contagens e quantas são necessárias, para o app mostrar "3 de 10 confirmações", e o `mine`: o voto de quem está logado (`"CONFIRM"`, `"DENY"` ou `null`). As contagens mudam com a [validação](#validar-os-reportes-de-outros-cidadãos).
+- `statusChangedAt` é quando o reporte saiu de validação (virou CONFIRMED ou REJECTED). Em PENDING, é `null`.
+- **`isMine`, `canEdit`, `canDelete` e `canVote`** já vêm calculados para quem está logado. Mostre os botões de editar, excluir e votar a partir deles, sem repetir as regras no app.
 - A resposta nunca traz quem abriu o reporte: o `isMine` basta.
 - `photo` traz só o id e as dimensões da foto. As imagens vêm pelo `GET /api/reports/:id/photo`.
 
@@ -626,7 +629,95 @@ PATCH /api/reports/8f0e2c4a-6b1d-4c7e-9a52-3d6f1e0b7a91
 - O `PATCH` aceita a `description` e a `photo` (no mesmo formato do `POST`), pelo menos uma, e responde o reporte. `""` (ou `null`) apaga a descrição, e o campo ausente não muda. A localização não muda.
 - A foto nova ganha outro `photo.id`: atualize a chave do cache.
 - O `DELETE /api/reports/:id` responde 204. O reporte some de todas as rotas, e continua contando no limite de 10 por dia.
-- Só o autor edita e exclui, e só enquanto o reporte está em validação. A edição também exige que ninguém tenha votado. O `canEdit` e o `canDelete` já dizem isso.
+- Só o autor edita e exclui, e só enquanto o reporte está em validação. A edição também exige que ninguém tenha votado. O `canEdit` e o `canDelete` já dizem isso, mas um voto pode chegar enquanto o autor edita: trate o 422 e atualize o reporte.
+
+### Validar os reportes de outros cidadãos
+
+Na tela de validação, o cidadão vê os reportes em validação perto de onde está e diz se o buraco está lá ("Está lá", `CONFIRM`) ou não ("Não está lá", `DENY`). Com 10 confirmações, o reporte vira CONFIRMED e passa a ser considerado verdadeiro. Com 10 votos "não está lá", vira REJECTED e some para os outros cidadãos. O autor continua vendo o próprio reporte em qualquer status.
+
+```mermaid
+sequenceDiagram
+    actor C as Cidadão
+    participant APP as App
+    participant API
+
+    APP->>APP: captura a localização atual
+    APP->>API: GET /api/reports/nearby (posição do cidadão)
+    API-->>APP: reportes, cada um com o canVote e o votes.mine
+    C->>APP: "Está lá" num reporte com canVote
+    APP->>APP: captura a localização de novo
+    APP->>API: POST /api/reports/:id/votes { vote, location }
+    API-->>APP: 201, o reporte atualizado
+```
+
+**1. A lista.** Chame o `GET /api/reports/nearby` com a localização atual do cidadão (ex.: `radiusMeters=1000`). Cada item traz:
+
+- `canVote`: `true` quando o reporte está em validação, é de outro cidadão, ele ainda não votou e o reporte está a até 500 m do ponto consultado. Mostre os botões de voto só nesses. Os outros itens podem aparecer sem os botões (ex.: "Você já votou" quando o `votes.mine` não é `null`, ou "Chegue mais perto para votar").
+- `votes.mine`: o voto do cidadão (`"CONFIRM"`, `"DENY"` ou `null`).
+- `votes.confirmations` de `votes.confirmationsRequired`, para a barra de progresso.
+- `distanceMeters`: a distância até o ponto consultado.
+
+O `canVote` não confere o e-mail: o cidadão sem o e-mail confirmado vê os botões e recebe o 422 "Confirme o seu e-mail para votar nos reportes.", que explica o que fazer. Se quiser, esconda os botões pelo `emailVerifiedAt` do `GET /api/users/me`.
+
+**2. O voto.**
+
+```http
+POST /api/reports/8f0e2c4a-6b1d-4c7e-9a52-3d6f1e0b7a91/votes
+```
+
+```json
+{
+  "vote": "CONFIRM",
+  "location": { "latitude": -24.045903, "longitude": -52.378766, "accuracyMeters": 12 }
+}
+```
+
+- `vote`: `"CONFIRM"` ("está lá") ou `"DENY"` ("não está lá"), em maiúsculas.
+- `location`: a localização **atual** do aparelho, capturada na hora do voto, e não a da lista: o cidadão precisa estar a até 500 m do reporte, com precisão de até 50 m. Recuse no app a posição simulada (`isMocked` no Android).
+- A API só confere a localização de quem vota: ela não é gravada nem devolvida. **Não a registre no log** do app.
+- **O voto é definitivo.** Não há como mudar nem desfazer: confirme a escolha antes de enviar, se a tela deixar o toque acidental fácil.
+- A resposta (201) é o reporte atualizado, no formato de sempre, com o `votes.mine` preenchido e o `canVote: false`. Troque o item da lista por ele. Se o `status` veio `CONFIRMED` ou `REJECTED`, foi este voto que fechou a validação.
+
+```dart
+try {
+  final response = await dio.post<Map<String, dynamic>>(
+    '/reports/$reportId/votes',
+    data: {
+      'vote': confirmed ? 'CONFIRM' : 'DENY',
+      'location': {'latitude': lat, 'longitude': lng, 'accuracyMeters': accuracy},
+    },
+  );
+  updateItem(response.data!);
+} on DioException catch (error) {
+  final status = error.response?.statusCode;
+  if (status == 409 || status == 404 || status == 422) {
+    // 409: já votou. 404: o reporte sumiu. 422: a message explica (ex.: longe demais).
+    showMessage(error.response!.data['message'] as String);
+    refreshList();
+  } else {
+    rethrow;
+  }
+}
+```
+
+**3. As respostas de erro.**
+
+| Status | Quando                                                                                 | O que o app faz                                                       |
+| ------ | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 400    | `vote` fora de `CONFIRM` e `DENY`, ou a localização inválida. O `details` traz o campo | Não deveria acontecer: confira o corpo                                |
+| 404    | O reporte foi excluído pelo autor ou descartado (REJECTED) por outros votos            | Tira o item da lista                                                  |
+| 409    | "Você já votou neste reporte." (ex.: o voto foi gravado, mas a resposta se perdeu)     | Atualiza o item com o `GET /api/reports/:id`, que traz o `votes.mine` |
+| 422    | Regra do voto, com a `message` pronta para exibir (tabela abaixo)                      | Mostra a `message` e atualiza o item                                  |
+
+| Situação (422)              | `message`                                                       |
+| --------------------------- | --------------------------------------------------------------- |
+| E-mail não confirmado       | "Confirme o seu e-mail para votar nos reportes."                |
+| O próprio reporte           | "Você não pode votar no próprio reporte."                       |
+| O reporte já foi confirmado | "Este reporte não está mais em validação."                      |
+| Mais de 500 m do reporte    | "Você precisa estar a até 500 m do reporte para votar."         |
+| Precisão pior que 50 m      | "A localização está imprecisa. Tente de novo num lugar aberto." |
+
+Diferente do `POST /api/reports`, o voto não tem `Idempotency-Key`: se a resposta se perder e o app repetir, a repetição responde 409, e o voto já está gravado.
 
 ### Erros dos reportes
 
@@ -635,6 +726,7 @@ PATCH /api/reports/8f0e2c4a-6b1d-4c7e-9a52-3d6f1e0b7a91
 | 400    | Campo inválido. O `details` traz o campo (ex.: `photo.content`, `location.accuracyMeters`, `Idempotency-Key`) | Mostra a `message` de cada campo. Na foto, gere a imagem de novo  |
 | 403    | Editar ou excluir o reporte de outro cidadão                                                                  | Não deveria acontecer se o app seguir o `canEdit` e o `canDelete` |
 | 404    | O reporte não existe, foi excluído ou não está visível para o cidadão                                         | Volta para a lista e a atualiza                                   |
+| 409    | Voto repetido no mesmo reporte                                                                                | Atualiza o reporte, que já traz o `votes.mine`                    |
 | 413    | O corpo passa do limite das rotas de reportes (cerca de 2,8 MB)                                               | Gera a foto com mais compressão e tenta de novo                   |
 | 422    | Regra de negócio, com a `message` pronta para exibir (tabela abaixo)                                          | Mostra a `message`                                                |
 
@@ -648,7 +740,7 @@ PATCH /api/reports/8f0e2c4a-6b1d-4c7e-9a52-3d6f1e0b7a91
 | Editar fora de validação  | "Só é possível editar um reporte em validação."                 |
 | Excluir fora de validação | "Só é possível excluir um reporte em validação."                |
 
-As mensagens de 400 da foto dizem qual das imagens falhou: "A foto precisa ser uma imagem JPEG.", "A foto passa de 2 MB.", "A foto passa de 2048 px no maior lado.", "A foto precisa estar em base64, sem o prefixo "data:"." e as equivalentes para a miniatura.
+As mensagens do voto estão em [validar os reportes](#validar-os-reportes-de-outros-cidadãos). As mensagens de 400 da foto dizem qual das imagens falhou: "A foto precisa ser uma imagem JPEG.", "A foto passa de 2 MB.", "A foto passa de 2048 px no maior lado.", "A foto precisa estar em base64, sem o prefixo "data:"." e as equivalentes para a miniatura.
 
 ## Quando a sessão acaba
 
@@ -706,6 +798,7 @@ No app, o `Eventype.SIGN_OUT` chega também quando o `signOut` não alcançou a 
 | `POST /api/reports`                                                         |            |  ✔  | Abre o reporte, com a foto em base64. Exige o e-mail confirmado |
 | `GET /api/reports/mine`, `/nearby`, `/:id` e `/:id/photo`                   |            |  ✔  | Os próprios reportes, os de perto, o detalhe e a foto           |
 | `PATCH` e `DELETE /api/reports/:id`                                         |            |  ✔  | Só o autor, com o reporte em validação ([reportes](#reportes))  |
+| `POST /api/reports/:id/votes`                                               |            |  ✔  | Voto "está lá" ou "não está lá", a até 500 m do reporte         |
 
 As listagens recebem `?page=1&pageSize=20` (até 100 por página) e respondem `{ items, page, pageSize, total }`. O corpo e a resposta de cada rota estão na coleção [api.http](api.http), e quem pode chamar cada uma, na [matriz de permissões](AUTH.md#matriz-de-permissões).
 
@@ -747,7 +840,7 @@ As rotas da aplicação respondem os erros sempre no mesmo formato, com a `messa
 | 403    | O papel não tem permissão                     | (ausente)                                                     |
 | 403    | Sessão pendente da segunda etapa (ver abaixo) | Formato do SuperTokens, sem `statusCode`                      |
 | 404    | Recurso não encontrado                        | (ausente)                                                     |
-| 409    | E-mail ou CPF já cadastrado                   | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
+| 409    | E-mail ou CPF já cadastrado, ou voto repetido | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
 | 413    | Corpo maior que o limite da rota (ver abaixo) | (ausente)                                                     |
 | 422    | Regra de negócio (ex.: link expirado)         | Depende da regra                                              |
 | 429    | Muitas requisições do mesmo IP (ver abaixo)   | (ausente)                                                     |

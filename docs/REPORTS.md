@@ -1,6 +1,6 @@
 # Reportes
 
-O cidadão abre um reporte de buraco no asfalto pelo app, com a foto e a localização do aparelho, e acompanha, edita e exclui os próprios reportes. Este documento explica como o módulo `reports` funciona por dentro: o caminho da foto, a localização, o envio repetido seguro, quem vê cada reporte e quem pode fazer o quê.
+O cidadão abre um reporte de buraco no asfalto pelo app, com a foto e a localização do aparelho, e acompanha, edita e exclui os próprios reportes. Os outros cidadãos, perto do buraco, confirmam ou negam o reporte, como nos alertas do Waze e do Google Maps: com 10 confirmações, ele passa a ser considerado verdadeiro. Este documento explica como o módulo `reports` funciona por dentro: o caminho da foto, a localização, o envio repetido seguro, quem vê cada reporte, quem pode fazer o quê e como os votos são contados.
 
 > Para consumir as rotas pelo app, veja a seção [Reportes do FRONTEND.md](FRONTEND.md#reportes). As decisões e as regras de negócio (RN26 a RN40) estão no [plano da sprint 4](sprints/sprint-4-reportes.md), e as requisições prontas, no [api.http](api.http).
 
@@ -14,6 +14,7 @@ O cidadão abre um reporte de buraco no asfalto pelo app, com a foto e a localiz
 - [Envio repetido seguro](#envio-repetido-seguro)
 - [Visibilidade e ações de cada usuário](#visibilidade-e-ações-de-cada-usuário)
 - [Editar e excluir](#editar-e-excluir)
+- [Validação comunitária](#validação-comunitária)
 - [Configuração](#configuração)
 - [Erros](#erros)
 - [Limitações conhecidas](#limitações-conhecidas)
@@ -28,18 +29,20 @@ flowchart LR
     C -- "pipe: decode do base64,<br/>confere o JPEG" --> UC[Casos de uso]
     UC -- bytes --> D["Report, ReportPhoto,<br/>ReportImage, GeoLocation"]
     UC --> R[ReportRepository]
-    R --> DB[("MySQL<br/>reports + report_photos")]
+    R --> DB[("MySQL<br/>reports, report_photos<br/>e report_votes")]
 ```
 
-| Peça                                                                                                            | Papel                                                                                                                                              |
-| --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`Report`](../src/modules/reports/domain/entities/report.entity.ts)                                             | As regras: nasce PENDING (`open`), a visibilidade (`isVisibleTo`), as ações (`canBeEditedBy`, `canBeDeletedBy`), `edit`, `replacePhoto` e `delete` |
-| [`ReportPhoto`](../src/modules/reports/domain/entities/report-photo.entity.ts)                                  | A foto e a miniatura, com id próprio, que muda na troca da foto                                                                                    |
-| [`ReportImage`](../src/modules/reports/domain/value-objects/report-image.ts)                                    | Uma imagem JPEG conferida pelos bytes, com as dimensões lidas do cabeçalho e sem os metadados                                                      |
-| [`GeoPoint`, `GeoLocation`](../src/modules/reports/domain/value-objects/geo-location.ts) e `ReportArea`         | As coordenadas, a precisão (arredondada para cima), a distância por haversine e a área atendida                                                    |
-| [`ReportRepository`](../src/modules/reports/domain/repositories/report.repository.ts) e `ReportPhotoRepository` | Os contratos. As implementações TypeORM ficam em `infra/database/repositories/`, com as funções espaciais                                          |
-| [`base64.ts`](../src/shared/application/encoding/base64.ts)                                                     | `encodeBase64` e `decodeBase64` (estrito), compartilhados                                                                                          |
-| [`OpenReportBodyPipe` e `EditReportBodyPipe`](../src/modules/reports/presentation/pipes/report-body.pipe.ts)    | Validam o corpo com os limites das imagens da configuração, no mesmo formato de erro do `ZodValidationPipe`                                        |
+| Peça                                                                                                            | Papel                                                                                                                                                                              |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`Report`](../src/modules/reports/domain/entities/report.entity.ts)                                             | As regras: nasce PENDING (`open`), a visibilidade (`isVisibleTo`), as ações (`canBeEditedBy`, `canBeDeletedBy`, `canBeVotedBy`), `edit`, `replacePhoto`, `delete` e `registerVote` |
+| [`ReportPhoto`](../src/modules/reports/domain/entities/report-photo.entity.ts)                                  | A foto e a miniatura, com id próprio, que muda na troca da foto                                                                                                                    |
+| [`ReportVote`](../src/modules/reports/domain/entities/report-vote.entity.ts)                                    | O voto de um cidadão: `CONFIRM` ("está lá") ou `DENY` ("não está lá"). Nasce no `Report.registerVote` e não muda                                                                   |
+| [`VotingRange`](../src/modules/reports/domain/value-objects/voting-range.ts)                                    | Até onde vale o voto: a distância até o reporte e a precisão da localização de quem vota                                                                                           |
+| [`ReportImage`](../src/modules/reports/domain/value-objects/report-image.ts)                                    | Uma imagem JPEG conferida pelos bytes, com as dimensões lidas do cabeçalho e sem os metadados                                                                                      |
+| [`GeoPoint`, `GeoLocation`](../src/modules/reports/domain/value-objects/geo-location.ts) e `ReportArea`         | As coordenadas, a precisão (arredondada para cima), a distância por haversine e a área atendida                                                                                    |
+| [`ReportRepository`](../src/modules/reports/domain/repositories/report.repository.ts) e `ReportPhotoRepository` | Os contratos. As implementações TypeORM ficam em `infra/database/repositories/`, com as funções espaciais                                                                          |
+| [`base64.ts`](../src/shared/application/encoding/base64.ts)                                                     | `encodeBase64` e `decodeBase64` (estrito), compartilhados                                                                                                                          |
+| [`OpenReportBodyPipe` e `EditReportBodyPipe`](../src/modules/reports/presentation/pipes/report-body.pipe.ts)    | Validam o corpo com os limites das imagens da configuração, no mesmo formato de erro do `ZodValidationPipe`                                                                        |
 
 Os casos de uso recebem e devolvem os **bytes** da foto, nunca o base64: o transporte fica na apresentação, e o caso de uso não muda se o envio passar a ser multipart.
 
@@ -47,17 +50,18 @@ Os casos de uso recebem e devolvem os **bytes** da foto, nunca o base64: o trans
 
 Todas as rotas ficam sob `/api/reports`, exigem a sessão e são só do **CLIENT** (`@Roles(Role.CLIENT)` no controller). ADMIN e SUPER_ADMIN recebem 403: a listagem para a prefeitura entra com o painel.
 
-| Rota                         | SUPER_ADMIN | ADMIN | CLIENT | Sem sessão | Observação                                                        |
-| ---------------------------- | :---------: | :---: | :----: | :--------: | ----------------------------------------------------------------- |
-| `POST /api/reports`          |             |       |   ✔¹   |            | Abre o reporte. Header opcional `Idempotency-Key`                 |
-| `GET /api/reports/mine`      |             |       |   ✔    |            | Os reportes do usuário, paginados, com o filtro `status`          |
-| `GET /api/reports/nearby`    |             |       |   ✔    |            | Os reportes PENDING e CONFIRMED perto de um ponto                 |
-| `GET /api/reports/:id`       |             |       |   ✔²   |            | O reporte                                                         |
-| `GET /api/reports/:id/photo` |             |       |   ✔²   |            | A foto (`size=full`) ou a miniatura (`size=thumbnail`), em base64 |
-| `PATCH /api/reports/:id`     |             |       |   ✔³   |            | A descrição e a foto                                              |
-| `DELETE /api/reports/:id`    |             |       |   ✔⁴   |            | Exclusão lógica                                                   |
+| Rota                          | SUPER_ADMIN | ADMIN | CLIENT | Sem sessão | Observação                                                        |
+| ----------------------------- | :---------: | :---: | :----: | :--------: | ----------------------------------------------------------------- |
+| `POST /api/reports`           |             |       |   ✔¹   |            | Abre o reporte. Header opcional `Idempotency-Key`                 |
+| `GET /api/reports/mine`       |             |       |   ✔    |            | Os reportes do usuário, paginados, com o filtro `status`          |
+| `GET /api/reports/nearby`     |             |       |   ✔    |            | Os reportes PENDING e CONFIRMED perto de um ponto                 |
+| `GET /api/reports/:id`        |             |       |   ✔²   |            | O reporte                                                         |
+| `GET /api/reports/:id/photo`  |             |       |   ✔²   |            | A foto (`size=full`) ou a miniatura (`size=thumbnail`), em base64 |
+| `PATCH /api/reports/:id`      |             |       |   ✔³   |            | A descrição e a foto                                              |
+| `DELETE /api/reports/:id`     |             |       |   ✔⁴   |            | Exclusão lógica                                                   |
+| `POST /api/reports/:id/votes` |             |       |   ✔⁵   |            | O voto: `CONFIRM` ou `DENY`, com a localização de quem vota       |
 
-¹ Com o e-mail verificado (RN26). ² Os próprios reportes em qualquer status, e os de outros autores em PENDING ou CONFIRMED (RN35). ³ Só o autor, com o reporte em PENDING e sem votos (RN33). ⁴ Só o autor, com o reporte em PENDING (RN34).
+¹ Com o e-mail verificado (RN26). ² Os próprios reportes em qualquer status, e os de outros autores em PENDING ou CONFIRMED (RN35). ³ Só o autor, com o reporte em PENDING e sem votos (RN33). ⁴ Só o autor, com o reporte em PENDING (RN34). ⁵ Com o e-mail verificado, num reporte PENDING de outro autor, a até 500 m dele, uma vez por reporte (RN37 e RN38).
 
 As rotas também recusam a sessão pendente da segunda etapa do login (403 `invalid claim`), como todas as rotas protegidas ([AUTH.md](AUTH.md#o-que-o-authguard-faz-a-cada-requisição)). A matriz é testada rota a rota no [`permissions.e2e-spec.ts`](../test/permissions.e2e-spec.ts).
 
@@ -145,7 +149,7 @@ O header é lido pelo decorator [`@RequestHeader`](../src/shared/presentation/de
 
 O reporte que o usuário não pode ver responde **404**, igual ao que não existe, para não revelar que ele existe (RN35). As respostas nunca trazem o id, o nome ou o e-mail do autor: o `isMine` basta para o app.
 
-Cada reporte das respostas traz o que o usuário da requisição pode fazer, calculado pela entidade: `canEdit` (o autor, com o reporte em PENDING e sem votos) e `canDelete` (o autor, com o reporte em PENDING). Os fronts mostram as ações a partir deles, sem repetir as regras.
+Cada reporte das respostas traz o que o usuário da requisição pode fazer, calculado pela entidade: `canEdit` (o autor, com o reporte em PENDING e sem votos), `canDelete` (o autor, com o reporte em PENDING) e `canVote` (outro cidadão, com o reporte em PENDING, que ainda não votou nele). No `GET /api/reports/nearby`, o `canVote` também exige o reporte a até 500 m do ponto consultado. O `votes.mine` traz o voto do usuário no reporte (`CONFIRM`, `DENY` ou `null`). Os fronts mostram as ações a partir deles, sem repetir as regras.
 
 ## Editar e excluir
 
@@ -158,23 +162,85 @@ Cada reporte das respostas traz o que o usuário da requisição pode fazer, cal
 | Quem não vê o reporte, ou o reporte excluído | 404                                                           | 404                                                  |
 
 - O `PATCH` aceita a `description` e a `photo`, pelo menos uma. `""` (ou `null`) apaga a descrição. A foto nova substitui a anterior, com outro id, e passa pelas mesmas regras da abertura.
-- A exclusão é lógica (`deleted_at`): o reporte some de todas as rotas, e os votos dele, que entram com a validação comunitária, ficam no banco. O reporte excluído continua contando no limite por dia.
+- A exclusão é lógica (`deleted_at`): o reporte some de todas as rotas, e os votos dele ficam no banco. O reporte excluído continua contando no limite por dia.
+- **Edição e exclusão ao mesmo tempo que um voto.** O caso de uso confere as regras no reporte que leu, e um voto pode chegar entre a leitura e a gravação. Por isso o repositório só grava a edição se o reporte continua PENDING e sem votos, e a exclusão se ele continua PENDING. Se não, a resposta é a mesma 422 da regra. A edição também não regrava o status nem as contagens, que só o voto grava: assim ela nunca desfaz um voto.
+
+## Validação comunitária
+
+Os cidadãos confirmam ou negam os reportes abertos por outros (RN37 a RN40). O voto é "está lá" (`CONFIRM`) ou "não está lá" (`DENY`), um por cidadão e reporte, e não muda depois de dado.
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: aberto pelo Client
+    PENDING --> CONFIRMED: 10 confirmações
+    PENDING --> REJECTED: 10 votos "não está lá"
+    PENDING --> [*]: excluído pelo autor
+    CONFIRMED --> [*]
+    REJECTED --> [*]
+```
+
+- **Quem vota** (RN37): o Client com o e-mail verificado, num reporte PENDING que não é dele, uma vez. O autor não vota no próprio reporte, e a abertura não conta como confirmação.
+- **De onde vota** (RN38): o voto traz a localização atual de quem vota, que precisa estar a até 500 m do reporte (`REPORT_VOTE_MAX_DISTANCE_METERS`), com a precisão de até 50 m, a mesma da abertura. A distância é calculada no domínio, por haversine (`GeoLocation.distanceTo`).
+- **Mudança de status** (RN39): com 10 confirmações (`REPORT_CONFIRMATIONS_REQUIRED`), o reporte vira CONFIRMED, e com 10 votos "não está lá" (`REPORT_REJECTIONS_REQUIRED`), REJECTED. Só a contagem do tipo votado é conferida, então vale o que chegar primeiro. A mudança é definitiva e grava o `status_changed_at`, e os votos seguintes são recusados. O REJECTED some para os outros cidadãos (RN35), e o autor continua vendo.
+- **Depois do primeiro voto**, o autor não edita mais o reporte (RN33), para os votos valerem para o que foi votado. A exclusão continua permitida enquanto ele está PENDING.
+
+O [`VoteOnReportUseCase`](../src/modules/reports/application/use-cases/vote-on-report.use-case.ts) confere, nesta ordem, a do fluxo do [plano](sprints/sprint-4-reportes.md#votar-epic-2):
+
+| Passo                                       | Recusa                                                                                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 1. E-mail verificado                        | 422 "Confirme o seu e-mail para votar nos reportes."                                                                           |
+| 2. Reporte visível (RN35)                   | 404 "Reporte não encontrado." (inexistente, excluído ou REJECTED de outro autor)                                               |
+| 3. De outro autor e em validação            | 422 "Você não pode votar no próprio reporte." ou "Este reporte não está mais em validação."                                    |
+| 4. Precisão e distância de quem vota        | 422 "A localização está imprecisa. Tente de novo num lugar aberto." ou "Você precisa estar a até 500 m do reporte para votar." |
+| 5. Voto repetido (UNIQUE de `report_votes`) | 409 "Você já votou neste reporte."                                                                                             |
+
+O voto aceito responde 201 com o reporte atualizado, já com o `votes.mine` e o `canVote: false`.
+
+### A trava da linha
+
+As contagens ficam também em `reports` (desnormalizadas), para as listagens não contarem os votos a cada consulta. Elas são atualizadas na mesma transação que grava o voto, com a linha do reporte travada ([`ReportRepository.vote`](../src/modules/reports/domain/repositories/report.repository.ts)):
+
+```mermaid
+sequenceDiagram
+    participant UC as VoteOnReportUseCase
+    participant R as Repositório
+    participant DB as MySQL
+
+    UC->>R: vote(reportId, apply)
+    R->>DB: START TRANSACTION
+    R->>DB: SELECT ... FOR UPDATE (o reporte)
+    Note over DB: outro voto no mesmo reporte<br/>espera aqui até o COMMIT
+    R->>R: apply(reporte) = Report.registerVote<br/>(soma e muda o status no limite)
+    R->>DB: INSERT report_votes
+    R->>DB: UPDATE reports (contagens, status)
+    R->>DB: COMMIT
+```
+
+- A regra fica na entidade: o repositório só entrega o reporte travado à função `apply` e grava o resultado. Os passos 3 e 5 do caso de uso são conferidos de novo ali, com a linha travada, porque outro voto pode ter mudado o status entre a leitura e a trava.
+- Dois votos ao mesmo tempo no mesmo reporte esperam a vez: cada um lê as contagens já com o anterior, nenhum se perde, e o status muda uma vez só (RN40). O teste de integração dispara 12 votos simultâneos com o limite em 10 e confere 10 confirmações, o status CONFIRMED e 2 recusas.
+- O voto repetido esbarra no UNIQUE (`report_id`, `user_id`), e a transação é desfeita: as contagens não mudam.
+- Votos em reportes diferentes não se esperam: a trava é só da linha do reporte votado.
+
+### Por que a localização do voto não é gravada
+
+A localização de quem vota só serve para conferir a distância até o reporte. Gravá-la registraria por onde cada cidadão passa, um dado pessoal sem uso para a validação. Por isso ela não fica em `report_votes`, não aparece nas respostas nem nas mensagens dos erros (o 422 traz só o limite de 500 m) e não vai para o log.
 
 ## Configuração
 
 Todas as variáveis têm valor padrão e são validadas pelo `envSchema`:
 
-| Variável                        | Padrão                        | Uso                                                                                                                                      |
-| ------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `REPORT_AREA_BOUNDS`            | `-24.30,-52.65,-23.80,-52.11` | Área aceita: latitude mínima, longitude mínima, latitude máxima e longitude máxima. O mínimo de cada eixo precisa ser menor que o máximo |
-| `REPORT_MAX_ACCURACY_METERS`    | `50`                          | Pior precisão aceita, em metros                                                                                                          |
-| `REPORT_PHOTO_MAX_BYTES`        | `2097152`                     | Tamanho máximo da foto (2 MB), depois do decode                                                                                          |
-| `REPORT_THUMBNAIL_MAX_BYTES`    | `102400`                      | Tamanho máximo da miniatura (100 KB)                                                                                                     |
-| `REPORT_DAILY_LIMIT`            | `10`                          | Reportes por Client em 24 horas                                                                                                          |
-| `REPORT_CONFIRMATIONS_REQUIRED` | `10`                          | Confirmações que tornam o reporte CONFIRMED. Já aparece na resposta (`votes.confirmationsRequired`)                                      |
-| `REPORT_REJECTIONS_REQUIRED`    | `10`                          | Votos "não está lá" que tornam o reporte REJECTED                                                                                        |
+| Variável                          | Padrão                        | Uso                                                                                                                                      |
+| --------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `REPORT_AREA_BOUNDS`              | `-24.30,-52.65,-23.80,-52.11` | Área aceita: latitude mínima, longitude mínima, latitude máxima e longitude máxima. O mínimo de cada eixo precisa ser menor que o máximo |
+| `REPORT_MAX_ACCURACY_METERS`      | `50`                          | Pior precisão aceita, em metros                                                                                                          |
+| `REPORT_PHOTO_MAX_BYTES`          | `2097152`                     | Tamanho máximo da foto (2 MB), depois do decode                                                                                          |
+| `REPORT_THUMBNAIL_MAX_BYTES`      | `102400`                      | Tamanho máximo da miniatura (100 KB)                                                                                                     |
+| `REPORT_DAILY_LIMIT`              | `10`                          | Reportes por Client em 24 horas                                                                                                          |
+| `REPORT_CONFIRMATIONS_REQUIRED`   | `10`                          | Confirmações que tornam o reporte CONFIRMED. Aparece na resposta (`votes.confirmationsRequired`)                                         |
+| `REPORT_REJECTIONS_REQUIRED`      | `10`                          | Votos "não está lá" que tornam o reporte REJECTED                                                                                        |
+| `REPORT_VOTE_MAX_DISTANCE_METERS` | `500`                         | Distância máxima, em metros, entre quem vota e o reporte                                                                                 |
 
-As dimensões máximas das imagens (2048 e 480 px) são constantes do domínio. O limite do corpo das rotas de reportes é calculado a partir dos dois tamanhos máximos.
+As dimensões máximas das imagens (2048 e 480 px) são constantes do domínio. O limite do corpo das rotas de reportes é calculado a partir dos dois tamanhos máximos. No `.env.test`, as duas contagens da validação ficam em 3, para os testes e2e criarem menos contas: a regra com 10 fica nos testes unitários.
 
 ## Erros
 
@@ -183,14 +249,17 @@ As dimensões máximas das imagens (2048 e 480 px) são constantes do domínio. 
 | 400    | Campo inválido: descrição longa, coordenada fora da faixa, base64 inválido, imagem que não é JPEG ou fora do tamanho e das dimensões, `Idempotency-Key` que não é UUID |
 | 403    | ADMIN e SUPER_ADMIN, e o Client que tenta editar ou excluir o reporte de outro que ele vê                                                                              |
 | 404    | Reporte que não existe, excluído ou que o usuário não pode ver (RN35)                                                                                                  |
+| 409    | Voto repetido no mesmo reporte                                                                                                                                         |
 | 413    | Corpo maior que o limite das rotas de reportes (cerca de 2,8 MB com os padrões)                                                                                        |
-| 422    | E-mail não verificado, fora da área, precisão ruim, limite por dia, e edição ou exclusão fora da regra. A `message` diz o motivo                                       |
+| 422    | E-mail não verificado, fora da área, precisão ruim, limite por dia, edição ou exclusão fora da regra, e o voto fora da regra. A `message` diz o motivo                 |
 
-**Nada da foto, do base64 ou da localização vai para o log** (RN36), nem nas mensagens dos erros: as mensagens são fixas, inclusive a do JSON malformado, que no `JSON.parse` traria um trecho do corpo. O `DB_LOGGING=true` é a exceção: ele escreve no log as queries com os parâmetros, inclusive as coordenadas e as imagens, e por isso fica desligado fora da depuração local.
+**Nada da foto, do base64 ou da localização vai para o log** (RN36 e RN38), nem a do reporte, nem a de quem vota, nem nas mensagens dos erros: as mensagens são fixas, inclusive a do JSON malformado, que no `JSON.parse` traria um trecho do corpo. O `DB_LOGGING=true` é a exceção: ele escreve no log as queries com os parâmetros, inclusive as coordenadas e as imagens, e por isso fica desligado fora da depuração local.
 
 ## Limitações conhecidas
 
 - **Limite por dia sob concorrência.** O limite é conferido antes da gravação, sem trava: dois pedidos simultâneos do mesmo Client, com chaves diferentes, podem passar juntos do 10º reporte. O limite é uma barreira contra abuso, não uma garantia exata.
 - **O UNIQUE da `Idempotency-Key` começa pela chave.** Com o índice na ordem (`author_id`, `idempotency_key`), o MySQL 9.7 o usa para a FK do autor e deixa de conferi-la nas linhas com a chave nula: um reporte sem a chave entrava com um `author_id` inexistente (comportamento reproduzido no MySQL do docker-compose). Com a chave na frente, a FK usa o índice (`author_id`, `created_at`), e o teste `database.integration-spec.ts` confere a recusa.
+- **Distância do `canVote` no `nearby`.** A busca mede a distância no elipsoide (MySQL), e o voto, por haversine. Na borda dos 500 m, os dois podem discordar por alguns metros: o `canVote` diz que sim, e o voto responde 422. A diferença fica abaixo de 0,5%.
+- **O voto não muda nem é desfeito**, como no Waze. Desfazer exigiria recalcular as contagens e decidir o que acontece com um status já mudado ([pontos em aberto](sprints/sprint-4-reportes.md#10-pontos-em-aberto)).
 - **Busca perto dos polos e do antimeridiano.** Ali o retângulo da busca não é montado, e a consulta fica só com a distância, sem o índice. Os reportes ficam todos na área atendida, longe desses lugares.
-- Os outros pontos (a foto no MySQL, a área como caixa, a localização falsa, o reporte que ninguém valida) estão nos [pontos em aberto do plano](sprints/sprint-4-reportes.md#10-pontos-em-aberto).
+- Os outros pontos (a foto no MySQL, a área como caixa, a localização falsa, o reporte que ninguém valida, o peso dos votos e a notificação ao autor) estão nos [pontos em aberto do plano](sprints/sprint-4-reportes.md#10-pontos-em-aberto).

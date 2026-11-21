@@ -1,15 +1,19 @@
 import { Entity } from '@shared/domain/entity';
 
+import { OwnReportVoteError } from '../errors/own-report-vote.error';
 import { ReportAuthorOnlyError } from '../errors/report-author-only.error';
 import { ReportHasVotesError } from '../errors/report-has-votes.error';
 import { ReportNotDeletableError } from '../errors/report-not-deletable.error';
 import { ReportNotEditableError } from '../errors/report-not-editable.error';
 import { ReportNotFoundError } from '../errors/report-not-found.error';
+import { ReportNotInValidationError } from '../errors/report-not-in-validation.error';
 import { GeoLocation } from '../value-objects/geo-location';
 import { ReportArea } from '../value-objects/report-area';
 import { ReportDescription } from '../value-objects/report-description';
 import { PUBLIC_REPORT_STATUSES, ReportStatus } from '../value-objects/report-status';
+import { ReportVoteType, VoteThresholds } from '../value-objects/report-vote-type';
 import { ReportPhoto, ReportPhotoInfo } from './report-photo.entity';
+import { ReportVote } from './report-vote.entity';
 
 export interface ReportProps {
   authorId: string;
@@ -17,7 +21,7 @@ export interface ReportProps {
   description: ReportDescription | null;
   location: GeoLocation;
   photo: ReportPhotoInfo;
-  /** Cópia das contagens dos votos, atualizada com cada voto (epic da validação). */
+  /** Cópia das contagens de `report_votes`, atualizada com cada voto (RN40). */
   confirmationsCount: number;
   rejectionsCount: number;
   /** `Idempotency-Key` do pedido que abriu o reporte (RN31). */
@@ -46,6 +50,10 @@ interface OpenReportInput {
  * foto enquanto ele está em validação e sem votos (RN33), e a exclusão enquanto ele está em
  * validação (RN34). A localização não muda depois da abertura (RN28). Os outros cidadãos só
  * veem o reporte em PENDING ou CONFIRMED (RN35).
+ *
+ * Na validação comunitária, os outros cidadãos votam enquanto ele está em validação (RN37). Ao
+ * chegar ao número de votos de um tipo, ele vira CONFIRMED ou REJECTED, de forma definitiva
+ * (RN39).
  */
 export class Report extends Entity {
   private constructor(
@@ -162,6 +170,56 @@ export class Report extends Entity {
     return this.isAuthor(userId) && !this.isDeleted && this.isPending;
   }
 
+  /**
+   * RN37: outro cidadão, com o reporte em validação. Se ele já votou, quem sabe é o
+   * repositório: o voto não fica no reporte, só as contagens.
+   */
+  canBeVotedBy(userId: string): boolean {
+    return !this.isAuthor(userId) && !this.isDeleted && this.isPending;
+  }
+
+  /** Lança o erro da regra que impede o voto (RN37). */
+  ensureCanBeVotedBy(voterId: string): void {
+    if (this.isDeleted) {
+      throw new ReportNotFoundError();
+    }
+
+    if (this.isAuthor(voterId)) {
+      throw new OwnReportVoteError();
+    }
+
+    if (!this.isPending) {
+      throw new ReportNotInValidationError();
+    }
+  }
+
+  /**
+   * Soma o voto e, quando a contagem desse tipo chega ao limite, muda o status de forma
+   * definitiva (RN39): CONFIRMED com as confirmações, REJECTED com os votos "não está lá". Só o
+   * tipo votado é conferido, então vale o que chegar primeiro.
+   *
+   * Devolve o voto para o repositório gravar junto com as contagens, na mesma transação e com a
+   * linha do reporte travada (RN40). O voto repetido é barrado pelo repositório.
+   */
+  registerVote(voterId: string, type: ReportVoteType, thresholds: VoteThresholds): ReportVote {
+    this.ensureCanBeVotedBy(voterId);
+    this.touch();
+
+    if (type === ReportVoteType.CONFIRM) {
+      this.props.confirmationsCount += 1;
+      if (this.props.confirmationsCount >= thresholds.confirmationsRequired) {
+        this.changeStatus(ReportStatus.CONFIRMED);
+      }
+    } else {
+      this.props.rejectionsCount += 1;
+      if (this.props.rejectionsCount >= thresholds.rejectionsRequired) {
+        this.changeStatus(ReportStatus.REJECTED);
+      }
+    }
+
+    return ReportVote.create({ reportId: this.id, voterId, type }, this.props.updatedAt);
+  }
+
   /** Troca a descrição (RN33). Com `null`, o reporte fica sem descrição. */
   edit(actorId: string, description: ReportDescription | null): void {
     this.ensureEditableBy(actorId);
@@ -212,6 +270,11 @@ export class Report extends Entity {
     if (!this.isAuthor(actorId)) {
       throw new ReportAuthorOnlyError();
     }
+  }
+
+  private changeStatus(status: ReportStatus): void {
+    this.props.status = status;
+    this.props.statusChangedAt = this.props.updatedAt;
   }
 
   private touch(): void {

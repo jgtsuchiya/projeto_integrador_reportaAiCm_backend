@@ -47,6 +47,7 @@ describe('envSchema', () => {
       REPORT_DAILY_LIMIT: 10,
       REPORT_CONFIRMATIONS_REQUIRED: 10,
       REPORT_REJECTIONS_REQUIRED: 10,
+      REPORT_VOTE_MAX_DISTANCE_METERS: 500,
     });
   });
 
@@ -61,6 +62,7 @@ describe('envSchema', () => {
         REPORT_DAILY_LIMIT: '5',
         REPORT_CONFIRMATIONS_REQUIRED: '3',
         REPORT_REJECTIONS_REQUIRED: '4',
+        REPORT_VOTE_MAX_DISTANCE_METERS: '300',
       });
 
       expect(env).toMatchObject({
@@ -76,6 +78,7 @@ describe('envSchema', () => {
         REPORT_DAILY_LIMIT: 5,
         REPORT_CONFIRMATIONS_REQUIRED: 3,
         REPORT_REJECTIONS_REQUIRED: 4,
+        REPORT_VOTE_MAX_DISTANCE_METERS: 300,
       });
     });
 
@@ -104,6 +107,7 @@ describe('envSchema', () => {
       ['REPORT_DAILY_LIMIT', '0'],
       ['REPORT_CONFIRMATIONS_REQUIRED', '-1'],
       ['REPORT_REJECTIONS_REQUIRED', '2.5'],
+      ['REPORT_VOTE_MAX_DISTANCE_METERS', '0'],
     ])('deve rejeitar %s=%p', (variable, value) => {
       const result = envSchema.safeParse({ ...validEnv, [variable]: value });
 

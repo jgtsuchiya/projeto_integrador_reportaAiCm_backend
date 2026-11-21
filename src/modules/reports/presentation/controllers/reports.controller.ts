@@ -31,6 +31,7 @@ import {
   NearbyReportsOutput,
 } from '../../application/use-cases/list-nearby-reports.use-case';
 import { OpenReportUseCase } from '../../application/use-cases/open-report.use-case';
+import { VoteOnReportUseCase } from '../../application/use-cases/vote-on-report.use-case';
 import {
   type EditReportBody,
   idempotencyKeySchema,
@@ -42,6 +43,8 @@ import {
   type ReportPhotoQuery,
   reportPhotoQuerySchema,
   type ReportPhotoResponse,
+  type VoteOnReportBody,
+  voteOnReportBodySchema,
 } from '../dtos/report.dto';
 import { EditReportBodyPipe, OpenReportBodyPipe } from '../pipes/report-body.pipe';
 
@@ -63,6 +66,7 @@ export class ReportsController {
     private readonly getReportPhotoUseCase: GetReportPhotoUseCase,
     private readonly editReportUseCase: EditReportUseCase,
     private readonly deleteReportUseCase: DeleteReportUseCase,
+    private readonly voteOnReportUseCase: VoteOnReportUseCase,
   ) {}
 
   /**
@@ -144,5 +148,24 @@ export class ReportsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<void> {
     return this.deleteReportUseCase.execute({ reportId: id, userId: user.id });
+  }
+
+  /**
+   * Voto "está lá" (`CONFIRM`) ou "não está lá" (`DENY`) num reporte de outro autor, em validação
+   * (RN37 a RN40). Responde 201 com o reporte atualizado. A localização de quem vota só é
+   * conferida: não é gravada nem vai para o log.
+   */
+  @Post(':id/votes')
+  vote(
+    @Param('id', { schema: z.uuid() }) id: string,
+    @Body({ schema: voteOnReportBodySchema }) body: VoteOnReportBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ReportOutput> {
+    return this.voteOnReportUseCase.execute({
+      ...body,
+      reportId: id,
+      voterId: user.id,
+      emailVerified: user.emailVerified,
+    });
   }
 }

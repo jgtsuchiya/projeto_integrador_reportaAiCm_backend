@@ -11,18 +11,20 @@ import {
   NEARBY_RADIUS_MIN_METERS,
 } from '../../application/use-cases/list-nearby-reports.use-case';
 import type { ReportPhotoBytes } from '../../application/use-cases/open-report.use-case';
+import type { VoteOnReportInput } from '../../application/use-cases/vote-on-report.use-case';
 import { ReportPhotoSize } from '../../domain/repositories/report-photo.repository';
 import type { GeoLocationInput } from '../../domain/value-objects/geo-location';
 import { ReportDescription } from '../../domain/value-objects/report-description';
 import type { ReportImageLimits } from '../../domain/value-objects/report-image';
 import { ReportStatus } from '../../domain/value-objects/report-status';
+import { ReportVoteType } from '../../domain/value-objects/report-vote-type';
 import { reportPhotoSchema } from './report-photo.dto';
 
 const LATITUDE_MESSAGE = 'A latitude deve estar entre -90 e 90.';
 const LONGITUDE_MESSAGE = 'A longitude deve estar entre -180 e 180.';
 const RADIUS_MESSAGE = `O raio deve ser de ${NEARBY_RADIUS_MIN_METERS} a ${NEARBY_RADIUS_MAX_METERS} metros.`;
 
-/** Localização do aparelho, no corpo do `POST`. As regras são as do `GeoLocation`. */
+/** Localização do aparelho, no corpo da abertura e do voto. As regras são as do `GeoLocation`. */
 const locationSchema = z.object({
   latitude: z.number().min(-90, LATITUDE_MESSAGE).max(90, LATITUDE_MESSAGE),
   longitude: z.number().min(-180, LONGITUDE_MESSAGE).max(180, LONGITUDE_MESSAGE),
@@ -69,6 +71,19 @@ export function editReportBodySchema(limits: ReportImageLimits): z.ZodType<EditR
       'Informe a descrição ou a foto.',
     );
 }
+
+/**
+ * Corpo do `POST /api/reports/:id/votes`: o voto e a localização atual de quem vota, que só é
+ * conferida (RN38).
+ */
+export const voteOnReportBodySchema = z.object({
+  vote: z.enum([ReportVoteType.CONFIRM, ReportVoteType.DENY], {
+    error: 'O voto deve ser CONFIRM ou DENY.',
+  }),
+  location: locationSchema,
+}) satisfies z.ZodType<Pick<VoteOnReportInput, 'vote' | 'location'>>;
+
+export type VoteOnReportBody = z.infer<typeof voteOnReportBodySchema>;
 
 /** Header `Idempotency-Key` do `POST /api/reports`: opcional, um UUID (RN31). */
 export const idempotencyKeySchema = z

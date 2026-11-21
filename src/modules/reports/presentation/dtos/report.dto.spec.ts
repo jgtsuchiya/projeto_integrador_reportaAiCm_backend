@@ -8,6 +8,7 @@ import {
   nearbyReportsQuerySchema,
   openReportBodySchema,
   reportPhotoQuerySchema,
+  voteOnReportBodySchema,
 } from './report.dto';
 
 const photo = {
@@ -166,5 +167,27 @@ describe('reportPhotoQuerySchema', () => {
     expect(reportPhotoQuerySchema.parse({})).toEqual({ size: 'full' });
     expect(reportPhotoQuerySchema.parse({ size: 'thumbnail' })).toEqual({ size: 'thumbnail' });
     expect(reportPhotoQuerySchema.safeParse({ size: 'large' }).success).toBe(false);
+  });
+});
+
+describe('voteOnReportBodySchema', () => {
+  const location = { latitude: -24.045903, longitude: -52.378766, accuracyMeters: 12 };
+
+  it.each(['CONFIRM', 'DENY'])('deve aceitar o voto %s com a localização', (vote) => {
+    expect(voteOnReportBodySchema.parse({ vote, location })).toEqual({ vote, location });
+  });
+
+  it('deve recusar o voto que não existe, com a mensagem, e a localização inválida', () => {
+    const result = voteOnReportBodySchema.safeParse({
+      vote: 'confirm',
+      location: { ...location, longitude: 181 },
+    });
+
+    expect(failedFields(result)).toEqual(['vote', 'location.longitude']);
+    expect(result.error?.issues[0]?.message).toBe('O voto deve ser CONFIRM ou DENY.');
+  });
+
+  it('deve exigir o voto e a localização', () => {
+    expect(failedFields(voteOnReportBodySchema.safeParse({}))).toEqual(['vote', 'location']);
   });
 });

@@ -14,7 +14,8 @@
 #
 # Os passos manuais são os segredos que só existem nos e-mails: o token do convite do ADM
 # (seção 3), o da verificação de e-mail (seção 5), o da redefinição de senha (seção 6), o código
-# da segunda etapa do login (seção 10) e a verificação de e-mail do Client dos reportes (seção 13).
+# da segunda etapa do login (seção 10) e a verificação de e-mail do Client dos reportes (seção 13)
+# e do Client que vota (seção 14).
 
 @baseUrl = http://localhost:3000/api
 
@@ -56,6 +57,17 @@
 
 # Idempotency-Key do reporte da seção 13: troque por outro UUID para abrir outro reporte.
 @reportIdempotencyKey = 3b241101-e2bb-4255-8caf-4136c566a962
+
+# Client que vota no reporte do Client dos reportes (seção 14).
+@voterEmail = carla.validacao@reportaai.local
+@voterCpf = 526.018.159-06
+@voterPassword = SenhaForte123
+
+# Token do link de verificação de e-mail do Client que vota, copiado do e-mail (seção 14).
+@voterVerificationToken = cole-aqui-o-token-da-verificacao-do-client-que-vota
+
+# Idempotency-Key do reporte da seção 14, que recebe os votos.
+@voteReportIdempotencyKey = 6f1c2a9e-8d4b-4f3a-9c7e-2b5d8a1e4c90
 
 # Imagem JPEG pequena (48 x 36 px) em base64, usada como foto e como miniatura (seção 13).
 # É a test/fixtures/report-thumbnail.jpg.
@@ -759,3 +771,143 @@ Authorization: Bearer {{reporterToken}}
 # Resposta: 404.
 GET {{baseUrl}}/reports/{{reportId}}
 Authorization: Bearer {{reporterToken}}
+
+###
+# ==============================================================================================
+# 14. Validação comunitária (só o Client, com o e-mail confirmado, no reporte de outro)
+# ==============================================================================================
+# Outro Client, perto do buraco, diz se ele "está lá" (CONFIRM) ou "não está lá" (DENY). Com 10
+# confirmações, o reporte vira CONFIRMED; com 10 votos "não está lá", REJECTED. Um voto por
+# Client e reporte, definitivo. A localização de quem vota é conferida e descartada.
+
+### Cadastra o Client que vota
+# @name registerVoter
+POST {{baseUrl}}/clients
+Content-Type: application/json
+
+{
+  "name": "Carla Mendes",
+  "email": "{{voterEmail}}",
+  "password": "{{voterPassword}}",
+  "cpf": "{{voterCpf}}",
+  "phone": "(44) 97777-6666",
+  "birthDate": "1995-07-22"
+}
+
+### Login do Client que vota
+# @name loginVoter
+POST {{baseUrl}}/auth/signin
+Content-Type: application/json
+st-auth-mode: header
+
+{
+  "formFields": [
+    { "id": "email", "value": "{{voterEmail}}" },
+    { "id": "password", "value": "{{voterPassword}}" }
+  ]
+}
+
+###
+
+@voterToken = {{loginVoter.response.headers.st-access-token}}
+
+### Lê o último e-mail capturado pelo Mailpit (não é rota da API)
+# Copie o token do link (.../verificar-email?token=<token>) para a variável
+# @voterVerificationToken, no topo do arquivo. Sem a confirmação, o voto responde 422 com
+# "Confirme o seu e-mail para votar nos reportes.".
+GET http://localhost:8025/view/latest.txt
+
+### Confirma o e-mail do Client que vota (público)
+# Resposta: 204.
+POST {{baseUrl}}/email-verifications/confirm
+Content-Type: application/json
+
+{
+  "token": "{{voterVerificationToken}}"
+}
+
+### O Client dos reportes abre o reporte que vai receber os votos
+# O reporte da seção 13 foi excluído no fim dela.
+# @name openVoteReport
+POST {{baseUrl}}/reports
+Content-Type: application/json
+Authorization: Bearer {{reporterToken}}
+Idempotency-Key: {{voteReportIdempotencyKey}}
+
+{
+  "description": "Buraco fundo na esquina, do lado da faixa de pedestres.",
+  "location": { "latitude": -24.045812, "longitude": -52.378901, "accuracyMeters": 8.5 },
+  "photo": { "content": "{{jpegBase64}}", "thumbnail": "{{jpegBase64}}" }
+}
+
+###
+
+@voteReportId = {{openVoteReport.response.body.$.id}}
+
+### Lista de validação: os reportes perto da posição do Client que vota
+# Resposta: 200. Cada item traz o canVote (em validação, de outro Client, sem o voto dele e a
+# até 500 m do ponto consultado) e o votes.mine (o voto dele, ou null).
+GET {{baseUrl}}/reports/nearby?latitude=-24.045903&longitude=-52.378766&radiusMeters=1000
+Authorization: Bearer {{voterToken}}
+
+### Vota de longe: a 600 m do reporte
+# Resposta: 422, com "Você precisa estar a até 500 m do reporte para votar.". Precisão pior que
+# 50 m: 422, com a mensagem da abertura.
+POST {{baseUrl}}/reports/{{voteReportId}}/votes
+Content-Type: application/json
+Authorization: Bearer {{voterToken}}
+
+{
+  "vote": "CONFIRM",
+  "location": { "latitude": -24.0404, "longitude": -52.378901, "accuracyMeters": 10 }
+}
+
+### Vota "está lá", de perto
+# Resposta: 201, com o reporte atualizado: "votes": { "confirmations": 1, "mine": "CONFIRM" } e
+# "canVote": false. Reporte excluído, REJECTED ou que não existe: 404. Reporte já CONFIRMED: 422.
+POST {{baseUrl}}/reports/{{voteReportId}}/votes
+Content-Type: application/json
+Authorization: Bearer {{voterToken}}
+
+{
+  "vote": "CONFIRM",
+  "location": { "latitude": -24.045903, "longitude": -52.378766, "accuracyMeters": 12 }
+}
+
+### Vota de novo no mesmo reporte
+# Resposta: 409, com "Você já votou neste reporte.". O voto não muda.
+POST {{baseUrl}}/reports/{{voteReportId}}/votes
+Content-Type: application/json
+Authorization: Bearer {{voterToken}}
+
+{
+  "vote": "DENY",
+  "location": { "latitude": -24.045903, "longitude": -52.378766, "accuracyMeters": 12 }
+}
+
+### O autor tenta votar no próprio reporte
+# Resposta: 422, com "Você não pode votar no próprio reporte.".
+POST {{baseUrl}}/reports/{{voteReportId}}/votes
+Content-Type: application/json
+Authorization: Bearer {{reporterToken}}
+
+{
+  "vote": "CONFIRM",
+  "location": { "latitude": -24.045812, "longitude": -52.378901, "accuracyMeters": 8 }
+}
+
+### O detalhe para quem votou traz o voto dele
+# Resposta: 200, com "votes": { "confirmations": 1, ..., "mine": "CONFIRM" } e "canVote": false.
+GET {{baseUrl}}/reports/{{voteReportId}}
+Authorization: Bearer {{voterToken}}
+
+### Depois do primeiro voto, o autor não edita mais o reporte
+# Resposta: 422, com "O reporte já recebeu votos e não pode mais ser editado." (RN33). A exclusão
+# continua permitida enquanto ele está em validação.
+PATCH {{baseUrl}}/reports/{{voteReportId}}
+Content-Type: application/json
+Authorization: Bearer {{reporterToken}}
+
+{
+  "description": "Buraco fundo na esquina."
+}

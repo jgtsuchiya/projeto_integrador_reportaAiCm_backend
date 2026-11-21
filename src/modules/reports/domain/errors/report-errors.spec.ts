@@ -5,18 +5,22 @@ import { ForbiddenError } from '@shared/domain/errors/forbidden.error';
 import { NotFoundError } from '@shared/domain/errors/not-found.error';
 
 import { DuplicateIdempotencyKeyError } from './duplicate-idempotency-key.error';
+import { DuplicateVoteError } from './duplicate-vote.error';
 import { EmailVerificationRequiredError } from './email-verification-required.error';
 import { InaccurateLocationError } from './inaccurate-location.error';
 import { InvalidLocationError } from './invalid-location.error';
 import { InvalidReportDescriptionError } from './invalid-report-description.error';
 import { InvalidReportImageError } from './invalid-report-image.error';
 import { LocationOutsideAreaError } from './location-outside-area.error';
+import { OwnReportVoteError } from './own-report-vote.error';
 import { ReportAuthorOnlyError } from './report-author-only.error';
 import { ReportDailyLimitError } from './report-daily-limit.error';
 import { ReportHasVotesError } from './report-has-votes.error';
 import { ReportNotDeletableError } from './report-not-deletable.error';
 import { ReportNotEditableError } from './report-not-editable.error';
 import { ReportNotFoundError } from './report-not-found.error';
+import { ReportNotInValidationError } from './report-not-in-validation.error';
+import { VoterTooFarError } from './voter-too-far.error';
 
 // A categoria define o status HTTP no GlobalExceptionFilter (404/409/422/403).
 describe('Erros do domínio de reportes', () => {
@@ -31,6 +35,10 @@ describe('Erros do domínio de reportes', () => {
     [new InaccurateLocationError(), BusinessRuleError, undefined],
     [new ReportDailyLimitError(10), BusinessRuleError, { limit: 10 }],
     [new EmailVerificationRequiredError(), BusinessRuleError, undefined],
+    [new DuplicateVoteError(), ConflictError, undefined],
+    [new OwnReportVoteError(), BusinessRuleError, undefined],
+    [new ReportNotInValidationError(), BusinessRuleError, undefined],
+    [new VoterTooFarError(500), BusinessRuleError, { maxDistanceMeters: 500 }],
     [new InvalidLocationError('latitude', 'mensagem'), BusinessRuleError, { field: 'latitude' }],
     [new InvalidReportDescriptionError(500), BusinessRuleError, { field: 'description' }],
     [
@@ -48,6 +56,11 @@ describe('Erros do domínio de reportes', () => {
 
   it.each([
     [new EmailVerificationRequiredError(), 'Confirme o seu e-mail para abrir reportes.'],
+    [new EmailVerificationRequiredError('vote'), 'Confirme o seu e-mail para votar nos reportes.'],
+    [new DuplicateVoteError(), 'Você já votou neste reporte.'],
+    [new OwnReportVoteError(), 'Você não pode votar no próprio reporte.'],
+    [new ReportNotInValidationError(), 'Este reporte não está mais em validação.'],
+    [new VoterTooFarError(500), 'Você precisa estar a até 500 m do reporte para votar.'],
     [new LocationOutsideAreaError(), 'Este lugar fica fora de Campo Mourão.'],
     [
       new InaccurateLocationError(),

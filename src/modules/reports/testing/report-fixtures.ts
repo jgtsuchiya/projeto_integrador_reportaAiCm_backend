@@ -65,6 +65,7 @@ export const TEST_REPORTS_CONFIG: ReportsConfig = {
   dailyLimit: 10,
   confirmationsRequired: 10,
   rejectionsRequired: 10,
+  voteMaxDistanceMeters: 500,
 };
 
 /** Um ponto no centro de Campo Mourão. */

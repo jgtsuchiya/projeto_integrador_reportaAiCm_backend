@@ -4,12 +4,14 @@ import { join } from 'node:path';
 
 import type request from 'supertest';
 
+import { pointNorthOf } from '@modules/reports/testing/report-fixtures';
 import { INVALID_JSON_MESSAGE } from '@shared/presentation/middlewares/body-parser.middleware';
 
 import {
   Actor,
   buildClientPayload,
   buildReportPayload,
+  buildVotePayload,
   CAMPO_MOURAO,
   E2eApp,
   fixtureBase64,
@@ -19,6 +21,10 @@ import {
 import { MemoryLogger } from './support/memory-logger';
 
 const BEARER = { type: 'bearer' } as const;
+
+/** Onde estão os eleitores dos testes do voto: perto do reporte e a 900 m dele. */
+const VOTER_NEAR = { ...pointNorthOf(CAMPO_MOURAO, 37), accuracyMeters: 7 };
+const VOTER_FAR = { ...pointNorthOf(CAMPO_MOURAO, 900), accuracyMeters: 7 };
 
 /** Marcadores dos segmentos do cabeçalho do JPEG, do primeiro depois do SOI até o SOS. */
 function jpegHeaderMarkers(bytes: Buffer): number[] {
@@ -406,14 +412,73 @@ describe('Reportes (integração)', () => {
     });
   });
 
+  describe('voto (T10)', () => {
+    let reportId: string;
+
+    beforeAll(async () => {
+      reportId = (await e2e.openReport(author)).id;
+    });
+
+    function vote(session: Tokens, id: string, body: unknown): request.Test {
+      return e2e
+        .api()
+        .post(`/api/reports/${id}/votes`)
+        .auth(session.accessToken, BEARER)
+        .send(body as object);
+    }
+
+    it('deve recusar o corpo inválido com 400, com todos os campos de uma vez', async () => {
+      const response = await vote(other, reportId, {
+        vote: 'SIM',
+        location: { latitude: -24.04, longitude: -200, accuracyMeters: 0 },
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        details: [
+          { field: 'vote', message: 'O voto deve ser CONFIRM ou DENY.' },
+          { field: 'location.longitude' },
+          { field: 'location.accuracyMeters' },
+        ],
+      });
+    });
+
+    it('deve exigir a localização de quem vota', async () => {
+      const response = await vote(other, reportId, { vote: 'CONFIRM' });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({ details: [{ field: 'location' }] });
+    });
+
+    it('deve validar o id como UUID', async () => {
+      const response = await vote(other, 'nao-e-uuid', buildVotePayload());
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({ details: [{ field: 'id' }] });
+    });
+
+    it('deve aceitar o voto de perto e recusar o de longe, sem repetir a localização na resposta', async () => {
+      const far = await vote(other, reportId, buildVotePayload({ location: VOTER_FAR }));
+      const near = await vote(other, reportId, buildVotePayload({ location: VOTER_NEAR }));
+
+      expect([far.status, near.status]).toEqual([422, 201]);
+      for (const response of [far, near]) {
+        expect(response.text).not.toContain(String(VOTER_FAR.latitude));
+        expect(response.text).not.toContain(String(VOTER_NEAR.latitude));
+      }
+    });
+  });
+
   // Por último: confere o log de todas as requisições do arquivo, inclusive as recusadas.
-  it('não deve escrever a foto, o base64 nem as coordenadas no log (RN36)', () => {
+  it('não deve escrever a foto, o base64 nem as coordenadas no log (RN36 e RN38)', () => {
     const log = logger.lines.join('\n');
 
     expect(logger.lines.length).toBeGreaterThan(0);
     expect(log).not.toContain(fixtureBase64('report-photo.jpg').slice(0, 40));
     expect(log).not.toContain(fixtureBase64('report-thumbnail.jpg').slice(0, 40));
-    expect(log).not.toContain(String(CAMPO_MOURAO.latitude));
-    expect(log).not.toContain(String(CAMPO_MOURAO.longitude));
+    for (const { latitude, longitude } of [CAMPO_MOURAO, VOTER_NEAR, VOTER_FAR]) {
+      expect(log).not.toContain(String(latitude));
+      expect(log).not.toContain(String(longitude));
+    }
   });
 });

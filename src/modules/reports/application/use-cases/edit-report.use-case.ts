@@ -52,6 +52,7 @@ export class EditReportUseCase implements UseCase<EditReportInput, ReportOutput>
     }
     await this.reportRepository.save(report, photo);
 
-    return toReportOutput(report, input.userId, this.config);
+    // Só o autor chega aqui, e ele não vota no próprio reporte.
+    return toReportOutput(report, input.userId, this.config, null);
   }
 }

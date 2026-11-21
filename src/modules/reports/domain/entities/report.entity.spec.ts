@@ -7,18 +7,31 @@ import {
 } from '../../testing/report-fixtures';
 import { InaccurateLocationError } from '../errors/inaccurate-location.error';
 import { LocationOutsideAreaError } from '../errors/location-outside-area.error';
+import { OwnReportVoteError } from '../errors/own-report-vote.error';
 import { ReportAuthorOnlyError } from '../errors/report-author-only.error';
 import { ReportHasVotesError } from '../errors/report-has-votes.error';
 import { ReportNotDeletableError } from '../errors/report-not-deletable.error';
 import { ReportNotEditableError } from '../errors/report-not-editable.error';
 import { ReportNotFoundError } from '../errors/report-not-found.error';
+import { ReportNotInValidationError } from '../errors/report-not-in-validation.error';
 import { GeoLocation } from '../value-objects/geo-location';
 import { ReportDescription } from '../value-objects/report-description';
 import { ReportStatus } from '../value-objects/report-status';
+import { ReportVoteType, VoteThresholds } from '../value-objects/report-vote-type';
+import { ReportVote } from './report-vote.entity';
 import { Report } from './report.entity';
 
 const AUTHOR = 'author-1';
 const OTHER = 'client-2';
+/** Os padrões de `REPORT_CONFIRMATIONS_REQUIRED` e `REPORT_REJECTIONS_REQUIRED`. */
+const THRESHOLDS: VoteThresholds = { confirmationsRequired: 10, rejectionsRequired: 10 };
+
+/** Votos de `count` eleitores diferentes, do tipo informado. */
+function castVotes(report: Report, type: ReportVoteType, count: number, first = 1): void {
+  for (let voter = first; voter < first + count; voter++) {
+    report.registerVote(`voter-${voter}`, type, THRESHOLDS);
+  }
+}
 
 describe('Report', () => {
   describe('open', () => {
@@ -283,6 +296,159 @@ describe('Report', () => {
       sut.delete(AUTHOR);
 
       expect(() => sut.delete(AUTHOR)).toThrow(ReportNotFoundError);
+    });
+  });
+  describe('validação comunitária', () => {
+    it('deve deixar os outros cidadãos votar no reporte em validação, mas não o autor', () => {
+      const sut = openTestReport({ authorId: AUTHOR });
+
+      expect(sut.canBeVotedBy(OTHER)).toBe(true);
+      expect(sut.canBeVotedBy(AUTHOR)).toBe(false);
+    });
+
+    it.each([ReportStatus.CONFIRMED, ReportStatus.REJECTED])(
+      'não deve deixar ninguém votar no reporte %s',
+      (status) => {
+        const sut = withReportChanges(openTestReport({ authorId: AUTHOR }), { status });
+
+        expect(sut.canBeVotedBy(OTHER)).toBe(false);
+      },
+    );
+
+    it('não deve deixar ninguém votar no reporte excluído', () => {
+      const sut = openTestReport({ authorId: AUTHOR });
+      sut.delete(AUTHOR);
+
+      expect(sut.canBeVotedBy(OTHER)).toBe(false);
+      expect(() => sut.registerVote(OTHER, ReportVoteType.CONFIRM, THRESHOLDS)).toThrow(
+        ReportNotFoundError,
+      );
+    });
+
+    it('deve somar a confirmação, mudar a data da alteração e devolver o voto', () => {
+      const sut = openTestReport({ authorId: AUTHOR });
+      const before = sut.updatedAt;
+      jest.useFakeTimers({ now: before.getTime() + 1000 });
+
+      const vote = sut.registerVote(OTHER, ReportVoteType.CONFIRM, THRESHOLDS);
+      jest.useRealTimers();
+
+      expect(vote).toBeInstanceOf(ReportVote);
+      expect(vote).toMatchObject({
+        reportId: sut.id,
+        voterId: OTHER,
+        type: ReportVoteType.CONFIRM,
+        createdAt: sut.updatedAt,
+      });
+      expect(sut).toMatchObject({
+        status: ReportStatus.PENDING,
+        confirmationsCount: 1,
+        rejectionsCount: 0,
+        statusChangedAt: null,
+        hasVotes: true,
+      });
+      expect(sut.updatedAt.getTime()).toBe(before.getTime() + 1000);
+    });
+
+    it('deve somar o voto "não está lá" só nas rejeições', () => {
+      const sut = openTestReport({ authorId: AUTHOR });
+
+      sut.registerVote(OTHER, ReportVoteType.DENY, THRESHOLDS);
+
+      expect(sut).toMatchObject({ confirmationsCount: 0, rejectionsCount: 1 });
+    });
+
+    it('deve continuar em validação com 9 confirmações e virar CONFIRMED na 10ª', () => {
+      const sut = openTestReport({ authorId: AUTHOR });
+      castVotes(sut, ReportVoteType.CONFIRM, 9);
+      expect(sut.status).toBe(ReportStatus.PENDING);
+
+      sut.registerVote('voter-10', ReportVoteType.CONFIRM, THRESHOLDS);
+
+      expect(sut).toMatchObject({ status: ReportStatus.CONFIRMED, confirmationsCount: 10 });
+      expect(sut.statusChangedAt).toEqual(sut.updatedAt);
+      expect(sut.isVisibleTo(OTHER)).toBe(true);
+    });
+
+    it('deve recusar o voto seguinte ao CONFIRMED, sem mudar as contagens', () => {
+      const sut = openTestReport({ authorId: AUTHOR });
+      castVotes(sut, ReportVoteType.CONFIRM, 10);
+      const statusChangedAt = sut.statusChangedAt;
+
+      expect(() => sut.registerVote('voter-11', ReportVoteType.DENY, THRESHOLDS)).toThrow(
+        ReportNotInValidationError,
+      );
+      expect(sut).toMatchObject({
+        status: ReportStatus.CONFIRMED,
+        confirmationsCount: 10,
+        rejectionsCount: 0,
+        statusChangedAt,
+      });
+    });
+
+    it('deve virar REJECTED com 10 votos "não está lá" e sumir para os outros cidadãos', () => {
+      const sut = openTestReport({ authorId: AUTHOR });
+      castVotes(sut, ReportVoteType.CONFIRM, 9);
+
+      castVotes(sut, ReportVoteType.DENY, 10, 10);
+
+      expect(sut).toMatchObject({
+        status: ReportStatus.REJECTED,
+        confirmationsCount: 9,
+        rejectionsCount: 10,
+      });
+      expect(sut.statusChangedAt).not.toBeNull();
+      expect(sut.isVisibleTo(OTHER)).toBe(false);
+      expect(sut.isVisibleTo(AUTHOR)).toBe(true);
+    });
+
+    it('deve valer o limite do tipo votado: as rejeições acima do limite não confirmam', () => {
+      const sut = withReportChanges(openTestReport({ authorId: AUTHOR }), { rejectionsCount: 12 });
+
+      sut.registerVote(OTHER, ReportVoteType.CONFIRM, THRESHOLDS);
+
+      expect(sut.status).toBe(ReportStatus.PENDING);
+      sut.registerVote('voter-2', ReportVoteType.DENY, THRESHOLDS);
+      expect(sut.status).toBe(ReportStatus.REJECTED);
+    });
+
+    it('deve usar os limites informados', () => {
+      const sut = openTestReport({ authorId: AUTHOR });
+
+      sut.registerVote(OTHER, ReportVoteType.CONFIRM, {
+        confirmationsRequired: 1,
+        rejectionsRequired: 10,
+      });
+
+      expect(sut.status).toBe(ReportStatus.CONFIRMED);
+    });
+
+    it('deve recusar o voto do autor, que não conta como confirmação', () => {
+      const sut = openTestReport({ authorId: AUTHOR });
+
+      expect(() => sut.registerVote(AUTHOR, ReportVoteType.CONFIRM, THRESHOLDS)).toThrow(
+        OwnReportVoteError,
+      );
+      expect(sut.confirmationsCount).toBe(0);
+    });
+
+    it('deve recusar o voto do autor no próprio reporte já confirmado pelo motivo do autor', () => {
+      const sut = withReportChanges(openTestReport({ authorId: AUTHOR }), {
+        status: ReportStatus.CONFIRMED,
+      });
+
+      expect(() => sut.ensureCanBeVotedBy(AUTHOR)).toThrow(OwnReportVoteError);
+      expect(() => sut.ensureCanBeVotedBy(OTHER)).toThrow(ReportNotInValidationError);
+    });
+
+    it('deve impedir a edição depois do primeiro voto, mas não a exclusão', () => {
+      const sut = openTestReport({ authorId: AUTHOR });
+
+      sut.registerVote(OTHER, ReportVoteType.DENY, THRESHOLDS);
+
+      expect(sut.canBeEditedBy(AUTHOR)).toBe(false);
+      expect(sut.canBeDeletedBy(AUTHOR)).toBe(true);
+      expect(() => sut.edit(AUTHOR, null)).toThrow(ReportHasVotesError);
     });
   });
 });

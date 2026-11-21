@@ -350,7 +350,7 @@ Sem sessão, as rotas protegidas respondem 401. Com um papel fora da lista, 403.
 - **Cada usuário só vê e encerra as próprias sessões** (RN23). Nas rotas de `/api/users/me/sessions`, o id da sessão de outro usuário responde 404.
 - **A verificação em duas etapas só é ativada com o e-mail verificado** (RN24). O Client que ainda não confirmou o e-mail recebe 422 no `PATCH /api/users/me/mfa`.
 
-As rotas de `/api/reports`, só do CLIENT, estão na [matriz de permissões dos reportes](REPORTS.md#rotas-e-permissões), com as regras que dependem do autor e do status do reporte: o Client vê os reportes de outros cidadãos só em PENDING ou CONFIRMED, e só o autor edita e exclui (RN33 a RN35).
+As rotas de `/api/reports`, só do CLIENT, estão na [matriz de permissões dos reportes](REPORTS.md#rotas-e-permissões), com as regras que dependem do autor e do status do reporte: o Client vê os reportes de outros cidadãos só em PENDING ou CONFIRMED, só o autor edita e exclui (RN33 a RN35), e só os outros cidadãos votam, com o e-mail verificado e perto do reporte (RN37 e RN38).
 
 A matriz é testada rota a rota no [`permissions.e2e-spec.ts`](../test/permissions.e2e-spec.ts), inclusive as rotas de reportes: sem sessão, com cada um dos três papéis e com uma sessão pendente.
 

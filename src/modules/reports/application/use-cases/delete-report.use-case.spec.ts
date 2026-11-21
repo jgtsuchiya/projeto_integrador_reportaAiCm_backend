@@ -2,6 +2,7 @@ import { ReportAuthorOnlyError } from '../../domain/errors/report-author-only.er
 import { ReportNotDeletableError } from '../../domain/errors/report-not-deletable.error';
 import { ReportNotFoundError } from '../../domain/errors/report-not-found.error';
 import { ReportStatus } from '../../domain/value-objects/report-status';
+import { ReportVoteType } from '../../domain/value-objects/report-vote-type';
 import { InMemoryReportRepository, InMemoryReportsDatabase } from '../../testing/in-memory-reports';
 import { buildPhoto, openTestReport, withReportChanges } from '../../testing/report-fixtures';
 import { DeleteReportUseCase } from './delete-report.use-case';
@@ -63,5 +64,24 @@ describe('DeleteReportUseCase', () => {
     await expect(sut.execute({ reportId: id, userId: AUTHOR })).rejects.toThrow(
       ReportNotFoundError,
     );
+  });
+  it('deve recusar a exclusão quando um voto confirma o reporte entre a leitura e a gravação', async () => {
+    const id = await seed();
+    const stale = await repository.findById(id);
+    await repository.vote(id, (report) =>
+      report.registerVote(OTHER, ReportVoteType.CONFIRM, {
+        confirmationsRequired: 1,
+        rejectionsRequired: 1,
+      }),
+    );
+    jest.spyOn(repository, 'findById').mockResolvedValueOnce(stale);
+
+    await expect(sut.execute({ reportId: id, userId: AUTHOR })).rejects.toThrow(
+      ReportNotDeletableError,
+    );
+    await expect(repository.findById(id)).resolves.toMatchObject({
+      status: ReportStatus.CONFIRMED,
+      isDeleted: false,
+    });
   });
 });

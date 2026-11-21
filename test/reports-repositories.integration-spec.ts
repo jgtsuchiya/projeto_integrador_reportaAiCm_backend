@@ -1,18 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
-import { AbstractLogger, DataSource, LogLevel, LogMessage, QueryRunner } from 'typeorm';
+import { AbstractLogger, DataSource, In, LogLevel, LogMessage, QueryRunner } from 'typeorm';
 
 import { envSchema } from '@config/env.schema';
 import { OpenReportUseCase } from '@modules/reports/application/use-cases/open-report.use-case';
+import { VoteOnReportUseCase } from '@modules/reports/application/use-cases/vote-on-report.use-case';
 import { ReportPhoto } from '@modules/reports/domain/entities/report-photo.entity';
 import { Report } from '@modules/reports/domain/entities/report.entity';
 import { DuplicateIdempotencyKeyError } from '@modules/reports/domain/errors/duplicate-idempotency-key.error';
+import { DuplicateVoteError } from '@modules/reports/domain/errors/duplicate-vote.error';
+import { ReportHasVotesError } from '@modules/reports/domain/errors/report-has-votes.error';
+import { ReportNotDeletableError } from '@modules/reports/domain/errors/report-not-deletable.error';
+import { ReportNotInValidationError } from '@modules/reports/domain/errors/report-not-in-validation.error';
 import { ReportPhotoSize } from '@modules/reports/domain/repositories/report-photo.repository';
 import { GeoPoint } from '@modules/reports/domain/value-objects/geo-point';
 import { ReportDescription } from '@modules/reports/domain/value-objects/report-description';
 import { ReportStatus } from '@modules/reports/domain/value-objects/report-status';
+import { ReportVoteType } from '@modules/reports/domain/value-objects/report-vote-type';
 import { ReportPhotoOrmEntity } from '@modules/reports/infra/database/entities/report-photo.orm-entity';
+import { ReportVoteOrmEntity } from '@modules/reports/infra/database/entities/report-vote.orm-entity';
 import { ReportOrmEntity } from '@modules/reports/infra/database/entities/report.orm-entity';
 import { TypeOrmReportPhotoRepository } from '@modules/reports/infra/database/repositories/typeorm-report-photo.repository';
 import { TypeOrmReportRepository } from '@modules/reports/infra/database/repositories/typeorm-report.repository';
@@ -61,7 +68,13 @@ describe('Repositórios de reportes (integração)', () => {
 
     dataSource = new DataSource({
       ...buildDataSourceOptions(env),
-      entities: [RoleOrmEntity, UserOrmEntity, ReportOrmEntity, ReportPhotoOrmEntity],
+      entities: [
+        RoleOrmEntity,
+        UserOrmEntity,
+        ReportOrmEntity,
+        ReportPhotoOrmEntity,
+        ReportVoteOrmEntity,
+      ],
       migrations: [
         join(__dirname, '..', 'src', 'shared', 'infra', 'database', 'migrations', '*.ts'),
       ],
@@ -122,6 +135,11 @@ describe('Repositórios de reportes (integração)', () => {
     await reports.create(report, photo);
 
     return report;
+  }
+
+  /** A regra da entidade, como o `VoteOnReportUseCase` a entrega ao repositório. */
+  function voteWith(voterId: string, type: ReportVoteType = ReportVoteType.CONFIRM) {
+    return (report: Report) => report.registerVote(voterId, type, TEST_REPORTS_CONFIG);
   }
 
   /** Queries das imagens: as que leem as colunas `content` ou `thumbnail`. */
@@ -265,6 +283,34 @@ describe('Repositórios de reportes (integração)', () => {
       expect(Number(total)).toBe(1);
     });
 
+    it('deve recusar a edição de um reporte lido antes de um voto, sem desfazer a contagem', async () => {
+      const authorId = await insertClient();
+      const report = await createReport(authorId);
+      await reports.vote(report.id, voteWith(await insertClient()));
+      // A edição leu o reporte sem votos, antes do voto.
+      report.edit(authorId, ReportDescription.create('Descrição nova'));
+
+      await expect(reports.save(report)).rejects.toThrow(ReportHasVotesError);
+
+      const stored = await reports.findById(report.id);
+      expect(stored?.confirmationsCount).toBe(1);
+      expect(stored?.description?.value).toBe('Buraco na faixa da direita.');
+    });
+
+    it('deve recusar a exclusão de um reporte lido antes de o voto confirmá-lo', async () => {
+      const authorId = await insertClient();
+      const report = await createReport(authorId, { changes: { confirmationsCount: 9 } });
+      await reports.vote(report.id, voteWith(await insertClient()));
+      report.delete(authorId);
+
+      await expect(reports.softDelete(report)).rejects.toThrow(ReportNotDeletableError);
+
+      await expect(reports.findById(report.id)).resolves.toMatchObject({
+        status: ReportStatus.CONFIRMED,
+        isDeleted: false,
+      });
+    });
+
     it('deve gravar a exclusão lógica: o reporte some das buscas e continua contando', async () => {
       const authorId = await insertClient();
       const report = await createReport(authorId);
@@ -279,6 +325,111 @@ describe('Repositórios de reportes (integração)', () => {
       await expect(
         reports.countCreatedSince(authorId, new Date(Date.now() - 60_000)),
       ).resolves.toBe(1);
+    });
+  });
+
+  describe('vote (T10)', () => {
+    it('deve gravar o voto e as contagens, com a linha do reporte travada', async () => {
+      const authorId = await insertClient();
+      const voterId = await insertClient();
+      const report = await createReport(authorId);
+      recorder.queries.length = 0;
+
+      const updated = await reports.vote(report.id, voteWith(voterId, ReportVoteType.DENY));
+
+      expect(updated).toMatchObject({ id: report.id, confirmationsCount: 0, rejectionsCount: 1 });
+      const stored = await reports.findById(report.id);
+      expect(stored).toMatchObject({ rejectionsCount: 1, status: ReportStatus.PENDING });
+      expect(stored?.updatedAt).toEqual(updated?.updatedAt);
+      const votes = await queryRunner.manager
+        .getRepository(ReportVoteOrmEntity)
+        .findBy({ reportId: report.id });
+      expect(votes).toEqual([
+        {
+          id: expect.any(String) as string,
+          reportId: report.id,
+          userId: voterId,
+          vote: 'DENY',
+          createdAt: updated?.updatedAt,
+        },
+      ]);
+      const locking = recorder.queries.find(({ query }) => query.endsWith('FOR UPDATE'));
+      expect(locking?.query).toContain('`reports`');
+    });
+
+    it('deve gravar o status e a data da mudança com o voto que chega ao limite', async () => {
+      const authorId = await insertClient();
+      const report = await createReport(authorId, { changes: { confirmationsCount: 9 } });
+
+      const updated = await reports.vote(report.id, voteWith(await insertClient()));
+
+      const stored = await reports.findById(report.id);
+      expect(stored).toMatchObject({ status: ReportStatus.CONFIRMED, confirmationsCount: 10 });
+      expect(stored?.statusChangedAt).toEqual(updated?.statusChangedAt);
+      expect(stored?.statusChangedAt).toBeInstanceOf(Date);
+    });
+
+    it('deve recusar o voto repetido sem mudar as contagens', async () => {
+      const authorId = await insertClient();
+      const voterId = await insertClient();
+      const report = await createReport(authorId);
+      await reports.vote(report.id, voteWith(voterId));
+
+      await expect(reports.vote(report.id, voteWith(voterId, ReportVoteType.DENY))).rejects.toThrow(
+        DuplicateVoteError,
+      );
+
+      await expect(reports.findById(report.id)).resolves.toMatchObject({
+        confirmationsCount: 1,
+        rejectionsCount: 0,
+      });
+    });
+
+    it('deve desfazer tudo quando a regra da entidade recusa o voto', async () => {
+      const authorId = await insertClient();
+      const report = await createReport(authorId, {
+        changes: { status: ReportStatus.CONFIRMED, confirmationsCount: 10 },
+      });
+
+      await expect(reports.vote(report.id, voteWith(await insertClient()))).rejects.toThrow(
+        ReportNotInValidationError,
+      );
+      await expect(
+        queryRunner.manager.getRepository(ReportVoteOrmEntity).countBy({ reportId: report.id }),
+      ).resolves.toBe(0);
+    });
+
+    it('deve devolver null para o reporte excluído e o inexistente, sem chamar a regra', async () => {
+      const authorId = await insertClient();
+      const report = await createReport(authorId);
+      report.delete(authorId);
+      await reports.softDelete(report);
+      const apply = jest.fn(voteWith(await insertClient()));
+
+      await expect(reports.vote(report.id, apply)).resolves.toBeNull();
+      await expect(reports.vote(randomUUID(), apply)).resolves.toBeNull();
+      expect(apply).not.toHaveBeenCalled();
+    });
+
+    it('deve encontrar os votos do usuário só nos reportes informados', async () => {
+      const authorId = await insertClient();
+      const voterId = await insertClient();
+      const confirmed = await createReport(authorId);
+      const denied = await createReport(authorId);
+      const other = await createReport(authorId);
+      await reports.vote(confirmed.id, voteWith(voterId));
+      await reports.vote(denied.id, voteWith(voterId, ReportVoteType.DENY));
+      await reports.vote(other.id, voteWith(await insertClient()));
+
+      const votes = await reports.findVotes(voterId, [confirmed.id, denied.id, other.id]);
+
+      expect(votes).toEqual(
+        new Map([
+          [confirmed.id, ReportVoteType.CONFIRM],
+          [denied.id, ReportVoteType.DENY],
+        ]),
+      );
+      await expect(reports.findVotes(voterId, [])).resolves.toEqual(new Map());
     });
   });
 
@@ -492,6 +643,63 @@ describe('Repositórios de reportes (integração)', () => {
       } finally {
         await dataSource.getRepository(ReportOrmEntity).delete({ authorId });
         await dataSource.getRepository(UserOrmEntity).delete({ id: authorId });
+      }
+    });
+  });
+
+  describe('votos simultâneos (RN40)', () => {
+    // Fora da transação do teste: cada voto precisa da própria conexão, como na API.
+    it('deve terminar 12 votos simultâneos com o limite em 10 com 10 confirmações, CONFIRMED e 2 recusas', async () => {
+      const authorId = await insertClient(dataSource.manager);
+      const voterIds = await Promise.all(
+        Array.from({ length: 12 }, () => insertClient(dataSource.manager)),
+      );
+      const repository = new TypeOrmReportRepository(dataSource.getRepository(ReportOrmEntity));
+      const sut = new VoteOnReportUseCase(repository, TEST_REPORTS_CONFIG);
+      const report = openTestReport({ authorId });
+      const photo = buildPhoto();
+
+      try {
+        await repository.create(report, photo);
+
+        const results = await Promise.allSettled(
+          voterIds.map((voterId) =>
+            sut.execute({
+              reportId: report.id,
+              voterId,
+              emailVerified: true,
+              vote: ReportVoteType.CONFIRM,
+              location: { ...pointNorthOf(CENTER, 40), accuracyMeters: 10 },
+            }),
+          ),
+        );
+
+        const fulfilled = results.filter((result) => result.status === 'fulfilled');
+        const rejected = results.filter((result) => result.status === 'rejected');
+        expect(fulfilled).toHaveLength(10);
+        expect(rejected.map(({ reason }) => reason as unknown)).toEqual([
+          expect.any(ReportNotInValidationError),
+          expect.any(ReportNotInValidationError),
+        ]);
+        // Cada voto aceito viu uma contagem diferente: nenhum se perdeu.
+        expect(
+          fulfilled.map(({ value }) => value.votes.confirmations).sort((a, b) => a - b),
+        ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        // O status mudou uma vez só, no 10º voto.
+        const transitions = fulfilled.filter(({ value }) => value.status !== ReportStatus.PENDING);
+        expect(transitions.map(({ value }) => value.votes.confirmations)).toEqual([10]);
+        await expect(repository.findById(report.id)).resolves.toMatchObject({
+          status: ReportStatus.CONFIRMED,
+          confirmationsCount: 10,
+          rejectionsCount: 0,
+        });
+        await expect(
+          dataSource.getRepository(ReportVoteOrmEntity).countBy({ reportId: report.id }),
+        ).resolves.toBe(10);
+      } finally {
+        // Os votos e a foto saem junto com o reporte (ON DELETE CASCADE).
+        await dataSource.getRepository(ReportOrmEntity).delete({ authorId });
+        await dataSource.getRepository(UserOrmEntity).delete({ id: In([authorId, ...voterIds]) });
       }
     });
   });

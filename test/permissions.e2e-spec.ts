@@ -6,6 +6,7 @@ import {
   Actor,
   buildClientPayload,
   buildReportPayload,
+  buildVotePayload,
   CAMPO_MOURAO,
   E2eApp,
   InvitedAdmin,
@@ -405,6 +406,28 @@ describe('Matriz de permissões (e2e)', () => {
             const report = allowed ? await e2e.openReport(targets.reportAuthor) : targets.report;
 
             return call(allowed ? targets.reportAuthor : actor, 'delete', `/reports/${report.id}`);
+          },
+        },
+      ],
+    },
+    {
+      line: 'Votar num reporte (CLIENT)',
+      routes: [
+        {
+          route: 'POST /api/reports/:id/votes',
+          allowed: [Role.CLIENT],
+          success: 201,
+          // Vota um Client verificado criado só para isso, num reporte aberto só para isso: votar
+          // exige o e-mail verificado (RN37), e o voto impediria a edição do reporte compartilhado.
+          send: async ({ actor, allowed }) => {
+            const report = allowed ? await e2e.openReport(targets.reportAuthor) : targets.report;
+
+            return call(
+              allowed ? await e2e.registerVerifiedClient() : actor,
+              'post',
+              `/reports/${report.id}/votes`,
+              buildVotePayload(),
+            );
           },
         },
       ],

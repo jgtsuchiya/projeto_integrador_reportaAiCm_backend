@@ -22,7 +22,7 @@ interface ReportBody {
   description: string | null;
   location: { latitude: number; longitude: number; accuracyMeters: number };
   photo: { id: string; width: number; height: number };
-  votes: Record<string, number>;
+  votes: Record<string, number | string | null>;
   isMine: boolean;
   canEdit: boolean;
   canDelete: boolean;
@@ -74,15 +74,18 @@ describe('Reportes (e2e)', () => {
         description: 'Buraco grande na faixa da direita, perto do semáforo.',
         location: { ...CAMPO_MOURAO, accuracyMeters: 9 },
         photo: { width: 160, height: 120 },
+        // O .env.test deixa as duas contagens em 3 (o padrão é 10).
         votes: {
           confirmations: 0,
           rejections: 0,
-          confirmationsRequired: 10,
-          rejectionsRequired: 10,
+          confirmationsRequired: 3,
+          rejectionsRequired: 3,
+          mine: null,
         },
         isMine: true,
         canEdit: true,
         canDelete: true,
+        canVote: false,
         statusChangedAt: null,
       });
     });
@@ -306,6 +309,7 @@ describe('Reportes (e2e)', () => {
         isMine: false,
         canEdit: false,
         canDelete: false,
+        canVote: true,
       });
       expect((nearby.body as { items: ReportBody[] }).items).toEqual(
         expect.arrayContaining([expect.objectContaining({ id: report.id, distanceMeters: 0 })]),
