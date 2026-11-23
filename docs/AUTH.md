@@ -235,10 +235,10 @@ Acima do limite, a resposta é 429 no formato de erro da aplicação, inclusive 
 
 A sessão aceita os tokens por **cookie** (painel web) e por **header** (app). Quem escolhe é o front, pelo header `st-auth-mode` enviado no login:
 
-| `st-auth-mode`      | Quem envia                               | Como os tokens voltam                              | Como voltam para a API                 |
-| ------------------- | ---------------------------------------- | -------------------------------------------------- | -------------------------------------- |
-| `cookie`            | `supertokens-web-js` (padrão dele)       | Cookies `sAccessToken` e `sRefreshToken`, httpOnly | O navegador envia os cookies sozinho   |
-| `header` ou ausente | `supertokens-react-native` (padrão dele) | Headers `st-access-token` e `st-refresh-token`     | `Authorization: Bearer <access token>` |
+| `st-auth-mode`      | Quem envia                                  | Como os tokens voltam                              | Como voltam para a API                 |
+| ------------------- | ------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
+| `cookie`            | `supertokens-web-js` (padrão dele)          | Cookies `sAccessToken` e `sRefreshToken`, httpOnly | O navegador envia os cookies sozinho   |
+| `header` ou ausente | `supertokens_flutter`, do app (padrão dele) | Headers `st-access-token` e `st-refresh-token`     | `Authorization: Bearer <access token>` |
 
 Na verificação, a API procura a sessão nos dois lugares, então as rotas da aplicação não mudam conforme o modo.
 
@@ -350,19 +350,21 @@ Sem sessão, as rotas protegidas respondem 401. Com um papel fora da lista, 403.
 - **Cada usuário só vê e encerra as próprias sessões** (RN23). Nas rotas de `/api/users/me/sessions`, o id da sessão de outro usuário responde 404.
 - **A verificação em duas etapas só é ativada com o e-mail verificado** (RN24). O Client que ainda não confirmou o e-mail recebe 422 no `PATCH /api/users/me/mfa`.
 
-A matriz é testada rota a rota no [`permissions.e2e-spec.ts`](../test/permissions.e2e-spec.ts): sem sessão, com cada um dos três papéis e com uma sessão pendente.
+As rotas de `/api/reports`, só do CLIENT, estão na [matriz de permissões dos reportes](REPORTS.md#rotas-e-permissões), com as regras que dependem do autor e do status do reporte: o Client vê os reportes de outros cidadãos só em PENDING ou CONFIRMED, só o autor edita e exclui (RN33 a RN35), e só os outros cidadãos votam, com o e-mail verificado e perto do reporte (RN37 e RN38).
+
+A matriz é testada rota a rota no [`permissions.e2e-spec.ts`](../test/permissions.e2e-spec.ts), inclusive as rotas de reportes: sem sessão, com cada um dos três papéis e com uma sessão pendente.
 
 ## Como proteger uma rota nova
 
 Uma rota nova já nasce protegida: sem nenhum decorator, ela exige sessão e aceita qualquer papel. Os decorators ficam em [`modules/auth/presentation/decorators`](../src/modules/auth/presentation/decorators) e podem ser importados pelos controllers de qualquer módulo:
 
-| Decorator                     | Efeito                                                                                                                         |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `@Public()`                   | Libera a rota sem sessão                                                                                                       |
-| `@Roles(...)`                 | Restringe aos papéis informados (403 para os outros)                                                                           |
-| `@CurrentUser()`              | Injeta o usuário da sessão: `{ id, role, sessionHandle }`. Só funciona em rota autenticada (numa rota `@Public()`, lança erro) |
-| `@AllowPendingSecondFactor()` | Libera a rota para a sessão pendente da segunda etapa. É só para as rotas de `/api/mfa`                                        |
-| `@CurrentSession()`           | Injeta a sessão do SuperTokens da requisição, para a rota que altera a própria sessão. Hoje, só as de `/api/mfa`               |
+| Decorator                     | Efeito                                                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@Public()`                   | Libera a rota sem sessão                                                                                                                      |
+| `@Roles(...)`                 | Restringe aos papéis informados (403 para os outros)                                                                                          |
+| `@CurrentUser()`              | Injeta o usuário da sessão: `{ id, role, sessionHandle, emailVerified }`. Só funciona em rota autenticada (numa rota `@Public()`, lança erro) |
+| `@AllowPendingSecondFactor()` | Libera a rota para a sessão pendente da segunda etapa. É só para as rotas de `/api/mfa`                                                       |
+| `@CurrentSession()`           | Injeta a sessão do SuperTokens da requisição, para a rota que altera a própria sessão. Hoje, só as de `/api/mfa`                              |
 
 ```ts
 import { CurrentUser } from '@modules/auth/presentation/decorators/current-user.decorator';
@@ -564,7 +566,9 @@ sequenceDiagram
 - **Um e-mail por minuto.** O pedido feito menos de 1 minuto depois do último e-mail responde 422, e o link que já foi continua valendo. O intervalo conta também a partir do link do cadastro. Aqui a resposta pode dizer o motivo, ao contrário do pedido de redefinição de senha: quem chama já está logado na própria conta.
 - Uma falha no envio do e-mail não vira erro: a resposta é 204, o motivo fica no log, e o usuário pede o reenvio de novo depois do intervalo.
 
-O link aponta para a página `/verificar-email` do painel web ([FRONTEND.md](FRONTEND.md#verificação-de-e-mail)). A única rota que exige o e-mail verificado é a ativação da [verificação em duas etapas](#verificação-em-duas-etapas) (RN24).
+O link aponta para a página `/verificar-email` do painel web ([FRONTEND.md](FRONTEND.md#verificação-de-e-mail)).
+
+**O que exige o e-mail verificado.** A ativação da [verificação em duas etapas](#verificação-em-duas-etapas) (RN24) e a abertura de reportes (RN26), que responde 422 "Confirme o seu e-mail para abrir reportes.". Sem essa barreira, contas descartáveis bastariam para confirmar um reporte falso na validação comunitária, que também vai exigir o e-mail verificado. O `AuthGuard` já carrega o usuário a cada requisição e entrega o `emailVerified` no `@CurrentUser()`: os outros módulos não consultam o usuário para saber. Depois da confirmação, a mesma sessão já passa.
 
 ## Sessões ativas
 
@@ -608,7 +612,7 @@ Quem tem a verificação em duas etapas ativa (`users.mfa_enabled`) conclui o lo
 
 **Ativação e desativação (`PATCH /api/users/me/mfa`).** Vale para os três papéis, sempre na própria conta (RN24). Recebe `{ "enabled": true, "password": "..." }` e responde 200 com o perfil atualizado, no formato do `GET /api/users/me`, que traz o `mfaEnabled`.
 
-- **A senha atual confirma a mudança**, nos dois sentidos. A senha incorreta responde 401 (`Senha incorreta.`, com `details.field` igual a `password`), como na troca de senha.
+- **A senha atual confirma a mudança**, nos dois sentidos. A senha incorreta responde 422 (`Senha incorreta.`, com `details.field` igual a `password`), como na troca de senha.
 - **Ativar exige o e-mail verificado**, porque é para ele que o código vai. Sem o `email_verified_at`, a resposta é 422. Na prática, só o Client que ainda não confirmou o e-mail cai nesse caso: o ADM e o SuperAdm já nascem verificados.
 - **Ativar revoga as outras sessões** da conta, que passam pela segunda etapa no próximo login. A sessão que ativou continua completa, sem pedir o código: a claim dela foi gravada no login, quando a conta ainda não tinha a verificação, e não é buscada de novo.
 - **Desativar não revoga nada.** Os logins seguintes deixam de pedir o código. Uma sessão que já estava pendente continua pendente e conclui o login com o código que recebeu.
@@ -691,9 +695,9 @@ Limites conhecidos:
 | Sessão ausente, expirada ou roubada (SuperTokens) | 401                          | `{ "message": "unauthorised" }`, `"try refresh token"` ou `"token theft detected"`              |
 | Sessão pendente da segunda etapa (SuperTokens)    | 403                          | `{ "message": "invalid claim", "claimValidationErrors": [{ "id": "mfa-verified", ... }] }`      |
 
-Nas rotas da aplicação: 400 para validação (com a lista de campos em `details`), 401 para senha incorreta, 403 para papel sem permissão, 404 para recurso inexistente, 409 para e-mail ou CPF já cadastrado e 422 para regra de negócio violada.
+Nas rotas da aplicação: 400 para validação (com a lista de campos em `details`), 403 para papel sem permissão, 404 para recurso inexistente, 409 para e-mail ou CPF já cadastrado e 422 para regra de negócio violada, inclusive a senha de confirmação incorreta.
 
-> **Cuidado com o 401 nas rotas da aplicação.** Os SDKs de front tratam qualquer 401 como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes, e depois lançam um erro. Hoje, o único 401 que não vem da sessão é o da senha de confirmação incorreta (`IncorrectPasswordError`, no `PATCH /api/users/me/password`, no `PATCH /api/users/me/mfa` e no `DELETE /api/users/me`), e os fronts precisam tratá-lo à parte ([FRONTEND.md](FRONTEND.md#erros)). Numa rota nova, não use `UnauthorizedError` para um erro que não seja de sessão.
+> **O 401 é só da sessão.** Os SDKs de front tratam qualquer 401 como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes, e depois lançam um erro, sem entregar o corpo da resposta. Por isso a senha de confirmação incorreta (`IncorrectPasswordError`, no `PATCH /api/users/me/password`, no `PATCH /api/users/me/mfa` e no `DELETE /api/users/me`) responde 422, e não existe categoria de erro de domínio para o 401. Numa rota nova, um erro que não seja de sessão nunca responde 401.
 
 ## Fora do escopo
 
@@ -702,9 +706,8 @@ Ainda não existem:
 - a troca de e-mail;
 - o login social;
 - na verificação em duas etapas, o aplicativo autenticador (TOTP), a obrigatoriedade por papel e o "lembrar este aparelho";
-- a abertura do app pelos links dos e-mails (deep link): eles abrem as páginas do painel web, no navegador do celular;
-- as restrições para o Client que não verificou o e-mail. Hoje, ele só não ativa a verificação em duas etapas, e as outras restrições entram com os reportes.
+- a abertura do app pelos links dos e-mails (deep link): eles abrem as páginas do painel web, no navegador do celular.
 
-Os pontos em aberto estão no fim dos planos das sprints. No da [sprint 3](sprints/sprint-3-login.md#10-pontos-em-aberto): a verificação em duas etapas obrigatória para o painel, o código por e-mail como segundo fator fraco, o bloqueio que permite travar o login de outra pessoa, o limite por IP em memória, o encerramento de sessão que não derruba o acesso na hora, a validade do refresh token e a entrega dos e-mails em produção. No da [sprint 2](sprints/sprint-2-usuarios.md#10-pontos-em-aberto): a hospedagem do Core em produção. O custo do MFA no SuperTokens, ponto em aberto da sprint 2, foi resolvido com a segunda etapa própria da aplicação.
+Os pontos em aberto estão no fim dos planos das sprints. No da [sprint 3](sprints/sprint-3-login.md#10-pontos-em-aberto): a verificação em duas etapas obrigatória para o painel, o código por e-mail como segundo fator fraco, o bloqueio que permite travar o login de outra pessoa, o limite por IP em memória, o encerramento de sessão que não derruba o acesso na hora, a validade do refresh token e a entrega dos e-mails em produção. No da [sprint 2](sprints/sprint-2-usuarios.md#10-pontos-em-aberto): a hospedagem do Core em produção. O custo do MFA no SuperTokens, ponto em aberto da sprint 2, foi resolvido com a segunda etapa própria da aplicação. O que o Client sem o e-mail verificado não pode fazer, ponto em aberto da sprint 3, foi resolvido com os reportes: ele não abre reportes ([verificação de e-mail](#verificação-de-e-mail)).
 
-As regras de negócio citadas neste documento estão nos planos: RN01 a RN16 no da [sprint 2](sprints/sprint-2-usuarios.md#4-regras-de-negócio) e RN17 a RN25 no da [sprint 3](sprints/sprint-3-login.md#4-regras-de-negócio).
+As regras de negócio citadas neste documento estão nos planos: RN01 a RN16 no da [sprint 2](sprints/sprint-2-usuarios.md#4-regras-de-negócio), RN17 a RN25 no da [sprint 3](sprints/sprint-3-login.md#4-regras-de-negócio) e RN26 a RN40 no da [sprint 4](sprints/sprint-4-reportes.md#4-regras-de-negócio).

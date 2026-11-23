@@ -22,7 +22,7 @@ export interface ChangePasswordInput {
 /**
  * Troca da própria senha (RN13): confere a senha atual no SuperTokens, grava a nova com a
  * política da RN08 e revoga as outras sessões do usuário. A sessão de quem trocou continua
- * válida. Uma senha atual incorreta gera `IncorrectPasswordError` (401).
+ * válida. Uma senha atual incorreta gera `IncorrectPasswordError` (422).
  *
  * No fim, o usuário recebe o e-mail de aviso da troca (RN21). Uma falha nesse envio não
  * desfaz a troca.

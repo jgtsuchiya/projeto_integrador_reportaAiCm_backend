@@ -16,7 +16,12 @@ describe('MfaController', () => {
   let resendLoginCodeUseCase: jest.Mocked<ResendLoginCodeUseCase>;
   let sessionSecondFactor: jest.Mocked<SessionSecondFactor<SessionContainer>>;
 
-  const user: AuthenticatedUser = { id: 'client-1', role: 'CLIENT', sessionHandle: 'session-1' };
+  const user: AuthenticatedUser = {
+    id: 'client-1',
+    role: 'CLIENT',
+    sessionHandle: 'session-1',
+    emailVerified: false,
+  };
   const session = { getHandle: () => 'session-1' } as SessionContainer;
 
   beforeEach(async () => {

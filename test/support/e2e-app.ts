@@ -1,14 +1,17 @@
 import { randomInt, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { join } from 'node:path';
 
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, LoggerService } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import supertokens from 'supertokens-node';
 import request from 'supertest';
 import { DataSource, In, IsNull, Not } from 'typeorm';
 
 import { Env, envSchema } from '@config/env.schema';
+import { ReportPhotoOrmEntity } from '@modules/reports/infra/database/entities/report-photo.orm-entity';
+import { ReportOrmEntity } from '@modules/reports/infra/database/entities/report.orm-entity';
 import { LOGIN_CODE_MAIL_SUBJECT } from '@modules/users/application/services/login-code.service';
 import {
   CreateSuperAdminInput,
@@ -97,6 +100,54 @@ export function readTokens(response: request.Response): Tokens {
   };
 }
 
+/** Imagens de `test/fixtures`: a foto (160 × 120) e a miniatura (48 × 36), em JPEG. */
+export const REPORT_PHOTO_FIXTURE = 'report-photo.jpg';
+export const REPORT_THUMBNAIL_FIXTURE = 'report-thumbnail.jpg';
+
+/** Arquivo de `test/fixtures` em base64, como o app envia. */
+export function fixtureBase64(name: string): string {
+  return readFileSync(join(__dirname, '..', 'fixtures', name)).toString('base64');
+}
+
+/** Um ponto no centro de Campo Mourão, dentro da área padrão (`REPORT_AREA_BOUNDS`). */
+export const CAMPO_MOURAO = { latitude: -24.045812, longitude: -52.378901 };
+
+/** Corpo do `POST /api/reports`. */
+export interface ReportPayload {
+  description?: string | null;
+  location: { latitude: number; longitude: number; accuracyMeters: number };
+  photo: { content: string; thumbnail: string };
+}
+
+/** Corpo de um reporte válido em Campo Mourão, com as imagens pequenas das fixtures. */
+export function buildReportPayload(overrides: Partial<ReportPayload> = {}): ReportPayload {
+  return {
+    description: 'Buraco grande na faixa da direita, perto do semáforo.',
+    location: { ...CAMPO_MOURAO, accuracyMeters: 8.5 },
+    photo: {
+      content: fixtureBase64(REPORT_PHOTO_FIXTURE),
+      thumbnail: fixtureBase64(REPORT_THUMBNAIL_FIXTURE),
+    },
+    ...overrides,
+  };
+}
+
+/** Corpo do `POST /api/reports/:id/votes`. */
+export interface VotePayload {
+  vote: 'CONFIRM' | 'DENY';
+  location: { latitude: number; longitude: number; accuracyMeters: number };
+}
+
+/** Voto "está lá" de quem está no ponto dos reportes de teste, com a precisão de 12 m. */
+export function buildVotePayload(overrides: Partial<VotePayload> = {}): VotePayload {
+  return { vote: 'CONFIRM', location: { ...CAMPO_MOURAO, accuracyMeters: 12 }, ...overrides };
+}
+
+/** Colunas do reporte que só a validação comunitária muda, alteradas direto no banco. */
+export type ReportVotingChanges = Partial<
+  Pick<ReportOrmEntity, 'status' | 'confirmationsCount' | 'rejectionsCount' | 'statusChangedAt'>
+>;
+
 /** Páginas do painel web que recebem o token dos links enviados por e-mail. */
 export type LinkPage = '/convite' | '/redefinir-senha' | '/verificar-email';
 
@@ -117,7 +168,11 @@ export class E2eApp {
     readonly mailSender: FakeMailSender,
   ) {}
 
-  static async start(): Promise<E2eApp> {
+  /**
+   * Sobe a aplicação. O `logger` guarda o que a API escreveria no log (ex.: o `MemoryLogger`):
+   * sem ele, o log fica desligado.
+   */
+  static async start(options: { logger?: LoggerService } = {}): Promise<E2eApp> {
     const env = envSchema.parse(process.env);
 
     // Proteção: os testes gravam no banco; nunca rode contra o banco de desenvolvimento.
@@ -132,7 +187,11 @@ export class E2eApp {
       .overrideProvider(MailSender)
       .useValue(mailSender)
       .compile();
-    const app = moduleRef.createNestApplication<INestApplication<Server>>({ logger: false });
+    // Como no main.ts: os parsers do corpo, com o limite de cada rota, vêm do configureApp.
+    const app = moduleRef.createNestApplication<INestApplication<Server>>({
+      logger: options.logger ?? false,
+      bodyParser: false,
+    });
     configureApp(app);
     await app.listen(0, '127.0.0.1');
 
@@ -331,18 +390,110 @@ export class E2eApp {
   }
 
   /**
+   * Confirma o e-mail do Client pelo link do último e-mail de verificação, como ele faria no
+   * navegador. A sessão continua a mesma: o `AuthGuard` lê o e-mail verificado a cada requisição.
+   */
+  async confirmEmail(account: Account): Promise<void> {
+    const response = await this.api()
+      .post('/api/email-verifications/confirm')
+      .send({ token: this.lastLinkToken(account.email, '/verificar-email') });
+    assertStatus(response, 204, 'Confirmação do e-mail');
+  }
+
+  /** Cadastra um Client, confirma o e-mail (abrir reportes exige, RN26) e faz login. */
+  async registerVerifiedClient(): Promise<Actor> {
+    const client = await this.registerClient();
+    await this.confirmEmail(client);
+
+    return client;
+  }
+
+  /** Cadastra `count` Clients com o e-mail verificado, um depois do outro, e faz login. */
+  async registerVerifiedClients(count: number): Promise<Actor[]> {
+    const clients: Actor[] = [];
+    for (let index = 0; index < count; index++) {
+      clients.push(await this.registerVerifiedClient());
+    }
+
+    return clients;
+  }
+
+  /** Voto pela rota do app. A resposta não é conferida: serve aos testes das recusas. */
+  vote(voter: Tokens, reportId: string, payload: VotePayload = buildVotePayload()): request.Test {
+    return this.api()
+      .post(`/api/reports/${reportId}/votes`)
+      .auth(voter.accessToken, { type: 'bearer' })
+      .send(payload);
+  }
+
+  /**
+   * Vota com cada Client, um depois do outro, e devolve o reporte da última resposta. Falha se
+   * algum voto não responder 201: serve para levar o reporte a um ponto da validação.
+   */
+  async voteWithEach(
+    voters: Tokens[],
+    reportId: string,
+    payload: VotePayload = buildVotePayload(),
+  ): Promise<{ status: string; votes: Record<string, unknown> }> {
+    let body: unknown;
+    for (const voter of voters) {
+      const response = await this.vote(voter, reportId, payload);
+      assertStatus(response, 201, 'Voto');
+      body = response.body;
+    }
+
+    return body as { status: string; votes: Record<string, unknown> };
+  }
+
+  /** Abre um reporte pela rota do app e devolve o corpo da resposta. */
+  async openReport(
+    client: Tokens,
+    payload: ReportPayload = buildReportPayload(),
+  ): Promise<{ id: string; photo: { id: string } }> {
+    const response = await this.api()
+      .post('/api/reports')
+      .auth(client.accessToken, { type: 'bearer' })
+      .send(payload);
+    assertStatus(response, 201, 'Abertura do reporte');
+
+    return response.body as { id: string; photo: { id: string } };
+  }
+
+  /**
+   * Altera o status e as contagens do reporte direto no banco, sem os votos. Serve para testar as
+   * regras que dependem deles sem criar uma conta por voto.
+   */
+  async updateReportVoting(reportId: string, changes: ReportVotingChanges): Promise<void> {
+    await this.dataSource.getRepository(ReportOrmEntity).update({ id: reportId }, changes);
+  }
+
+  /** A foto gravada do reporte, como está no banco. */
+  async storedReportPhoto(reportId: string): Promise<Buffer> {
+    const photo = await this.dataSource
+      .getRepository(ReportPhotoOrmEntity)
+      .createQueryBuilder('photo')
+      .addSelect('photo.content')
+      .where('photo.reportId = :reportId', { reportId })
+      .getOneOrFail();
+
+    return photo.content;
+  }
+
+  /** Quantos reportes o usuário tem no banco, contando os excluídos. */
+  countReports(authorId: string): Promise<number> {
+    return this.dataSource
+      .getRepository(ReportOrmEntity)
+      .count({ where: { authorId }, withDeleted: true });
+  }
+
+  /**
    * Cadastra um Client com a verificação em duas etapas ativa, pelos caminhos da aplicação:
    * cadastro, confirmação do e-mail pelo link (a ativação exige o e-mail verificado) e
    * `PATCH /api/users/me/mfa`. A sessão devolvida é a que ativou, que continua completa
    * (RN24). Os logins seguintes abrem sessões pendentes.
    */
   async registerClientWithMfa(): Promise<Actor> {
-    const client = await this.registerClient();
-    const verification = await this.api()
-      .post('/api/email-verifications/confirm')
-      .send({ token: this.lastLinkToken(client.email, '/verificar-email') });
-    assertStatus(verification, 204, 'Confirmação do e-mail');
-
+    const client = await this.registerVerifiedClient();
     const activation = await this.api()
       .patch('/api/users/me/mfa')
       .auth(client.accessToken, { type: 'bearer' })
@@ -365,13 +516,16 @@ export class E2eApp {
   }
 
   /**
-   * Apaga todos os usuários do banco de teste, as tentativas de login e as credenciais deles
-   * no SuperTokens. O Core é o mesmo do ambiente de dev, então só saem dele os ids encontrados
-   * no banco de teste.
+   * Apaga todos os usuários do banco de teste, os reportes (com as fotos e os votos), as
+   * tentativas de login e as credenciais deles no SuperTokens. O Core é o mesmo do ambiente de dev, então só saem dele os
+   * ids encontrados no banco de teste.
    */
   private async clearData(): Promise<void> {
     // As tentativas de login não têm FK para users, então saem à parte.
     await this.dataSource.getRepository(LoginAttemptOrmEntity).deleteAll();
+    // Os reportes referenciam os usuários (RESTRICT), então saem antes deles. As fotos e os votos
+    // saem junto (ON DELETE CASCADE), e com os votos sai a referência aos eleitores.
+    await this.dataSource.getRepository(ReportOrmEntity).deleteAll();
 
     const repository = this.dataSource.getRepository(UserOrmEntity);
     const users = await repository.find({ select: { id: true }, withDeleted: true });

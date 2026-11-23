@@ -7,6 +7,7 @@ import { AuthModule } from '@modules/auth/auth.module';
 import { SuperTokensExceptionFilter } from '@modules/auth/presentation/filters/supertokens-exception.filter';
 import { AuthGuard } from '@modules/auth/presentation/guards/auth.guard';
 import { HealthModule } from '@modules/health/health.module';
+import { ReportsModule } from '@modules/reports/reports.module';
 import { UsersModule } from '@modules/users/users.module';
 import { DatabaseModule } from '@shared/infra/database/database.module';
 import { GlobalExceptionFilter } from '@shared/presentation/filters/global-exception.filter';
@@ -19,6 +20,7 @@ import { ZodValidationPipe } from '@shared/presentation/pipes/zod-validation.pip
     AuthModule,
     HealthModule,
     UsersModule,
+    ReportsModule,
   ],
   providers: [
     // Registrados aqui (e não no main.ts) para valerem também nos testes e2e.

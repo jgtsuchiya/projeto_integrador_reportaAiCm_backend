@@ -5,6 +5,9 @@ import { Role, ROLES } from '@modules/users/domain/value-objects/role';
 import {
   Actor,
   buildClientPayload,
+  buildReportPayload,
+  buildVotePayload,
+  CAMPO_MOURAO,
   E2eApp,
   InvitedAdmin,
   newEmail,
@@ -45,16 +48,23 @@ interface RouteCase {
 }
 
 /**
- * Matriz de permissões (docs/sprints/sprint-2-usuarios.md e docs/sprints/sprint-3-login.md,
- * seção 4): cada rota protegida é chamada sem sessão (401), com cada papel (o status de
- * sucesso ou 403) e com uma sessão pendente (403 `invalid claim`, menos nas rotas que a
- * aceitam).
+ * Matriz de permissões (docs/sprints/sprint-2-usuarios.md, docs/sprints/sprint-3-login.md e
+ * docs/sprints/sprint-4-reportes.md, seção 4): cada rota protegida é chamada sem sessão (401),
+ * com cada papel (o status de sucesso ou 403) e com uma sessão pendente (403 `invalid claim`,
+ * menos nas rotas que a aceitam).
  */
 describe('Matriz de permissões (e2e)', () => {
   let e2e: E2eApp;
   let actors: Record<Role, Actor>;
   /** Alvos das chamadas barradas e das permitidas que não os alteram. */
-  let targets: { admin: Actor; pendingAdmin: InvitedAdmin; client: Actor };
+  let targets: {
+    admin: Actor;
+    pendingAdmin: InvitedAdmin;
+    client: Actor;
+    /** Client com o e-mail verificado, autor do `report`: abrir reportes exige o e-mail (RN26). */
+    reportAuthor: Actor;
+    report: { id: string };
+  };
   /** Sessão pendente de um Client criado só para isso: nenhum teste a conclui nem a encerra. */
   let pendingSession: Actor;
 
@@ -67,10 +77,13 @@ describe('Matriz de permissões (e2e)', () => {
       [Role.ADMIN]: await e2e.createAdmin(superAdmin),
       [Role.CLIENT]: await e2e.registerClient(),
     };
+    const reportAuthor = await e2e.registerVerifiedClient();
     targets = {
       admin: await e2e.createAdmin(superAdmin),
       pendingAdmin: await e2e.inviteAdmin(superAdmin),
       client: await e2e.registerClient(),
+      reportAuthor,
+      report: await e2e.openReport(reportAuthor),
     };
     pendingSession = await e2e.logInPending(await e2e.registerClient());
   });
@@ -324,6 +337,97 @@ describe('Matriz de permissões (e2e)', () => {
             const client = allowed ? await e2e.registerClient() : targets.client;
 
             return call(actor, 'patch', `/clients/${client.id}/status`, { status: 'INACTIVE' });
+          },
+        },
+      ],
+    },
+    {
+      line: 'Abrir, consultar, editar e excluir reportes (CLIENT)',
+      routes: [
+        {
+          route: 'POST /api/reports',
+          allowed: [Role.CLIENT],
+          success: 201,
+          // Quem abre é um Client verificado criado só para isso: o limite é de 10 por dia.
+          send: async ({ actor, allowed }) =>
+            call(
+              allowed ? await e2e.registerVerifiedClient() : actor,
+              'post',
+              '/reports',
+              buildReportPayload(),
+            ),
+        },
+        {
+          route: 'GET /api/reports/mine',
+          allowed: [Role.CLIENT],
+          success: 200,
+          send: ({ actor }) => call(actor, 'get', '/reports/mine'),
+        },
+        {
+          route: 'GET /api/reports/nearby',
+          allowed: [Role.CLIENT],
+          success: 200,
+          send: ({ actor }) =>
+            call(
+              actor,
+              'get',
+              `/reports/nearby?latitude=${CAMPO_MOURAO.latitude}&longitude=${CAMPO_MOURAO.longitude}`,
+            ),
+        },
+        {
+          route: 'GET /api/reports/:id',
+          allowed: [Role.CLIENT],
+          success: 200,
+          // O Client vê o reporte PENDING de outro autor (RN35).
+          send: ({ actor }) => call(actor, 'get', `/reports/${targets.report.id}`),
+        },
+        {
+          route: 'GET /api/reports/:id/photo',
+          allowed: [Role.CLIENT],
+          success: 200,
+          send: ({ actor }) => call(actor, 'get', `/reports/${targets.report.id}/photo`),
+        },
+        {
+          route: 'PATCH /api/reports/:id',
+          allowed: [Role.CLIENT],
+          success: 200,
+          // Só o autor edita: a chamada permitida é a dele.
+          send: ({ actor, allowed }) =>
+            call(allowed ? targets.reportAuthor : actor, 'patch', `/reports/${targets.report.id}`, {
+              description: 'Descrição editada.',
+            }),
+        },
+        {
+          route: 'DELETE /api/reports/:id',
+          allowed: [Role.CLIENT],
+          success: 204,
+          // O autor exclui um reporte aberto só para isso.
+          send: async ({ actor, allowed }) => {
+            const report = allowed ? await e2e.openReport(targets.reportAuthor) : targets.report;
+
+            return call(allowed ? targets.reportAuthor : actor, 'delete', `/reports/${report.id}`);
+          },
+        },
+      ],
+    },
+    {
+      line: 'Votar num reporte (CLIENT)',
+      routes: [
+        {
+          route: 'POST /api/reports/:id/votes',
+          allowed: [Role.CLIENT],
+          success: 201,
+          // Vota um Client verificado criado só para isso, num reporte aberto só para isso: votar
+          // exige o e-mail verificado (RN37), e o voto impediria a edição do reporte compartilhado.
+          send: async ({ actor, allowed }) => {
+            const report = allowed ? await e2e.openReport(targets.reportAuthor) : targets.report;
+
+            return call(
+              allowed ? await e2e.registerVerifiedClient() : actor,
+              'post',
+              `/reports/${report.id}/votes`,
+              buildVotePayload(),
+            );
           },
         },
       ],

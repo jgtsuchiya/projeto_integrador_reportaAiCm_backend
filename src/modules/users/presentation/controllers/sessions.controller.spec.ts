@@ -13,7 +13,12 @@ describe('SessionsController', () => {
   let revokeSessionUseCase: jest.Mocked<RevokeSessionUseCase>;
   let revokeOtherSessionsUseCase: jest.Mocked<RevokeOtherSessionsUseCase>;
 
-  const user: AuthenticatedUser = { id: 'client-1', role: 'CLIENT', sessionHandle: 'session-1' };
+  const user: AuthenticatedUser = {
+    id: 'client-1',
+    role: 'CLIENT',
+    sessionHandle: 'session-1',
+    emailVerified: false,
+  };
 
   beforeEach(async () => {
     const moduleRef = await Test.createTestingModule({

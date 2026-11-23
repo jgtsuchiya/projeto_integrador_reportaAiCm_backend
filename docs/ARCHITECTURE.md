@@ -13,9 +13,9 @@ src/
 ├── config/                  # configuração e validação de variáveis de ambiente
 ├── shared/                  # código transversal, reutilizado por vários módulos
 │   ├── domain/              # classes base de domínio, erros de domínio genéricos
-│   ├── application/         # contratos genéricos (ex.: UseCase, porta MailSender)
+│   ├── application/         # contratos genéricos (ex.: UseCase, porta MailSender) e o base64
 │   ├── infra/               # integrações compartilhadas (ex.: banco de dados e e-mail)
-│   ├── presentation/        # filters, interceptors, pipes, guards, decorators
+│   ├── presentation/        # filters, pipes, middlewares (parsers do corpo), decorators
 │   └── testing/             # fakes reutilizados nos testes (fora do build)
 └── modules/
     └── <feature>/
@@ -93,11 +93,13 @@ A porta também resolve o caso em que a `infra` e a `presentation` precisam da m
 
 - **Entidades** estendem [`Entity`](../src/shared/domain/entity.ts) e protegem as próprias regras: os dados só mudam por métodos com nome de negócio (`user.deactivate()`, `user.delete()`), nunca por setters. Cada entidade tem uma fábrica para os dados novos (`User.createClient(...)`), que valida, e um `restore(...)` para os dados já persistidos, usado pelos mappers.
 - **Value objects** estendem [`ValueObject`](../src/shared/domain/value-object.ts): são criados por `create(raw)`, que normaliza e valida a entrada (ex.: `Cpf.create('123.456.789-09').value === '12345678909'`) e lança um erro de domínio quando ela é inválida. Dois value objects com o mesmo valor são iguais. A exceção é o [`Password`](../src/modules/users/domain/value-objects/password.ts), que guarda a senha num campo privado para ela não aparecer em `JSON.stringify` nem em logs.
-- A cobertura de testes de `modules/users/domain` tem mínimo de 90%, verificado pelo `npm run test:cov` (e no CI).
+- A cobertura de testes de `modules/users/domain` e de `modules/reports/domain` tem mínimo de 90%, verificado pelo `npm run test:cov` (e no CI).
 
 ### Comunicação entre módulos
 
 Um módulo só acessa outro pelo que este **exporta** no seu `@Module({ exports: [...] })`, em geral um caso de uso ou um serviço de fachada. Nunca importe arquivos internos (`domain/`, `infra/`) de outro módulo.
+
+O usuário da requisição é a exceção prevista: os controllers de qualquer módulo recebem o `AuthenticatedUser` do guard (`@CurrentUser()`), com o id, o papel e o `emailVerified`, e usam o `Role` nos `@Roles(...)`. É assim que o módulo `reports` confere o e-mail verificado sem consultar o usuário. Uma FK para a tabela de outro módulo é declarada pelo nome da tabela, sem relação com a entidade dele: `@ForeignKey('users', { name: 'fk_reports_author_id' })`.
 
 ## Validação, erros e paginação
 
@@ -128,6 +130,26 @@ const registerClientBodySchema = z.object({
 
 O valor segue sem transformação: o caso de uso cria o value object de novo e continua sendo quem garante a regra (se ele for chamado sem passar pelo schema, o erro de domínio vira 422).
 
+**Schema que depende da configuração.** O `@Body({ schema })` recebe um schema fixo. Quando a regra vem de uma variável de ambiente, como os tamanhos máximos das imagens dos reportes, o schema é montado num pipe, com a injeção de dependência, e validado pelo mesmo `ZodValidationPipe`, para o 400 sair no mesmo formato:
+
+```ts
+@Injectable()
+export class OpenReportBodyPipe extends ConfiguredBodyPipe<OpenReportBody> {
+  constructor(config: ReportsConfig) {
+    super(openReportBodySchema(config.imageLimits));
+  }
+}
+
+@Post()
+open(@Body(OpenReportBodyPipe) body: OpenReportBody) {}
+```
+
+**Headers.** O `@Headers()` do Nest não passa pelos pipes. Para validar um header, use o [`@RequestHeader`](../src/shared/presentation/decorators/request-header.decorator.ts), que aceita o schema como os outros parâmetros, e o erro sai com o nome do header no `field`:
+
+```ts
+open(@RequestHeader('Idempotency-Key', { schema: idempotencyKeySchema }) key?: string) {}
+```
+
 ### Erros
 
 O domínio lança erros de uma das categorias de [`shared/domain/errors`](../src/shared/domain/errors), e o [`GlobalExceptionFilter`](../src/shared/presentation/filters/global-exception.filter.ts) os converte em HTTP:
@@ -138,9 +160,10 @@ O domínio lança erros de uma das categorias de [`shared/domain/errors`](../src
 | `ConflictError`     | 409    | E-mail ou CPF já cadastrado         |
 | `BusinessRuleError` | 422    | Transição de status inválida        |
 | `ForbiddenError`    | 403    | Operação não permitida para o papel |
-| `UnauthorizedError` | 401    | Senha atual incorreta               |
 
 Os erros de cada feature estendem uma categoria (ex.: `class EmailAlreadyInUseError extends ConflictError`). O segundo argumento do construtor vai para `details`.
+
+Não há categoria para o 401. Os SDKs do SuperTokens tratam todo 401 como sessão vencida: renovam a sessão e repetem a chamada, até 10 vezes, e o front nunca recebe a resposta. O 401 fica só para a falta de sessão, que o SuperTokens responde. Uma senha de confirmação incorreta, por exemplo, é um `BusinessRuleError` (422).
 
 Todas as respostas de erro seguem o mesmo corpo:
 
@@ -156,6 +179,19 @@ Todas as respostas de erro seguem o mesmo corpo:
 `details` só aparece quando existe. Qualquer erro não mapeado vira 500 com `"message": "Erro interno do servidor."`: a mensagem original e o stack vão só para o log.
 
 O Nest consulta os filtros globais na ordem inversa de registro. Um filtro mais específico (como o dos erros do SuperTokens) precisa ser registrado depois do `GlobalExceptionFilter` para ter precedência.
+
+### Limite do corpo das requisições
+
+A aplicação é criada com `bodyParser: false` (no `main.ts` e no `E2eApp`), e os parsers do corpo são registrados pelo [`configureApp`](../src/configure-app.ts), com o limite de cada rota ([`body-parser.middleware.ts`](../src/shared/presentation/middlewares/body-parser.middleware.ts)):
+
+| Rotas          | Limite do corpo                                                                  | Motivo                                                |
+| -------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `/api/reports` | Calculado a partir dos tamanhos máximos das imagens, em base64 (cerca de 2,8 MB) | A foto e a miniatura chegam em base64, dentro do JSON |
+| As demais      | 100 KB, o padrão do body-parser                                                  |                                                       |
+
+O primeiro parser que lê o corpo vale: os seguintes não leem de novo. Os erros dos parsers viram `HttpException` antes de seguir: sem isso, eles chegariam ao `GlobalExceptionFilter` como erros quaisquer e virariam 500. O corpo grande responde 413 e o JSON malformado, 400, no formato de erro da aplicação e com mensagens fixas: a do `JSON.parse` repetiria um trecho do corpo, que pode ser uma foto.
+
+Os testes que sobem a aplicação chamam o `configureApp`, então têm os mesmos limites.
 
 ### Paginação
 
@@ -180,7 +216,7 @@ create() {}
 
 @Roles(Role.SUPER_ADMIN, Role.ADMIN) // 403 para os outros papéis
 @Get()
-list(@CurrentUser() user: AuthenticatedUser) {} // { id, role }
+list(@CurrentUser() user: AuthenticatedUser) {} // { id, role, sessionHandle, emailVerified }
 ```
 
 `@Public()` e `@Roles(...)` valem no método ou no controller inteiro. Quando os dois têm o decorator, vale o do método. Sem sessão, a resposta é 401 no formato do SuperTokens (`{ "message": "unauthorised" }`), que os SDKs de front usam para renovar a sessão.
@@ -224,6 +260,16 @@ Se o servidor SMTP não aceitar a mensagem, o `send` lança um `MailDeliveryErro
 No módulo `users`, os e-mails da conta (convite, redefinição de senha, verificação de e-mail e código do login) passam pelo [`UserMailService`](../src/modules/users/application/services/user-mail.service.ts). Ele monta o link `${WEB_APP_URL}<página>?token=...` e trata o `MailDeliveryError`: o `send` devolve `false` em vez de lançar o erro, porque nenhum desses fluxos é desfeito por causa do e-mail.
 
 Em dev, o SMTP é o **Mailpit** do docker-compose: nenhum e-mail sai para a internet, e todos aparecem em http://localhost:8025.
+
+## Conversão em base64
+
+O JSON não transporta binário: a foto dos reportes vai e volta em base64. As funções ficam em [`shared/application/encoding/base64.ts`](../src/shared/application/encoding/base64.ts), para a apresentação de qualquer módulo usá-las, e trabalham com `Uint8Array`, o tipo dos bytes no domínio, que não depende do `Buffer` do Node:
+
+- `encodeBase64(bytes)`: o base64 padrão (RFC 4648), com o `=` do fim;
+- `decodeBase64(text)`: o decode estrito. Recusa o caractere fora do alfabeto, a falta do `=` do fim, a quebra de linha e o prefixo `data:`, com o `InvalidBase64Error`, que não repete o texto na mensagem. O `Buffer.from(text, 'base64')` do Node ignora os caracteres inválidos em silêncio, então não serve sozinho;
+- `base64Length(bytes)`: o tamanho do texto em base64, usado no limite do corpo.
+
+O caso de uso recebe e devolve os bytes, e quem converte é a apresentação: o schema do corpo decodifica, e o controller codifica a resposta. Assim, o formato do transporte pode mudar (ex.: multipart) sem mudar o caso de uso. Como funciona a foto dos reportes está no [REPORTS.md](REPORTS.md#a-foto-do-base64-aos-bytes).
 
 ## Tarefas em segundo plano
 

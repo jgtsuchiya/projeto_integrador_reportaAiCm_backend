@@ -5,15 +5,24 @@ import supertokens from 'supertokens-node';
 
 import { Env } from '@config/env.schema';
 import { createRateLimitMiddleware } from '@modules/auth/presentation/middlewares/rate-limit.middleware';
+import { reportsBodyLimitBytes } from '@modules/reports/presentation/dtos/report-photo.dto';
+import {
+  createJsonBodyParser,
+  createUrlencodedBodyParser,
+  DEFAULT_BODY_LIMIT_BYTES,
+} from '@shared/presentation/middlewares/body-parser.middleware';
 
 /**
  * Configuração da aplicação que não cabe no AppModule. Usada pelo `main.ts` e pelos testes
- * que sobem a API, para que os dois tenham o mesmo prefixo, o mesmo CORS e o mesmo limite
- * por IP.
+ * que sobem a API, para que os dois tenham o mesmo prefixo, o mesmo CORS, o mesmo limite
+ * por IP e os mesmos limites do corpo.
  *
  * Precisa ser chamada antes do `init`/`listen`: o CORS e o limite por IP têm de ser
  * registrados antes do middleware do SuperTokens. Sem isso, o preflight das rotas `/api/auth`
  * não recebe os headers, e o login é respondido sem passar pelo limite.
+ *
+ * A aplicação é criada com `bodyParser: false`: os parsers do corpo são registrados aqui, com
+ * o limite de cada rota.
  */
 export function configureApp(app: INestApplication): void {
   const config = app.get<ConfigService<Env, true>>(ConfigService);
@@ -36,6 +45,22 @@ export function configureApp(app: INestApplication): void {
       maxRequests: config.get('RATE_LIMIT_MAX_REQUESTS', { infer: true }),
       windowSeconds: config.get('RATE_LIMIT_WINDOW_SECONDS', { infer: true }),
     }),
+  );
+  // Depois do limite por IP, que barra o pedido sem ler o corpo. As rotas de reportes recebem a
+  // foto em base64 e têm um limite calculado a partir dos tamanhos máximos das imagens. O
+  // primeiro parser que lê o corpo vale: os seguintes não leem de novo.
+  app.use(
+    '/api/reports',
+    createJsonBodyParser(
+      reportsBodyLimitBytes({
+        photoMaxBytes: config.get('REPORT_PHOTO_MAX_BYTES', { infer: true }),
+        thumbnailMaxBytes: config.get('REPORT_THUMBNAIL_MAX_BYTES', { infer: true }),
+      }),
+    ),
+  );
+  app.use(
+    createJsonBodyParser(DEFAULT_BODY_LIMIT_BYTES),
+    createUrlencodedBodyParser(DEFAULT_BODY_LIMIT_BYTES),
   );
   app.enableShutdownHooks();
 }

@@ -289,6 +289,7 @@ describe('Autenticação e controle de acesso (integração)', () => {
         id: user.id,
         role: Role.CLIENT,
         sessionHandle: expect.any(String) as string,
+        emailVerified: false,
       });
     });
 
@@ -309,6 +310,7 @@ describe('Autenticação e controle de acesso (integração)', () => {
         id: user.id,
         role: Role.ADMIN,
         sessionHandle: expect.any(String) as string,
+        emailVerified: false,
       });
     });
 

@@ -11,7 +11,12 @@ function createContext(request: Partial<AuthenticatedRequest>): ExecutionContext
 
 describe('CurrentUser', () => {
   it('deve retornar o usuário carregado pelo AuthGuard', () => {
-    const user = { id: 'user-1', role: 'CLIENT' as const, sessionHandle: 'session-1' };
+    const user = {
+      id: 'user-1',
+      role: 'CLIENT' as const,
+      sessionHandle: 'session-1',
+      emailVerified: false,
+    };
 
     const result = getCurrentUser(createContext({ user }));
 

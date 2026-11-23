@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+/** Maior conteúdo de uma coluna MEDIUMBLOB, onde ficam a foto e a miniatura dos reportes. */
+const MEDIUMBLOB_MAX_BYTES = 16 * 1024 * 1024 - 1;
+
 /**
  * Variáveis de ambiente aceitas pela aplicação.
  * Validadas na inicialização: a aplicação não sobe com configuração inválida.
@@ -51,9 +54,89 @@ export const envSchema = z.object({
   SMTP_USER: z.string().default(''),
   SMTP_PASSWORD: z.string().default(''),
   MAIL_FROM: z.string().trim().refine(isMailbox, 'Use o formato "Nome <email>" ou só o e-mail.'),
+
+  // Área aceita para os reportes (RN28): latitude mínima, longitude mínima, latitude máxima e
+  // longitude máxima. O padrão é uma caixa folgada em volta de Campo Mourão.
+  REPORT_AREA_BOUNDS: areaBoundsSchema().prefault('-24.30,-52.65,-23.80,-52.11'),
+  // Pior precisão aceita da localização, em metros, na abertura do reporte e no voto (RN28).
+  REPORT_MAX_ACCURACY_METERS: z.coerce.number().int().positive().default(50),
+  // Tamanho máximo da foto e da miniatura, depois do decode do base64 (RN29). A coluna das
+  // imagens (MEDIUMBLOB) guarda até 16 MB.
+  REPORT_PHOTO_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(MEDIUMBLOB_MAX_BYTES)
+    .default(2097152),
+  REPORT_THUMBNAIL_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(MEDIUMBLOB_MAX_BYTES)
+    .default(102400),
+  // Reportes que cada Client abre em 24 horas (RN30).
+  REPORT_DAILY_LIMIT: z.coerce.number().int().positive().default(10),
+  // Votos que tornam o reporte CONFIRMED ou REJECTED (RN39).
+  REPORT_CONFIRMATIONS_REQUIRED: z.coerce.number().int().positive().default(10),
+  REPORT_REJECTIONS_REQUIRED: z.coerce.number().int().positive().default(10),
+  // Distância máxima, em metros, entre quem vota e o reporte (RN38).
+  REPORT_VOTE_MAX_DISTANCE_METERS: z.coerce.number().int().positive().default(500),
 });
 
 export type Env = z.infer<typeof envSchema>;
+
+/** Caixa de coordenadas, em graus decimais. */
+export interface AreaBounds {
+  minLatitude: number;
+  minLongitude: number;
+  maxLatitude: number;
+  maxLongitude: number;
+}
+
+/**
+ * `REPORT_AREA_BOUNDS`: quatro números separados por vírgula, convertidos na caixa. Cada
+ * coordenada fica na faixa dela, e o mínimo de cada eixo é menor que o máximo.
+ */
+function areaBoundsSchema(): z.ZodType<AreaBounds, string> {
+  return z.string().transform((value, context) => {
+    const parts = value.split(',').map((part) => part.trim());
+    const numbers = parts.map(Number);
+
+    if (parts.length !== 4 || parts.some((part) => part === '' || !Number.isFinite(Number(part)))) {
+      context.addIssue({
+        code: 'custom',
+        message:
+          'Use quatro números separados por vírgula: latitude mínima, longitude mínima, latitude máxima e longitude máxima.',
+      });
+
+      return z.NEVER;
+    }
+
+    const [minLatitude, minLongitude, maxLatitude, maxLongitude] = numbers;
+    const latitudes = [minLatitude, maxLatitude];
+    const longitudes = [minLongitude, maxLongitude];
+
+    if (latitudes.some((n) => Math.abs(n) > 90) || longitudes.some((n) => Math.abs(n) > 180)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A latitude vai de -90 a 90, e a longitude, de -180 a 180.',
+      });
+
+      return z.NEVER;
+    }
+
+    if (minLatitude >= maxLatitude || minLongitude >= maxLongitude) {
+      context.addIssue({
+        code: 'custom',
+        message: 'O mínimo de cada eixo precisa ser menor que o máximo.',
+      });
+
+      return z.NEVER;
+    }
+
+    return { minLatitude, minLongitude, maxLatitude, maxLongitude };
+  });
+}
 
 /** Remetente no formato `Nome <email>` ou só o e-mail. */
 function isMailbox(value: string): boolean {

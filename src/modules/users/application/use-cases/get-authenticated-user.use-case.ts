@@ -19,6 +19,11 @@ export interface AuthenticatedUser {
   role: Role;
   /** Sessão da requisição, que a troca de senha mantém ao revogar as outras (RN13). */
   sessionHandle: string;
+  /**
+   * O e-mail já foi verificado (RN22). Os outros módulos o leem daqui, sem consultar o usuário:
+   * abrir reportes exige o e-mail verificado (RN26).
+   */
+  emailVerified: boolean;
 }
 
 /**
@@ -40,6 +45,11 @@ export class GetAuthenticatedUserUseCase implements UseCase<
       return null;
     }
 
-    return { id: user.id, role: user.role, sessionHandle: input.sessionHandle };
+    return {
+      id: user.id,
+      role: user.role,
+      sessionHandle: input.sessionHandle,
+      emailVerified: user.emailVerifiedAt !== null,
+    };
   }
 }

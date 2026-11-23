@@ -7,7 +7,8 @@ import { AppModule } from './app.module';
 import { configureApp } from './configure-app';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  // Os parsers do corpo, com o limite de cada rota, são registrados pelo configureApp.
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
 
   configureApp(app);
 

@@ -2,7 +2,7 @@
 
 API do **ReportaAi Cm**, plataforma para que os moradores de **Campo Mourão (PR)** reportem buracos no asfalto e para que a prefeitura acompanhe e analise esses reportes.
 
-> **Status:** em desenvolvimento (Projeto Integrador). A base do projeto, a gestão de usuários e o login completo (com recuperação de senha, verificação de e-mail, proteção contra força bruta e verificação em duas etapas) estão prontos. Os reportes entram nas próximas sprints.
+> **Status:** em desenvolvimento (Projeto Integrador). A base do projeto, a gestão de usuários, o login completo (com recuperação de senha, verificação de e-mail, proteção contra força bruta e verificação em duas etapas) os reportes de buracos pelo app (com a foto e a localização) e a validação comunitária dos reportes estão prontos. O painel da prefeitura entra nas próximas sprints.
 
 ## Sumário
 
@@ -11,6 +11,7 @@ API do **ReportaAi Cm**, plataforma para que os moradores de **Campo Mourão (PR
 - [Pré-requisitos](#pré-requisitos)
 - [Instalação e execução local](#instalação-e-execução-local)
 - [Usuários e autenticação](#usuários-e-autenticação)
+- [Reportes](#reportes)
 - [Variáveis de ambiente](#variáveis-de-ambiente)
 - [Comandos disponíveis](#comandos-disponíveis)
 - [Estrutura de pastas](#estrutura-de-pastas)
@@ -30,7 +31,9 @@ Qualquer morador de Campo Mourão pode **abrir um reporte** de buraco no asfalto
 - a **localização** do problema é capturada no momento do reporte;
 - o cidadão envia uma **foto** do buraco.
 
-> O que acontece com o reporte depois de aberto (acompanhamento, status e retorno ao cidadão) ainda está em definição.
+O reporte nasce "em validação": na validação comunitária, os outros cidadãos perto do buraco confirmam se ele está lá, como nos alertas dos apps de mobilidade. Com 10 confirmações, o reporte passa a ser considerado verdadeiro.
+
+> O acompanhamento do reporte pela prefeitura (status do atendimento e retorno ao cidadão) entra com o painel.
 
 ### 2. Prefeitura (usuários administrativos)
 
@@ -198,46 +201,78 @@ Onde continuar:
 - [docs/api.http](docs/api.http): requisições prontas de todas as rotas.
 - [docs/sprints/sprint-3-login.md](docs/sprints/sprint-3-login.md): plano do login, com as decisões e as regras de negócio (RN17 a RN25).
 
+## Reportes
+
+O cidadão abre o reporte pelo app, com a foto e a localização do aparelho, e acompanha, edita e exclui os próprios reportes. Os outros cidadãos, perto do buraco, confirmam ou negam o reporte. As rotas são só do Client.
+
+| Rotas                                                 | O que fazem                                                                                    |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `POST /api/reports`                                   | Abre o reporte, com a foto em base64 e a localização. Exige o e-mail confirmado                |
+| `GET /api/reports/mine` e `GET /api/reports/nearby`   | Os reportes do cidadão (paginados) e os reportes perto de um ponto, para não abrir um repetido |
+| `GET /api/reports/:id` e `GET /api/reports/:id/photo` | O reporte e a foto (ou a miniatura), em base64                                                 |
+| `PATCH /api/reports/:id` e `DELETE /api/reports/:id`  | O autor troca a descrição e a foto, ou exclui o reporte, enquanto ele está em validação        |
+| `POST /api/reports/:id/votes`                         | Outro cidadão, a até 500 m, diz se o buraco "está lá" ou "não está lá". Um voto por reporte    |
+
+- **A foto** chega em base64, no JSON, e é gravada em binário, sem os metadados (o EXIF pode ter o GPS do aparelho). O app gera a foto e a miniatura, em JPEG.
+- **A localização** fica numa coluna espacial do MySQL (`POINT SRID 4326`), com índice, e precisa estar em Campo Mourão, com precisão de até 50 m.
+- **Envio repetido seguro:** com a mesma `Idempotency-Key`, a repetição do envio devolve o reporte já criado, sem criar outro.
+- **Limites:** 10 reportes por Client em 24 horas. Os outros cidadãos só veem os reportes em validação ou confirmados, e nunca quem os abriu.
+- **Validação comunitária:** com 10 confirmações, o reporte vira confirmado, e com 10 votos "não está lá", descartado. A contagem é feita com a linha do reporte travada, então os votos simultâneos nunca se perdem. A localização de quem vota é conferida e descartada.
+
+Onde continuar:
+
+- [docs/REPORTS.md](docs/REPORTS.md): como o módulo funciona por dentro (a foto, a localização, a visibilidade, as permissões e a validação).
+- [docs/FRONTEND.md](docs/FRONTEND.md#reportes): o guia do app para abrir, consultar, editar, excluir e validar reportes.
+- [docs/sprints/sprint-4-reportes.md](docs/sprints/sprint-4-reportes.md): plano dos reportes e da validação comunitária, com as decisões e as regras de negócio (RN26 a RN40).
+
 ## Variáveis de ambiente
 
 O modelo está em [.env.example](.env.example). As variáveis são validadas quando a aplicação sobe: se alguma estiver faltando ou inválida, a API não inicia e mostra qual variável está errada.
 
-| Variável                              | Obrigatória | Padrão        | Descrição                                                                                                                            |
-| ------------------------------------- | ----------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `NODE_ENV`                            | não         | `development` | `development`, `test` ou `production`                                                                                                |
-| `PORT`                                | não         | `3000`        | Porta HTTP da API                                                                                                                    |
-| `DB_HOST`                             | sim         | (nenhum)      | Host do MySQL                                                                                                                        |
-| `DB_PORT`                             | não         | `3306`        | Porta do MySQL (`3307` no Docker local)                                                                                              |
-| `DB_USERNAME`                         | sim         | (nenhum)      | Usuário do banco                                                                                                                     |
-| `DB_PASSWORD`                         | sim         | (nenhum)      | Senha do banco                                                                                                                       |
-| `DB_DATABASE`                         | sim         | (nenhum)      | Nome do banco                                                                                                                        |
-| `DB_LOGGING`                          | não         | `false`       | Exibe as queries SQL no log                                                                                                          |
-| `DB_ROOT_PASSWORD`                    | só Docker   | (nenhum)      | Senha de root do MySQL, usada pelo docker-compose                                                                                    |
-| `SUPERTOKENS_CONNECTION_URI`          | sim         | (nenhum)      | Endereço do SuperTokens Core (`http://localhost:3567`)                                                                               |
-| `SUPERTOKENS_API_KEY`                 | sim         | (nenhum)      | Chave da API no Core (mín. 20 caracteres: letras, números, `=` e `-`). O docker-compose usa o mesmo valor no Core                    |
-| `API_DOMAIN`                          | sim         | (nenhum)      | URL pública da API, usada pelo SuperTokens                                                                                           |
-| `WEB_APP_URL`                         | sim         | (nenhum)      | URL do painel web, usada pelo SuperTokens, pelo CORS e nos links dos e-mails (convite, redefinição de senha e verificação de e-mail) |
-| `INVITATION_EXPIRES_IN_HOURS`         | não         | `48`          | Validade, em horas, do link de convite de ADM                                                                                        |
-| `PASSWORD_RESET_EXPIRES_IN_MINUTES`   | não         | `60`          | Validade, em minutos, do link de redefinição de senha ([detalhes](docs/AUTH.md#recuperação-de-senha))                                |
-| `EMAIL_VERIFICATION_EXPIRES_IN_HOURS` | não         | `24`          | Validade, em horas, do link de verificação de e-mail do Client ([detalhes](docs/AUTH.md#verificação-de-e-mail))                      |
-| `MFA_CODE_EXPIRES_IN_MINUTES`         | não         | `10`          | Validade, em minutos, do código da segunda etapa do login ([detalhes](docs/AUTH.md#verificação-em-duas-etapas))                      |
-| `LOGIN_MAX_FAILED_ATTEMPTS`           | não         | `5`           | Falhas de login por e-mail que causam o bloqueio ([detalhes](docs/AUTH.md#bloqueio-do-login-por-tentativas))                         |
-| `LOGIN_LOCK_WINDOW_MINUTES`           | não         | `15`          | Janela, em minutos, em que as falhas de login são contadas                                                                           |
-| `RATE_LIMIT_MAX_REQUESTS`             | não         | `20`          | Requisições por IP em cada rota limitada, por janela ([detalhes](docs/AUTH.md#limite-de-requisições-por-ip))                         |
-| `RATE_LIMIT_WINDOW_SECONDS`           | não         | `60`          | Duração, em segundos, da janela do limite por IP                                                                                     |
-| `TRUST_PROXY`                         | não         | `0`           | Quantidade de proxies reversos na frente da API. Define de onde o IP do cliente é lido                                               |
-| `SUPERTOKENS_DB_PASSWORD`             | só Docker   | (nenhum)      | Senha do PostgreSQL do SuperTokens, usada pelo docker-compose                                                                        |
-| `SMTP_HOST`                           | sim         | (nenhum)      | Servidor SMTP (`localhost` com o Mailpit do Docker)                                                                                  |
-| `SMTP_PORT`                           | não         | `587`         | Porta do SMTP (`1025` no Mailpit)                                                                                                    |
-| `SMTP_SECURE`                         | não         | `false`       | `true` para TLS direto (porta 465). Com `false`, o STARTTLS é usado se o servidor oferecer                                           |
-| `SMTP_USER`                           | não         | (vazio)       | Usuário do SMTP. Vazio, a conexão é feita sem autenticação (caso do Mailpit)                                                         |
-| `SMTP_PASSWORD`                       | não         | (vazio)       | Senha do SMTP                                                                                                                        |
-| `MAIL_FROM`                           | sim         | (nenhum)      | Remetente dos e-mails, no formato `Nome <email>` ou só o e-mail                                                                      |
-| `SUPER_ADMIN_NAME`                    | só seed     | (nenhum)      | Nome do SuperAdm criado pelo `npm run seed`                                                                                          |
-| `SUPER_ADMIN_EMAIL`                   | só seed     | (nenhum)      | E-mail (login) do SuperAdm                                                                                                           |
-| `SUPER_ADMIN_PASSWORD`                | só seed     | (nenhum)      | Senha do SuperAdm: de 8 a 128 caracteres, com pelo menos uma letra e um número                                                       |
+| Variável                              | Obrigatória | Padrão                        | Descrição                                                                                                                                       |
+| ------------------------------------- | ----------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                            | não         | `development`                 | `development`, `test` ou `production`                                                                                                           |
+| `PORT`                                | não         | `3000`                        | Porta HTTP da API                                                                                                                               |
+| `DB_HOST`                             | sim         | (nenhum)                      | Host do MySQL                                                                                                                                   |
+| `DB_PORT`                             | não         | `3306`                        | Porta do MySQL (`3307` no Docker local)                                                                                                         |
+| `DB_USERNAME`                         | sim         | (nenhum)                      | Usuário do banco                                                                                                                                |
+| `DB_PASSWORD`                         | sim         | (nenhum)                      | Senha do banco                                                                                                                                  |
+| `DB_DATABASE`                         | sim         | (nenhum)                      | Nome do banco                                                                                                                                   |
+| `DB_LOGGING`                          | não         | `false`                       | Exibe as queries SQL no log                                                                                                                     |
+| `DB_ROOT_PASSWORD`                    | só Docker   | (nenhum)                      | Senha de root do MySQL, usada pelo docker-compose                                                                                               |
+| `SUPERTOKENS_CONNECTION_URI`          | sim         | (nenhum)                      | Endereço do SuperTokens Core (`http://localhost:3567`)                                                                                          |
+| `SUPERTOKENS_API_KEY`                 | sim         | (nenhum)                      | Chave da API no Core (mín. 20 caracteres: letras, números, `=` e `-`). O docker-compose usa o mesmo valor no Core                               |
+| `API_DOMAIN`                          | sim         | (nenhum)                      | URL pública da API, usada pelo SuperTokens                                                                                                      |
+| `WEB_APP_URL`                         | sim         | (nenhum)                      | URL do painel web, usada pelo SuperTokens, pelo CORS e nos links dos e-mails (convite, redefinição de senha e verificação de e-mail)            |
+| `INVITATION_EXPIRES_IN_HOURS`         | não         | `48`                          | Validade, em horas, do link de convite de ADM                                                                                                   |
+| `PASSWORD_RESET_EXPIRES_IN_MINUTES`   | não         | `60`                          | Validade, em minutos, do link de redefinição de senha ([detalhes](docs/AUTH.md#recuperação-de-senha))                                           |
+| `EMAIL_VERIFICATION_EXPIRES_IN_HOURS` | não         | `24`                          | Validade, em horas, do link de verificação de e-mail do Client ([detalhes](docs/AUTH.md#verificação-de-e-mail))                                 |
+| `MFA_CODE_EXPIRES_IN_MINUTES`         | não         | `10`                          | Validade, em minutos, do código da segunda etapa do login ([detalhes](docs/AUTH.md#verificação-em-duas-etapas))                                 |
+| `LOGIN_MAX_FAILED_ATTEMPTS`           | não         | `5`                           | Falhas de login por e-mail que causam o bloqueio ([detalhes](docs/AUTH.md#bloqueio-do-login-por-tentativas))                                    |
+| `LOGIN_LOCK_WINDOW_MINUTES`           | não         | `15`                          | Janela, em minutos, em que as falhas de login são contadas                                                                                      |
+| `RATE_LIMIT_MAX_REQUESTS`             | não         | `20`                          | Requisições por IP em cada rota limitada, por janela ([detalhes](docs/AUTH.md#limite-de-requisições-por-ip))                                    |
+| `RATE_LIMIT_WINDOW_SECONDS`           | não         | `60`                          | Duração, em segundos, da janela do limite por IP                                                                                                |
+| `TRUST_PROXY`                         | não         | `0`                           | Quantidade de proxies reversos na frente da API. Define de onde o IP do cliente é lido                                                          |
+| `SUPERTOKENS_DB_PASSWORD`             | só Docker   | (nenhum)                      | Senha do PostgreSQL do SuperTokens, usada pelo docker-compose                                                                                   |
+| `SMTP_HOST`                           | sim         | (nenhum)                      | Servidor SMTP (`localhost` com o Mailpit do Docker)                                                                                             |
+| `SMTP_PORT`                           | não         | `587`                         | Porta do SMTP (`1025` no Mailpit)                                                                                                               |
+| `SMTP_SECURE`                         | não         | `false`                       | `true` para TLS direto (porta 465). Com `false`, o STARTTLS é usado se o servidor oferecer                                                      |
+| `SMTP_USER`                           | não         | (vazio)                       | Usuário do SMTP. Vazio, a conexão é feita sem autenticação (caso do Mailpit)                                                                    |
+| `SMTP_PASSWORD`                       | não         | (vazio)                       | Senha do SMTP                                                                                                                                   |
+| `MAIL_FROM`                           | sim         | (nenhum)                      | Remetente dos e-mails, no formato `Nome <email>` ou só o e-mail                                                                                 |
+| `SUPER_ADMIN_NAME`                    | só seed     | (nenhum)                      | Nome do SuperAdm criado pelo `npm run seed`                                                                                                     |
+| `SUPER_ADMIN_EMAIL`                   | só seed     | (nenhum)                      | E-mail (login) do SuperAdm                                                                                                                      |
+| `SUPER_ADMIN_PASSWORD`                | só seed     | (nenhum)                      | Senha do SuperAdm: de 8 a 128 caracteres, com pelo menos uma letra e um número                                                                  |
+| `REPORT_AREA_BOUNDS`                  | não         | `-24.30,-52.65,-23.80,-52.11` | Área aceita para os reportes: latitude mínima, longitude mínima, latitude máxima e longitude máxima ([detalhes](docs/REPORTS.md#a-localização)) |
+| `REPORT_MAX_ACCURACY_METERS`          | não         | `50`                          | Pior precisão aceita da localização, em metros                                                                                                  |
+| `REPORT_PHOTO_MAX_BYTES`              | não         | `2097152`                     | Tamanho máximo da foto do reporte (2 MB), depois do decode do base64                                                                            |
+| `REPORT_THUMBNAIL_MAX_BYTES`          | não         | `102400`                      | Tamanho máximo da miniatura (100 KB)                                                                                                            |
+| `REPORT_DAILY_LIMIT`                  | não         | `10`                          | Reportes por Client em 24 horas                                                                                                                 |
+| `REPORT_CONFIRMATIONS_REQUIRED`       | não         | `10`                          | Confirmações que tornam o reporte confirmado (validação comunitária)                                                                            |
+| `REPORT_REJECTIONS_REQUIRED`          | não         | `10`                          | Votos "não está lá" que tornam o reporte descartado                                                                                             |
+| `REPORT_VOTE_MAX_DISTANCE_METERS`     | não         | `500`                         | Distância máxima, em metros, entre quem vota e o reporte ([detalhes](docs/REPORTS.md#validação-comunitária))                                    |
 
-O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração e e2e, e deixa o limite por IP alto, para ele não interferir nos testes. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md).
+O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração e e2e, deixa o limite por IP alto, para ele não interferir nos testes, e baixa as duas contagens da validação para 3, para os e2e criarem menos contas. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md). Para testar os reportes fora de Campo Mourão, aumente a `REPORT_AREA_BOUNDS` no seu `.env`.
 
 ## Comandos disponíveis
 
@@ -316,12 +351,14 @@ Cada funcionalidade é um módulo independente, dividido em camadas. As regras d
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                           | Camadas, regras de dependência, nomenclatura, aliases, envio de e-mail e como criar uma feature                                                                                                           |
 | [docs/AUTH.md](docs/AUTH.md)                                           | Integração com o SuperTokens, sessão, bloqueio e limite do login, recuperação de senha, verificação de e-mail, sessões abertas, verificação em duas etapas, matriz de permissões e como proteger uma rota |
-| [docs/FRONTEND.md](docs/FRONTEND.md)                                   | Guia para os times web e mobile: SDKs, login, páginas dos links de e-mail, segunda etapa, sessões e formato dos erros                                                                                     |
-| [docs/DATABASE.md](docs/DATABASE.md)                                   | Banco local, PostgreSQL do SuperTokens, tabelas, tokens de uso único, migrations e seed                                                                                                                   |
+| [docs/FRONTEND.md](docs/FRONTEND.md)                                   | Guia para os times web e mobile: SDKs, login, páginas dos links de e-mail, segunda etapa, sessões, reportes e formato dos erros                                                                           |
+| [docs/REPORTS.md](docs/REPORTS.md)                                     | Reportes: o caminho da foto (base64, JPEG e metadados), a localização (SRID 4326 e índice espacial), o envio repetido seguro, a visibilidade e as permissões                                              |
+| [docs/DATABASE.md](docs/DATABASE.md)                                   | Banco local, PostgreSQL do SuperTokens, tabelas, tokens de uso único, a coluna espacial dos reportes, migrations e seed                                                                                   |
 | [docs/TESTING.md](docs/TESTING.md)                                     | Tipos de teste, o que testar em cada camada e convenções                                                                                                                                                  |
 | [docs/api.http](docs/api.http)                                         | Coleção de requisições com todas as rotas, para a extensão REST Client do VS Code                                                                                                                         |
 | [docs/sprints/sprint-2-usuarios.md](docs/sprints/sprint-2-usuarios.md) | Plano da sprint 2: decisões, modelagem e regras de negócio (RN01 a RN16)                                                                                                                                  |
 | [docs/sprints/sprint-3-login.md](docs/sprints/sprint-3-login.md)       | Plano da sprint 3 (login e segurança de acesso): decisões, modelagem e regras de negócio (RN17 a RN25)                                                                                                    |
+| [docs/sprints/sprint-4-reportes.md](docs/sprints/sprint-4-reportes.md) | Plano da sprint 4 (reportes e validação comunitária): decisões, modelagem e regras de negócio (RN26 a RN40)                                                                                               |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                                     | Git Flow, padrão de commits, Pull Requests e releases                                                                                                                                                     |
 
 ## Contribuindo

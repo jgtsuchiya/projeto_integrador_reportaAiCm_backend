@@ -19,7 +19,12 @@ describe('ProfileController', () => {
   let resendEmailVerificationUseCase: jest.Mocked<ResendEmailVerificationUseCase>;
   let changeMfaUseCase: jest.Mocked<ChangeMfaUseCase>;
 
-  const user: AuthenticatedUser = { id: 'client-1', role: 'CLIENT', sessionHandle: 'session-1' };
+  const user: AuthenticatedUser = {
+    id: 'client-1',
+    role: 'CLIENT',
+    sessionHandle: 'session-1',
+    emailVerified: false,
+  };
   const profile: ProfileOutput = {
     id: 'client-1',
     role: 'CLIENT',

@@ -10,15 +10,16 @@ Como o painel web e o app fazem login e chamam a API do ReportaAi Cm. O funciona
 - Depois do login, chame o `GET /api/users/me` para saber **quem entrou e com qual papel**.
 - Quem tem a verificação em duas etapas ativa ainda digita um código depois da senha ([verificação em duas etapas](#verificação-em-duas-etapas)).
 - Os links dos e-mails da API (convite, redefinição de senha e verificação de e-mail) abrem páginas do painel web, inclusive para o Client, no navegador do celular ([páginas dos links](#páginas-abertas-pelos-links-dos-e-mails)).
+- O app abre os reportes com a foto em base64, no JSON, e só com o e-mail confirmado ([reportes](#reportes)). Os cidadãos perto de um buraco confirmam ou negam o reporte de outro ([validação](#validar-os-reportes-de-outros-cidadãos)).
 
-|                      | Painel web                                | App mobile                                  |
-| -------------------- | ----------------------------------------- | ------------------------------------------- |
-| SDK                  | `supertokens-web-js`                      | `supertokens-react-native`                  |
-| Onde os tokens ficam | Cookies httpOnly, que o JavaScript não lê | Headers, guardados pelo SDK no AsyncStorage |
-| Papéis               | `SUPER_ADMIN` e `ADMIN`                   | `CLIENT`                                    |
-| Cadastro             | Convite por e-mail (ADM)                  | Autocadastro (`POST /api/clients`)          |
+|                      | Painel web                                | App mobile (Flutter)                             |
+| -------------------- | ----------------------------------------- | ------------------------------------------------ |
+| SDK                  | `supertokens-web-js`                      | `supertokens_flutter`, com o `Dio`               |
+| Onde os tokens ficam | Cookies httpOnly, que o JavaScript não lê | Headers, guardados pelo SDK no SharedPreferences |
+| Papéis               | `SUPER_ADMIN` e `ADMIN`                   | `CLIENT`                                         |
+| Cadastro             | Convite por e-mail (ADM)                  | Autocadastro (`POST /api/clients`)               |
 
-Os exemplos abaixo seguem a API pública do `supertokens-web-js` 0.16 e do `supertokens-react-native` 5.1, as versões atuais, compatíveis com o `supertokens-node` 24.0.3 do backend.
+Os exemplos abaixo seguem a API pública do `supertokens-web-js` 0.16 e do `supertokens_flutter` 0.6.5, compatíveis com o `supertokens-node` 24.0.3 do backend. As seções que valem para os dois fronts mostram a chamada com o `fetch`, em TypeScript: no app, a mesma chamada vai pelo `Dio`, com o mesmo corpo e as mesmas respostas.
 
 > A API não sabe de qual front veio o login: um Client consegue se autenticar pelo painel, e um ADM, pelo app. As rotas já barram o papel errado (403), mas cabe a cada front conferir o `role` do `/users/me` e recusar quem não é do seu público.
 
@@ -133,80 +134,103 @@ O e-mail de convite leva o ADM para **`<WEB_APP_URL>/convite?token=<token>`**. E
 
 ## App mobile
 
-```bash
-npm install supertokens-react-native @react-native-async-storage/async-storage
+O app é em Flutter e usa o `supertokens_flutter` com o `Dio`. No `pubspec.yaml`:
+
+```yaml
+dependencies:
+  dio: 5.11.1
+  supertokens_flutter: 0.6.5
 ```
 
-O SDK guarda os tokens no AsyncStorage (versões de 1.13 a 2.2). Inicialize-o uma vez, na entrada do app:
+O SDK guarda os tokens no SharedPreferences. Inicialize-o uma vez, no `main`, antes do `runApp`, e registre o interceptor dele no `Dio` que chama a API:
 
-```ts
-import SuperTokens from 'supertokens-react-native';
+```dart
+import 'package:dio/dio.dart';
+import 'package:supertokens_flutter/dio.dart';
+import 'package:supertokens_flutter/supertokens.dart';
 
-SuperTokens.init({
-  apiDomain: API_URL, // ex.: http://10.0.2.2:3000 no emulador Android, sem o /api
+SuperTokens.init(
+  apiDomain: apiUrl, // ex.: http://10.0.2.2:3000 no emulador Android, sem o /api
   apiBasePath: '/api/auth',
-});
+  tokenTransferMethod: SuperTokensTokenTransferMethod.HEADER, // o padrão do SDK
+  eventHandler: onSessionEvent, // ver "Quando a sessão acaba"
+);
+
+final dio = Dio(BaseOptions(baseUrl: '$apiUrl/api'));
+dio.interceptors.add(SuperTokensInterceptorWrapper(client: dio));
 ```
 
 **Cadastro.** O cidadão cria a conta pelo `POST /api/clients`, que é público, e o app faz o login em seguida:
 
-```ts
-const response = await fetch(`${API_URL}/api/clients`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    name: 'Maria da Silva',
-    email: 'maria.silva@exemplo.com',
-    password: 'SenhaForte123',
-    cpf: '529.982.247-25',
-    phone: '(44) 99999-8888',
-    birthDate: '1990-05-20',
-  }),
-});
-// 201: conta criada. 400: campos inválidos. 409: e-mail ou CPF já cadastrado.
+```dart
+final response = await dio.post<Map<String, dynamic>>(
+  '/clients',
+  data: {
+    'name': 'Maria da Silva',
+    'email': 'maria.silva@exemplo.com',
+    'password': 'SenhaForte123',
+    'cpf': '529.982.247-25',
+    'phone': '(44) 99999-8888',
+    'birthDate': '1990-05-20',
+  },
+);
+// 201: conta criada. No 400 (campos inválidos) e no 409 (e-mail ou CPF já cadastrado), o Dio
+// lança a DioException, com o corpo do erro no error.response.
 ```
 
-**Login.** O SDK de React Native cuida só da sessão, então o login é uma chamada direta à rota:
+**Login.** O SDK de Flutter cuida só da sessão, então o login é uma chamada direta à rota, pelo mesmo `Dio`. O interceptor guarda os tokens que voltam nos headers:
 
-```ts
-const response = await fetch(`${API_URL}/api/auth/signin`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    formFields: [
-      { id: 'email', value: email },
-      { id: 'password', value: password },
-    ],
-  }),
-});
+```dart
+try {
+  final response = await dio.post<Map<String, dynamic>>(
+    '/auth/signin',
+    data: {
+      'formFields': [
+        {'id': 'email', 'value': email},
+        {'id': 'password', 'value': password},
+      ],
+    },
+  );
+  final result = response.data!;
 
-if (response.status === 429) {
-  // Limite por IP: o header Retry-After traz os segundos de espera.
-} else {
-  const result = await response.json();
-
-  if (result.status === 'OK') {
+  if (result['status'] == 'OK') {
     // Sessão criada: o SDK já guardou os tokens.
-  } else if (result.status === 'GENERAL_ERROR') {
-    // E-mail bloqueado por tentativas: mostre o result.message.
+  } else if (result['status'] == 'GENERAL_ERROR') {
+    // E-mail bloqueado por tentativas: mostre o result['message'].
   } else {
     // WRONG_CREDENTIALS_ERROR ou FIELD_ERROR (o status HTTP é 200 nos dois casos).
+  }
+} on DioException catch (error) {
+  if (error.response?.statusCode == 429) {
+    // Limite por IP: o header Retry-After traz os segundos de espera.
+    final retryAfter = error.response?.headers.value('retry-after');
+  } else {
+    rethrow;
   }
 }
 ```
 
-O `GENERAL_ERROR` aparece depois de 5 falhas de login para o mesmo e-mail em 15 minutos e dura até uma delas sair da janela, mesmo com a senha correta. O 429 vem do limite por IP, acima de 20 tentativas por minuto, e tem o corpo no [formato de erro da aplicação](#erros), sem o campo `status`: confira o status HTTP antes de ler o resultado.
+O `GENERAL_ERROR` aparece depois de 5 falhas de login para o mesmo e-mail em 15 minutos e dura até uma delas sair da janela, mesmo com a senha correta. O 429 vem do limite por IP, acima de 20 tentativas por minuto, e tem o corpo no [formato de erro da aplicação](#erros), sem o campo `status`: com o `Dio`, ele chega como `DioException`, e não como resultado.
 
-O SDK intercepta o `fetch` das requisições para o `apiDomain`: pede os tokens por header (`st-auth-mode: header`), guarda os que voltam na resposta, envia o access token no `Authorization` das chamadas seguintes e renova a sessão quando recebe 401. Com o axios, registre o interceptor uma vez: `SuperTokens.addAxiosInterceptors(axios)`.
+O interceptor cuida das requisições do `Dio` para o `apiDomain`: pede os tokens por header (`st-auth-mode: header`), guarda os que voltam na resposta, envia o access token no `Authorization` das chamadas seguintes e, num 401, renova a sessão e repete a chamada. A renovação e o signout saem por dentro do SDK, pelo pacote `http`, e não passam pelos interceptors do `Dio`.
+
+Quando a sessão não renova mais, o interceptor do SDK entrega o 401 como uma resposta comum, sem lançar a `DioException`. Confira o status, ou registre depois do interceptor do SDK um interceptor que transforme o 401 em erro, como o app faz.
 
 **Sessão:**
 
-```ts
+```dart
 await SuperTokens.doesSessionExist(); // true se há sessão guardada (decide a tela inicial)
 await SuperTokens.signOut(); // encerra a sessão na API e apaga os tokens
 ```
 
-**Em dev**, o `localhost` do aparelho não é o da sua máquina. Use `http://10.0.2.2:3000` no emulador Android, `http://localhost:3000` no simulador do iOS e o IP da máquina na rede num aparelho físico. O app não passa pelo CORS.
+Os dois métodos não lançam erro sem rede:
+
+- com o access token vencido e sem rede para renovar, o `doesSessionExist` responde `false`, mas não apaga os tokens: a sessão continua guardada para a próxima tentativa;
+- o `signOut` só apaga os tokens depois que a API responde. Sem resposta, ele não lança erro e mantém os tokens no aparelho. O erro vai só para o `completionHandler`, e nem sempre: com o access token vencido e sem rede para renovar, o SDK nem chama a API.
+
+Para saber se ainda há tokens guardados, sem chamar a API, use o `SuperTokens.getUserId()`: ele lê o front token e lança a `SuperTokensException` quando não há sessão.
+
+**Em dev**, o `localhost` do aparelho não é o da sua máquina. Use `http://10.0.2.2:3000` no emulador Android, `http://localhost:3000` no simulador do iOS ou no celular com o `adb reverse tcp:3000 tcp:3000`, e o IP da máquina na rede num aparelho físico pelo Wi-Fi. O app não passa pelo CORS. O passo a passo está no [README do app](https://github.com/jgtsuchiya/projeto_integrador_reportaAiCm_mobile#conectando-à-api-local).
 
 ## Esqueci minha senha
 
@@ -340,16 +364,22 @@ const response = await fetch(`${API_URL}/api/users/me/mfa`, {
 - **Ativar exige o e-mail verificado** (`emailVerifiedAt` preenchido). Sem ele, a resposta é 422. No app, enquanto o Client não confirmar o e-mail, mostre a opção de [reenviar a verificação](#verificação-de-e-mail) no lugar do botão de ativar.
 - **Ativar encerra as outras sessões da conta**, que caem na renovação seguinte, em até 15 minutos, e pedem o código no próximo login. O aparelho que ativou continua logado, sem pedir o código. Avise o usuário antes de confirmar.
 - Desativar não encerra nenhuma sessão. Ativar o que já está ativo, ou desativar o que já está desativado, responde 200 sem efeito.
-- A senha incorreta responde **401**, que os SDKs confundem com sessão expirada: trate como na troca de senha ([erros](#erros)).
+- A senha incorreta responde **422**, com `details.field` igual a `password`: mostre o erro no campo da senha ([erros](#erros)).
 
 O login de quem ativou segue os três passos abaixo.
 
 **1. Depois do login, confira se a sessão está pendente.** A situação vem na claim `mfa-verified` do access token, que o SDK lê sem chamar a API:
 
 ```ts
-// Web: Session.getAccessTokenPayloadSecurely(). App: SuperTokens.getAccessTokenPayloadSecurely().
+// Painel web.
 const payload = await Session.getAccessTokenPayloadSecurely();
 const pending = payload['mfa-verified']?.v === false;
+```
+
+```dart
+// App.
+final payload = await SuperTokens.getAccessTokenPayloadSecurely();
+final pending = payload['mfa-verified']?['v'] == false;
 ```
 
 - Com `pending`, leve o usuário para a tela do código, em vez de chamar o `GET /api/users/me`.
@@ -381,8 +411,7 @@ const response = await fetch(`${API_URL}/api/mfa/verify`, {
 | ----------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `PATCH /api/users/me/mfa`           | 200      | Verificação ativada ou desativada. O corpo é o perfil, com o `mfaEnabled`                                                    |
 | `PATCH /api/users/me/mfa`           | 400      | Falta o `enabled` (booleano) ou a senha                                                                                      |
-| `PATCH /api/users/me/mfa`           | 401      | Senha incorreta ([erros](#erros))                                                                                            |
-| `PATCH /api/users/me/mfa`           | 422      | Ativação com o e-mail ainda não verificado                                                                                   |
+| `PATCH /api/users/me/mfa`           | 422      | Senha incorreta (`details.field` igual a `password`) ou ativação com o e-mail ainda não verificado                           |
 | `POST /api/mfa/verify`              | 204      | Código conferido e login concluído                                                                                           |
 | `POST /api/mfa/verify`              | 400      | Código fora do formato (6 dígitos)                                                                                           |
 | `POST /api/mfa/verify`              | 422      | Código errado, vencido, já usado ou invalidado por 5 erros. O usuário tenta de novo ou pede outro código                     |
@@ -457,6 +486,261 @@ GET /api/users/me/sessions
 
 O aparelho da sessão encerrada não cai na hora: ele perde o acesso na renovação seguinte do token, em até 15 minutos.
 
+## Reportes
+
+O cidadão abre um reporte de buraco com a foto e a localização do aparelho, e acompanha, edita e exclui os próprios reportes. Os outros cidadãos, perto do buraco, dizem se ele está lá ou não ([validação](#validar-os-reportes-de-outros-cidadãos)). As rotas são só do Client: o ADM e o SuperAdm recebem 403. Como a API trata a foto, a localização e os votos por dentro está no [REPORTS.md](REPORTS.md).
+
+```mermaid
+sequenceDiagram
+    actor C as Cidadão
+    participant APP as App
+    participant API
+
+    C->>APP: tira a foto
+    APP->>APP: gera a foto e a miniatura (JPEG, sem EXIF)<br/>e captura a localização
+    APP->>API: GET /api/reports/nearby (raio de 30 m)
+    API-->>APP: reportes já abertos ali
+    APP->>C: "Já existe um reporte aqui. É o mesmo buraco?"
+    C->>APP: segue com um reporte novo
+    APP->>API: POST /api/reports + Idempotency-Key
+    API-->>APP: 201, o reporte PENDING
+```
+
+### Antes de abrir
+
+- **E-mail confirmado.** Sem ele, o `POST /api/reports` responde 422 "Confirme o seu e-mail para abrir reportes.". Confira o `emailVerifiedAt` do `GET /api/users/me` antes de mostrar o formulário ([verificação de e-mail](#verificação-de-e-mail)). Depois da confirmação, a mesma sessão já abre reportes.
+- **A foto e a miniatura, geradas no app.** A API não redimensiona nem gira a imagem: ela só confere e tira os metadados.
+
+| Imagem      | Formato | Tamanho máximo | Maior lado | Campo             |
+| ----------- | ------- | -------------- | ---------- | ----------------- |
+| A foto      | JPEG    | 2 MB           | 2048 px    | `photo.content`   |
+| A miniatura | JPEG    | 100 KB         | 480 px     | `photo.thumbnail` |
+
+- Aplique a orientação nos pixels: a API não lê a orientação do EXIF. Tire o EXIF no app também (ele pode ter o GPS e o modelo do aparelho): a API o tira de novo, por garantia.
+- A API confere o formato pelos bytes: PNG, WebP e HEIC são recusados, mesmo com outro nome. Os tamanhos são os da imagem, antes do base64.
+- **A localização.** Precisão de até 50 m e dentro de Campo Mourão. A precisão vai em metros (`accuracyMeters`, maior que zero) e volta arredondada para cima.
+- **Reporte repetido.** Antes de enviar, consulte o `GET /api/reports/nearby` com raio de 30 m e pergunte ao cidadão se o buraco é o mesmo.
+
+### Abrir o reporte
+
+```http
+POST /api/reports
+Idempotency-Key: 3b241101-e2bb-4255-8caf-4136c566a962
+```
+
+```json
+{
+  "description": "Buraco grande na faixa da direita, perto do semáforo.",
+  "location": { "latitude": -24.045812, "longitude": -52.378901, "accuracyMeters": 8.5 },
+  "photo": {
+    "content": "/9j/4AAQSkZJRgABAQAAAQABAAD...",
+    "thumbnail": "/9j/4AAQSkZJRgABAQAAAQABAAD..."
+  }
+}
+```
+
+- O base64 é o padrão (RFC 4648), com o `=` do fim, sem quebra de linha e sem o prefixo `data:image/jpeg;base64,`. No Dart, é o que o `base64Encode` do `dart:convert` gera.
+- A `description` é opcional, de até 500 caracteres. Vazia ou `null`, o reporte fica sem descrição.
+- **`Idempotency-Key`.** Crie um UUID quando a tela abre e envie o mesmo em todas as tentativas daquele reporte. Se a resposta se perder (timeout, rede caiu) e o app repetir, a API devolve o reporte já criado, com 201, em vez de criar outro, e ele não conta de novo no limite por dia. Uma chave que não é UUID responde 400. Se o cidadão excluiu o reporte da chave, a repetição responde 404.
+- **Tempo limite.** A foto pode levar alguns segundos para subir em rede móvel: use um tempo limite maior que o padrão do `Dio` no envio e na resposta (o plano do app usa 60 s).
+- **Não registre no log** o base64 nem as coordenadas, nem no corpo, nem na query.
+
+```dart
+final response = await dio.post<Map<String, dynamic>>(
+  '/reports',
+  data: {
+    'description': description,
+    'location': {'latitude': lat, 'longitude': lng, 'accuracyMeters': accuracy},
+    'photo': {'content': base64Encode(photoBytes), 'thumbnail': base64Encode(thumbnailBytes)},
+  },
+  options: Options(
+    headers: {'Idempotency-Key': idempotencyKey},
+    sendTimeout: const Duration(seconds: 60),
+    receiveTimeout: const Duration(seconds: 60),
+  ),
+);
+```
+
+A resposta (201) é o reporte, no mesmo formato de todas as rotas de reportes:
+
+```json
+{
+  "id": "8f0e2c4a-6b1d-4c7e-9a52-3d6f1e0b7a91",
+  "status": "PENDING",
+  "description": "Buraco grande na faixa da direita, perto do semáforo.",
+  "location": { "latitude": -24.045812, "longitude": -52.378901, "accuracyMeters": 9 },
+  "photo": { "id": "c1b7d0e2-2f4a-4b8e-9d61-5a3c7e8f9b10", "width": 1600, "height": 1200 },
+  "votes": {
+    "confirmations": 0,
+    "rejections": 0,
+    "confirmationsRequired": 10,
+    "rejectionsRequired": 10,
+    "mine": null
+  },
+  "isMine": true,
+  "canEdit": true,
+  "canDelete": true,
+  "canVote": false,
+  "createdAt": "2026-11-09T14:30:00.000Z",
+  "updatedAt": "2026-11-09T14:30:00.000Z",
+  "statusChangedAt": null
+}
+```
+
+- `status`: `PENDING` ("Em validação"), `CONFIRMED` ou `REJECTED`. Os status do atendimento pela prefeitura entram depois: trate um valor desconhecido sem quebrar.
+- `votes` traz as contagens e quantas são necessárias, para o app mostrar "3 de 10 confirmações", e o `mine`: o voto de quem está logado (`"CONFIRM"`, `"DENY"` ou `null`). As contagens mudam com a [validação](#validar-os-reportes-de-outros-cidadãos).
+- `statusChangedAt` é quando o reporte saiu de validação (virou CONFIRMED ou REJECTED). Em PENDING, é `null`.
+- **`isMine`, `canEdit`, `canDelete` e `canVote`** já vêm calculados para quem está logado. Mostre os botões de editar, excluir e votar a partir deles, sem repetir as regras no app.
+- A resposta nunca traz quem abriu o reporte: o `isMine` basta.
+- `photo` traz só o id e as dimensões da foto. As imagens vêm pelo `GET /api/reports/:id/photo`.
+
+### Consultar
+
+| Rota                                                                 | Resposta                                                                                                                                                                                       |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/reports/mine?page=1&pageSize=20&status=PENDING`            | Os reportes do cidadão, em qualquer status, do mais novo ao mais antigo: `{ items, page, pageSize, total }`. O `status` é opcional                                                             |
+| `GET /api/reports/nearby?latitude=...&longitude=...&radiusMeters=30` | Os reportes PENDING e CONFIRMED de qualquer cidadão, do mais perto ao mais longe, até 50: `{ items }`, cada um com o `distanceMeters` (inteiro). O raio vai de 10 a 5000 m, com padrão de 1000 |
+| `GET /api/reports/:id`                                               | O reporte                                                                                                                                                                                      |
+| `GET /api/reports/:id/photo?size=thumbnail`                          | `{ id, mimeType, content }`, com o `content` em base64. `size` é `full` (padrão) ou `thumbnail`                                                                                                |
+
+- O cidadão vê os próprios reportes em qualquer status, e os dos outros só em PENDING e CONFIRMED. Fora disso, e no reporte excluído, a resposta é 404.
+- **Cache das fotos.** O `id` da foto muda quando ela é trocada: use-o como chave do cache, e o cache nunca mostra a foto antiga. Nas listas, carregue as miniaturas (`size=thumbnail`) só quando o item aparece.
+
+```dart
+final response = await dio.get<Map<String, dynamic>>(
+  '/reports/$reportId/photo',
+  queryParameters: {'size': 'thumbnail'},
+);
+final bytes = base64Decode(response.data!['content'] as String);
+// Image.memory(bytes), em cache pelo response.data!['id'].
+```
+
+### Editar e excluir
+
+```http
+PATCH /api/reports/8f0e2c4a-6b1d-4c7e-9a52-3d6f1e0b7a91
+```
+
+```json
+{ "description": "" }
+```
+
+- O `PATCH` aceita a `description` e a `photo` (no mesmo formato do `POST`), pelo menos uma, e responde o reporte. `""` (ou `null`) apaga a descrição, e o campo ausente não muda. A localização não muda.
+- A foto nova ganha outro `photo.id`: atualize a chave do cache.
+- O `DELETE /api/reports/:id` responde 204. O reporte some de todas as rotas, e continua contando no limite de 10 por dia.
+- Só o autor edita e exclui, e só enquanto o reporte está em validação. A edição também exige que ninguém tenha votado. O `canEdit` e o `canDelete` já dizem isso, mas um voto pode chegar enquanto o autor edita: trate o 422 e atualize o reporte.
+
+### Validar os reportes de outros cidadãos
+
+Na tela de validação, o cidadão vê os reportes em validação perto de onde está e diz se o buraco está lá ("Está lá", `CONFIRM`) ou não ("Não está lá", `DENY`). Com 10 confirmações, o reporte vira CONFIRMED e passa a ser considerado verdadeiro. Com 10 votos "não está lá", vira REJECTED e some para os outros cidadãos. O autor continua vendo o próprio reporte em qualquer status.
+
+```mermaid
+sequenceDiagram
+    actor C as Cidadão
+    participant APP as App
+    participant API
+
+    APP->>APP: captura a localização atual
+    APP->>API: GET /api/reports/nearby (posição do cidadão)
+    API-->>APP: reportes, cada um com o canVote e o votes.mine
+    C->>APP: "Está lá" num reporte com canVote
+    APP->>APP: captura a localização de novo
+    APP->>API: POST /api/reports/:id/votes { vote, location }
+    API-->>APP: 201, o reporte atualizado
+```
+
+**1. A lista.** Chame o `GET /api/reports/nearby` com a localização atual do cidadão (ex.: `radiusMeters=1000`). Cada item traz:
+
+- `canVote`: `true` quando o reporte está em validação, é de outro cidadão, ele ainda não votou e o reporte está a até 500 m do ponto consultado. Mostre os botões de voto só nesses. Os outros itens podem aparecer sem os botões (ex.: "Você já votou" quando o `votes.mine` não é `null`, ou "Chegue mais perto para votar").
+- `votes.mine`: o voto do cidadão (`"CONFIRM"`, `"DENY"` ou `null`).
+- `votes.confirmations` de `votes.confirmationsRequired`, para a barra de progresso.
+- `distanceMeters`: a distância até o ponto consultado.
+
+O `canVote` não confere o e-mail: o cidadão sem o e-mail confirmado vê os botões e recebe o 422 "Confirme o seu e-mail para votar nos reportes.", que explica o que fazer. Se quiser, esconda os botões pelo `emailVerifiedAt` do `GET /api/users/me`.
+
+**2. O voto.**
+
+```http
+POST /api/reports/8f0e2c4a-6b1d-4c7e-9a52-3d6f1e0b7a91/votes
+```
+
+```json
+{
+  "vote": "CONFIRM",
+  "location": { "latitude": -24.045903, "longitude": -52.378766, "accuracyMeters": 12 }
+}
+```
+
+- `vote`: `"CONFIRM"` ("está lá") ou `"DENY"` ("não está lá"), em maiúsculas.
+- `location`: a localização **atual** do aparelho, capturada na hora do voto, e não a da lista: o cidadão precisa estar a até 500 m do reporte, com precisão de até 50 m. Recuse no app a posição simulada (`isMocked` no Android).
+- A API só confere a localização de quem vota: ela não é gravada nem devolvida. **Não a registre no log** do app.
+- **O voto é definitivo.** Não há como mudar nem desfazer: confirme a escolha antes de enviar, se a tela deixar o toque acidental fácil.
+- A resposta (201) é o reporte atualizado, no formato de sempre, com o `votes.mine` preenchido e o `canVote: false`. Troque o item da lista por ele. Se o `status` veio `CONFIRMED` ou `REJECTED`, foi este voto que fechou a validação.
+
+```dart
+try {
+  final response = await dio.post<Map<String, dynamic>>(
+    '/reports/$reportId/votes',
+    data: {
+      'vote': confirmed ? 'CONFIRM' : 'DENY',
+      'location': {'latitude': lat, 'longitude': lng, 'accuracyMeters': accuracy},
+    },
+  );
+  updateItem(response.data!);
+} on DioException catch (error) {
+  final status = error.response?.statusCode;
+  if (status == 409 || status == 404 || status == 422) {
+    // 409: já votou. 404: o reporte sumiu. 422: a message explica (ex.: longe demais).
+    showMessage(error.response!.data['message'] as String);
+    refreshList();
+  } else {
+    rethrow;
+  }
+}
+```
+
+**3. As respostas de erro.**
+
+| Status | Quando                                                                                 | O que o app faz                                                       |
+| ------ | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 400    | `vote` fora de `CONFIRM` e `DENY`, ou a localização inválida. O `details` traz o campo | Não deveria acontecer: confira o corpo                                |
+| 404    | O reporte foi excluído pelo autor ou descartado (REJECTED) por outros votos            | Tira o item da lista                                                  |
+| 409    | "Você já votou neste reporte." (ex.: o voto foi gravado, mas a resposta se perdeu)     | Atualiza o item com o `GET /api/reports/:id`, que traz o `votes.mine` |
+| 422    | Regra do voto, com a `message` pronta para exibir (tabela abaixo)                      | Mostra a `message` e atualiza o item                                  |
+
+| Situação (422)              | `message`                                                       |
+| --------------------------- | --------------------------------------------------------------- |
+| E-mail não confirmado       | "Confirme o seu e-mail para votar nos reportes."                |
+| O próprio reporte           | "Você não pode votar no próprio reporte."                       |
+| O reporte já foi confirmado | "Este reporte não está mais em validação."                      |
+| Mais de 500 m do reporte    | "Você precisa estar a até 500 m do reporte para votar."         |
+| Precisão pior que 50 m      | "A localização está imprecisa. Tente de novo num lugar aberto." |
+
+Diferente do `POST /api/reports`, o voto não tem `Idempotency-Key`: se a resposta se perder e o app repetir, a repetição responde 409, e o voto já está gravado.
+
+### Erros dos reportes
+
+| Status | Quando                                                                                                        | O que o app faz                                                   |
+| ------ | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 400    | Campo inválido. O `details` traz o campo (ex.: `photo.content`, `location.accuracyMeters`, `Idempotency-Key`) | Mostra a `message` de cada campo. Na foto, gere a imagem de novo  |
+| 403    | Editar ou excluir o reporte de outro cidadão                                                                  | Não deveria acontecer se o app seguir o `canEdit` e o `canDelete` |
+| 404    | O reporte não existe, foi excluído ou não está visível para o cidadão                                         | Volta para a lista e a atualiza                                   |
+| 409    | Voto repetido no mesmo reporte                                                                                | Atualiza o reporte, que já traz o `votes.mine`                    |
+| 413    | O corpo passa do limite das rotas de reportes (cerca de 2,8 MB)                                               | Gera a foto com mais compressão e tenta de novo                   |
+| 422    | Regra de negócio, com a `message` pronta para exibir (tabela abaixo)                                          | Mostra a `message`                                                |
+
+| Situação (422)            | `message`                                                       |
+| ------------------------- | --------------------------------------------------------------- |
+| E-mail não confirmado     | "Confirme o seu e-mail para abrir reportes."                    |
+| Fora de Campo Mourão      | "Este lugar fica fora de Campo Mourão."                         |
+| Precisão pior que 50 m    | "A localização está imprecisa. Tente de novo num lugar aberto." |
+| Limite por dia            | "Você chegou ao limite de 10 reportes por dia."                 |
+| Editar com votos          | "O reporte já recebeu votos e não pode mais ser editado."       |
+| Editar fora de validação  | "Só é possível editar um reporte em validação."                 |
+| Excluir fora de validação | "Só é possível excluir um reporte em validação."                |
+
+As mensagens do voto estão em [validar os reportes](#validar-os-reportes-de-outros-cidadãos). As mensagens de 400 da foto dizem qual das imagens falhou: "A foto precisa ser uma imagem JPEG.", "A foto passa de 2 MB.", "A foto passa de 2048 px no maior lado.", "A foto precisa estar em base64, sem o prefixo "data:"." e as equivalentes para a miniatura.
+
 ## Quando a sessão acaba
 
 A renovação do access token é automática e o usuário não percebe. A sessão termina de vez quando:
@@ -469,10 +753,10 @@ A renovação do access token é automática e o usuário não percebe. A sessã
 - a verificação em duas etapas é ativada em outro aparelho: as outras sessões caem do mesmo jeito, e a de quem ativou continua;
 - a senha é redefinida pelo link do e-mail: todas as sessões caem na renovação seguinte, em até 15 minutos.
 
-Nesses casos, a API responde 401, o SDK apaga os tokens e avisa pelo `onHandleEvent`, com a ação `UNAUTHORISED`. Use o evento para levar o usuário à tela de login:
+Nesses casos, a API responde 401, o SDK apaga os tokens e avisa o evento `UNAUTHORISED`: no painel, pelo `onHandleEvent`, e no app, pelo `eventHandler`. Use o evento para levar o usuário à tela de login:
 
 ```ts
-// Web: Session.init({ onHandleEvent }). App: SuperTokens.init({ ..., onHandleEvent }).
+// Painel web: Session.init({ onHandleEvent }).
 function onHandleEvent(event: { action: string }) {
   if (event.action === 'UNAUTHORISED' || event.action === 'SIGN_OUT') {
     // Ir para a tela de login.
@@ -480,13 +764,24 @@ function onHandleEvent(event: { action: string }) {
 }
 ```
 
+```dart
+// App: SuperTokens.init(..., eventHandler: onSessionEvent).
+void onSessionEvent(Eventype event) {
+  if (event == Eventype.UNAUTHORISED) {
+    // Ir para a tela de login, com o aviso de que a sessão expirou.
+  }
+}
+```
+
+No app, o `Eventype.SIGN_OUT` chega também quando o `signOut` não alcançou a API e os tokens continuam no aparelho. Antes de levar ao login por ele, confira se ainda há sessão guardada.
+
 ## Rotas de cada front
 
 | Rota                                                                        | Painel web | App | Observação                                                      |
 | --------------------------------------------------------------------------- | :--------: | :-: | --------------------------------------------------------------- |
 | `POST /api/auth/signin`, `/session/refresh` e `/signout`                    |     ✔      |  ✔  | Pelo SDK                                                        |
 | `GET` e `PATCH /api/users/me`                                               |     ✔      |  ✔  | O Client também edita `phone` e `birthDate`                     |
-| `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 401     |
+| `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 422     |
 | `/api/users/me/sessions` (listagem, encerrar uma, encerrar as outras)       |     ✔      |  ✔  | Sessões abertas do usuário logado, de qualquer papel            |
 | `PATCH /api/users/me/mfa`                                                   |     ✔      |  ✔  | `{ enabled, password }`. Ativar exige o e-mail verificado       |
 | `POST /api/mfa/verify` e `POST /api/mfa/code`                               |     ✔      |  ✔  | Tela do código da segunda etapa, com a sessão pendente          |
@@ -499,6 +794,10 @@ function onHandleEvent(event: { action: string }) {
 | `POST /api/invitations/accept`                                              |     ✔      |     | Página `/convite`, sem sessão                                   |
 | `GET /api/clients`, `GET /api/clients/:id`, `PATCH /api/clients/:id/status` |     ✔      |     | `ADMIN` e `SUPER_ADMIN`                                         |
 | `/api/admins` (convite, listagem, edição, status, reenvio, exclusão)        |     ✔      |     | Só o `SUPER_ADMIN`                                              |
+| `POST /api/reports`                                                         |            |  ✔  | Abre o reporte, com a foto em base64. Exige o e-mail confirmado |
+| `GET /api/reports/mine`, `/nearby`, `/:id` e `/:id/photo`                   |            |  ✔  | Os próprios reportes, os de perto, o detalhe e a foto           |
+| `PATCH` e `DELETE /api/reports/:id`                                         |            |  ✔  | Só o autor, com o reporte em validação ([reportes](#reportes))  |
+| `POST /api/reports/:id/votes`                                               |            |  ✔  | Voto "está lá" ou "não está lá", a até 500 m do reporte         |
 
 As listagens recebem `?page=1&pageSize=20` (até 100 por página) e respondem `{ items, page, pageSize, total }`. O corpo e a resposta de cada rota estão na coleção [api.http](api.http), e quem pode chamar cada uma, na [matriz de permissões](AUTH.md#matriz-de-permissões).
 
@@ -514,6 +813,8 @@ A API valida tudo de novo, mas validar no front evita uma ida ao servidor:
 | `cpf`       | Com ou sem máscara (`529.982.247-25` ou `52998224725`), com os dígitos verificadores válidos. Único e não pode ser alterado |
 | `phone`     | DDD + número, com ou sem máscara. Celular com 9 dígitos, começando por 9, ou fixo com 8 dígitos                             |
 | `birthDate` | `AAAA-MM-DD`, no passado                                                                                                    |
+
+Os campos dos reportes (a descrição, a localização e as duas imagens) estão em [antes de abrir](#antes-de-abrir).
 
 ## Erros
 
@@ -534,13 +835,16 @@ As rotas da aplicação respondem os erros sempre no mesmo formato, com a `messa
 | Status | Quando                                        | `details`                                                     |
 | ------ | --------------------------------------------- | ------------------------------------------------------------- |
 | 400    | Campo inválido ou ausente                     | Lista com `field` e `message` de cada campo                   |
-| 401    | Senha de confirmação incorreta (ver abaixo)   | `{ "field": "currentPassword" }` ou `{ "field": "password" }` |
 | 403    | O papel não tem permissão                     | (ausente)                                                     |
 | 403    | Sessão pendente da segunda etapa (ver abaixo) | Formato do SuperTokens, sem `statusCode`                      |
 | 404    | Recurso não encontrado                        | (ausente)                                                     |
-| 409    | E-mail ou CPF já cadastrado                   | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
+| 409    | E-mail ou CPF já cadastrado, ou voto repetido | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
+| 413    | Corpo maior que o limite da rota (ver abaixo) | (ausente)                                                     |
 | 422    | Regra de negócio (ex.: link expirado)         | Depende da regra                                              |
+| 422    | Senha de confirmação incorreta (ver abaixo)   | `{ "field": "currentPassword" }` ou `{ "field": "password" }` |
 | 429    | Muitas requisições do mesmo IP (ver abaixo)   | (ausente)                                                     |
+
+O 413 vem do limite do corpo: 100 KB nas rotas em geral e cerca de 2,8 MB nas de reportes, que recebem a foto em base64. O JSON malformado responde 400 "O corpo da requisição não é um JSON válido.".
 
 O 429 vem do limite por IP do login, do cadastro do Client, do aceite do convite, das duas rotas da redefinição de senha e da confirmação do e-mail: cada uma dessas rotas aceita 20 requisições por minuto por IP. A resposta traz o header `Retry-After`, com os segundos que faltam para a próxima tentativa.
 
@@ -548,7 +852,7 @@ As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 co
 
 A sessão pendente da [verificação em duas etapas](#verificação-em-duas-etapas) também recebe um erro no formato do SuperTokens, em qualquer rota protegida: 403 com `{ "message": "invalid claim", "claimValidationErrors": [...] }`. Diferencie os dois 403 pelo corpo: o da aplicação tem `statusCode`, e este tem `claimValidationErrors`.
 
-> **Atenção à senha de confirmação incorreta.** O `PATCH /api/users/me/password`, o `PATCH /api/users/me/mfa` e o `DELETE /api/users/me` respondem 401 quando a senha informada está errada. Os dois SDKs tratam qualquer 401 da API como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes (`maxRetryAttemptsForSessionRefresh`), e depois lançam um erro em vez de devolver a resposta. Nessas três chamadas, capture o erro e trate-o como senha incorreta.
+**Senha de confirmação incorreta.** O `PATCH /api/users/me/password`, o `PATCH /api/users/me/mfa` e o `DELETE /api/users/me` respondem 422 quando a senha informada está errada, com a `message` `Senha incorreta.` e o campo em `details.field`. Mostre o erro no campo da senha. O 401 fica só para a falta de sessão: os dois SDKs tratam qualquer 401 como sessão expirada e renovam a sessão antes de repetir a chamada.
 
 ## Testando sem o front
 

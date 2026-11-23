@@ -125,7 +125,7 @@ describe('AuthGuard', () => {
   }
 
   function authenticateAs(role: AuthenticatedUser['role']): AuthenticatedUser {
-    const user = { id: USER_ID, role, sessionHandle: SESSION_HANDLE };
+    const user = { id: USER_ID, role, sessionHandle: SESSION_HANDLE, emailVerified: true };
     getAuthenticatedUser.execute.mockResolvedValue(user);
 
     return user;
