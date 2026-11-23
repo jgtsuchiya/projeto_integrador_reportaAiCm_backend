@@ -28,18 +28,22 @@ describe('ReportMapper', () => {
     expect(entity.location).toBeUndefined();
   });
 
-  it('deve listar só as colunas que mudam depois da abertura', () => {
+  it('deve separar as colunas da edição das colunas da validação', () => {
     const report = withReportChanges(openTestReport({ description: '' }), {
       status: ReportStatus.CONFIRMED,
       confirmationsCount: 10,
+      rejectionsCount: 2,
       statusChangedAt: new Date('2026-11-10T12:00:00.000Z'),
     });
 
-    expect(ReportMapper.toChanges(report)).toEqual({
-      status: ReportStatus.CONFIRMED,
+    expect(ReportMapper.toEditChanges(report)).toEqual({
       description: null,
+      updatedAt: report.updatedAt,
+    });
+    expect(ReportMapper.toVotingChanges(report)).toEqual({
+      status: ReportStatus.CONFIRMED,
       confirmationsCount: 10,
-      rejectionsCount: 0,
+      rejectionsCount: 2,
       statusChangedAt: new Date('2026-11-10T12:00:00.000Z'),
       updatedAt: report.updatedAt,
     });

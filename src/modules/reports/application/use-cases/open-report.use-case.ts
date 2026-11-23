@@ -101,7 +101,8 @@ export class OpenReportUseCase implements UseCase<OpenReportInput, ReportOutput>
       return this.toRepeatedOutput(existing, input.authorId);
     }
 
-    return toReportOutput(report, input.authorId, this.config);
+    // O autor não vota no próprio reporte (RN37).
+    return toReportOutput(report, input.authorId, this.config, null);
   }
 
   /** RN30: os reportes excluídos também contam, para a exclusão não liberar mais aberturas. */
@@ -123,6 +124,6 @@ export class OpenReportUseCase implements UseCase<OpenReportInput, ReportOutput>
       throw new ReportNotFoundError();
     }
 
-    return toReportOutput(report, authorId, this.config);
+    return toReportOutput(report, authorId, this.config, null);
   }
 }

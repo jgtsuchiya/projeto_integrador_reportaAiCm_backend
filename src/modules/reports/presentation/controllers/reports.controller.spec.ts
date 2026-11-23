@@ -12,6 +12,7 @@ import { GetReportUseCase } from '../../application/use-cases/get-report.use-cas
 import { ListMyReportsUseCase } from '../../application/use-cases/list-my-reports.use-case';
 import { ListNearbyReportsUseCase } from '../../application/use-cases/list-nearby-reports.use-case';
 import { OpenReportUseCase } from '../../application/use-cases/open-report.use-case';
+import { VoteOnReportUseCase } from '../../application/use-cases/vote-on-report.use-case';
 import { TEST_REPORTS_CONFIG } from '../../testing/report-fixtures';
 import { ReportsController } from './reports.controller';
 
@@ -24,6 +25,7 @@ describe('ReportsController', () => {
   let getReportPhotoUseCase: jest.Mocked<GetReportPhotoUseCase>;
   let editReportUseCase: jest.Mocked<EditReportUseCase>;
   let deleteReportUseCase: jest.Mocked<DeleteReportUseCase>;
+  let voteOnReportUseCase: jest.Mocked<VoteOnReportUseCase>;
 
   const REPORT_ID = '8f0e2c4a-6b1d-4c7e-9a52-3d6f1e0b7a91';
   const user: AuthenticatedUser = {
@@ -46,6 +48,7 @@ describe('ReportsController', () => {
         { provide: GetReportPhotoUseCase, useValue: { execute: jest.fn() } },
         { provide: EditReportUseCase, useValue: { execute: jest.fn() } },
         { provide: DeleteReportUseCase, useValue: { execute: jest.fn() } },
+        { provide: VoteOnReportUseCase, useValue: { execute: jest.fn() } },
         // Os pipes do corpo recebem os limites das imagens pela configuração.
         { provide: ReportsConfig, useValue: TEST_REPORTS_CONFIG },
       ],
@@ -59,6 +62,7 @@ describe('ReportsController', () => {
     getReportPhotoUseCase = moduleRef.get(GetReportPhotoUseCase);
     editReportUseCase = moduleRef.get(EditReportUseCase);
     deleteReportUseCase = moduleRef.get(DeleteReportUseCase);
+    voteOnReportUseCase = moduleRef.get(VoteOnReportUseCase);
   });
 
   it('deve abrir o reporte com o autor, o e-mail verificado e a chave do usuário da sessão', async () => {
@@ -148,6 +152,24 @@ describe('ReportsController', () => {
     expect(deleteReportUseCase.execute).toHaveBeenCalledWith({
       reportId: REPORT_ID,
       userId: 'client-1',
+    });
+  });
+
+  it('deve votar com o usuário da sessão e o e-mail verificado dele', async () => {
+    voteOnReportUseCase.execute.mockResolvedValue(report);
+    const body = {
+      vote: 'DENY' as const,
+      location: { latitude: -24, longitude: -52, accuracyMeters: 12 },
+    };
+
+    await expect(sut.vote(REPORT_ID, body, { ...user, emailVerified: false })).resolves.toBe(
+      report,
+    );
+    expect(voteOnReportUseCase.execute).toHaveBeenCalledWith({
+      ...body,
+      reportId: REPORT_ID,
+      voterId: 'client-1',
+      emailVerified: false,
     });
   });
 });

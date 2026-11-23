@@ -2,7 +2,7 @@
 
 API do **ReportaAi Cm**, plataforma para que os moradores de **Campo Mourão (PR)** reportem buracos no asfalto e para que a prefeitura acompanhe e analise esses reportes.
 
-> **Status:** em desenvolvimento (Projeto Integrador). A base do projeto, a gestão de usuários, o login completo (com recuperação de senha, verificação de e-mail, proteção contra força bruta e verificação em duas etapas) e os reportes de buracos pelo app (com a foto e a localização) estão prontos. A validação comunitária dos reportes e o painel da prefeitura entram nas próximas sprints.
+> **Status:** em desenvolvimento (Projeto Integrador). A base do projeto, a gestão de usuários, o login completo (com recuperação de senha, verificação de e-mail, proteção contra força bruta e verificação em duas etapas) os reportes de buracos pelo app (com a foto e a localização) e a validação comunitária dos reportes estão prontos. O painel da prefeitura entra nas próximas sprints.
 
 ## Sumário
 
@@ -31,7 +31,7 @@ Qualquer morador de Campo Mourão pode **abrir um reporte** de buraco no asfalto
 - a **localização** do problema é capturada no momento do reporte;
 - o cidadão envia uma **foto** do buraco.
 
-O reporte nasce "em validação": na validação comunitária, que entra na próxima etapa, os outros cidadãos confirmam se o buraco está lá, como nos alertas dos apps de mobilidade.
+O reporte nasce "em validação": na validação comunitária, os outros cidadãos perto do buraco confirmam se ele está lá, como nos alertas dos apps de mobilidade. Com 10 confirmações, o reporte passa a ser considerado verdadeiro.
 
 > O acompanhamento do reporte pela prefeitura (status do atendimento e retorno ao cidadão) entra com o painel.
 
@@ -203,7 +203,7 @@ Onde continuar:
 
 ## Reportes
 
-O cidadão abre o reporte pelo app, com a foto e a localização do aparelho, e acompanha, edita e exclui os próprios reportes. As rotas são só do Client.
+O cidadão abre o reporte pelo app, com a foto e a localização do aparelho, e acompanha, edita e exclui os próprios reportes. Os outros cidadãos, perto do buraco, confirmam ou negam o reporte. As rotas são só do Client.
 
 | Rotas                                                 | O que fazem                                                                                    |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -211,16 +211,18 @@ O cidadão abre o reporte pelo app, com a foto e a localização do aparelho, e 
 | `GET /api/reports/mine` e `GET /api/reports/nearby`   | Os reportes do cidadão (paginados) e os reportes perto de um ponto, para não abrir um repetido |
 | `GET /api/reports/:id` e `GET /api/reports/:id/photo` | O reporte e a foto (ou a miniatura), em base64                                                 |
 | `PATCH /api/reports/:id` e `DELETE /api/reports/:id`  | O autor troca a descrição e a foto, ou exclui o reporte, enquanto ele está em validação        |
+| `POST /api/reports/:id/votes`                         | Outro cidadão, a até 500 m, diz se o buraco "está lá" ou "não está lá". Um voto por reporte    |
 
 - **A foto** chega em base64, no JSON, e é gravada em binário, sem os metadados (o EXIF pode ter o GPS do aparelho). O app gera a foto e a miniatura, em JPEG.
 - **A localização** fica numa coluna espacial do MySQL (`POINT SRID 4326`), com índice, e precisa estar em Campo Mourão, com precisão de até 50 m.
 - **Envio repetido seguro:** com a mesma `Idempotency-Key`, a repetição do envio devolve o reporte já criado, sem criar outro.
 - **Limites:** 10 reportes por Client em 24 horas. Os outros cidadãos só veem os reportes em validação ou confirmados, e nunca quem os abriu.
+- **Validação comunitária:** com 10 confirmações, o reporte vira confirmado, e com 10 votos "não está lá", descartado. A contagem é feita com a linha do reporte travada, então os votos simultâneos nunca se perdem. A localização de quem vota é conferida e descartada.
 
 Onde continuar:
 
-- [docs/REPORTS.md](docs/REPORTS.md): como o módulo funciona por dentro (a foto, a localização, a visibilidade e as permissões).
-- [docs/FRONTEND.md](docs/FRONTEND.md#reportes): o guia do app para abrir, consultar, editar e excluir reportes.
+- [docs/REPORTS.md](docs/REPORTS.md): como o módulo funciona por dentro (a foto, a localização, a visibilidade, as permissões e a validação).
+- [docs/FRONTEND.md](docs/FRONTEND.md#reportes): o guia do app para abrir, consultar, editar, excluir e validar reportes.
 - [docs/sprints/sprint-4-reportes.md](docs/sprints/sprint-4-reportes.md): plano dos reportes e da validação comunitária, com as decisões e as regras de negócio (RN26 a RN40).
 
 ## Variáveis de ambiente
@@ -268,8 +270,9 @@ O modelo está em [.env.example](.env.example). As variáveis são validadas qua
 | `REPORT_DAILY_LIMIT`                  | não         | `10`                          | Reportes por Client em 24 horas                                                                                                                 |
 | `REPORT_CONFIRMATIONS_REQUIRED`       | não         | `10`                          | Confirmações que tornam o reporte confirmado (validação comunitária)                                                                            |
 | `REPORT_REJECTIONS_REQUIRED`          | não         | `10`                          | Votos "não está lá" que tornam o reporte descartado                                                                                             |
+| `REPORT_VOTE_MAX_DISTANCE_METERS`     | não         | `500`                         | Distância máxima, em metros, entre quem vota e o reporte ([detalhes](docs/REPORTS.md#validação-comunitária))                                    |
 
-O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração e e2e, e deixa o limite por IP alto, para ele não interferir nos testes. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md). Para testar os reportes fora de Campo Mourão, aumente a `REPORT_AREA_BOUNDS` no seu `.env`.
+O [.env.test](.env.test) sobrescreve o banco para `reportaai_cm_test` nos testes de integração e e2e, deixa o limite por IP alto, para ele não interferir nos testes, e baixa as duas contagens da validação para 3, para os e2e criarem menos contas. Mais detalhes em [docs/DATABASE.md](docs/DATABASE.md). Para testar os reportes fora de Campo Mourão, aumente a `REPORT_AREA_BOUNDS` no seu `.env`.
 
 ## Comandos disponíveis
 

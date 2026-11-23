@@ -1,12 +1,24 @@
+import { ReportVote } from '../domain/entities/report-vote.entity';
+import { Report } from '../domain/entities/report.entity';
 import { DuplicateIdempotencyKeyError } from '../domain/errors/duplicate-idempotency-key.error';
+import { DuplicateVoteError } from '../domain/errors/duplicate-vote.error';
+import { OwnReportVoteError } from '../domain/errors/own-report-vote.error';
 import { ReportPhotoSize } from '../domain/repositories/report-photo.repository';
 import { GeoPoint } from '../domain/value-objects/geo-point';
+import { ReportVoteType } from '../domain/value-objects/report-vote-type';
 import {
   InMemoryReportPhotoRepository,
   InMemoryReportRepository,
   InMemoryReportsDatabase,
 } from './in-memory-reports';
-import { buildPhoto, CENTER, JpegFixture, openTestReport, pointNorthOf } from './report-fixtures';
+import {
+  buildPhoto,
+  CENTER,
+  JpegFixture,
+  openTestReport,
+  pointNorthOf,
+  TEST_REPORTS_CONFIG,
+} from './report-fixtures';
 
 describe('Fakes dos reportes', () => {
   let database: InMemoryReportsDatabase;
@@ -56,5 +68,49 @@ describe('Fakes dos reportes', () => {
 
   it('deve devolver null para a foto de um reporte inexistente', async () => {
     await expect(photos.findContent('inexistente', ReportPhotoSize.THUMBNAIL)).resolves.toBeNull();
+  });
+
+  describe('votos', () => {
+    /** A regra da entidade, como o `VoteOnReportUseCase` a entrega ao repositório. */
+    function confirm(voterId: string): (report: Report) => ReportVote {
+      return (report) => report.registerVote(voterId, ReportVoteType.CONFIRM, TEST_REPORTS_CONFIG);
+    }
+
+    it('deve gravar o voto e trocar o reporte guardado por uma cópia atualizada', async () => {
+      const report = openTestReport();
+      await reports.create(report, buildPhoto());
+
+      const updated = await reports.vote(report.id, confirm('voter-1'));
+
+      expect(updated).not.toBe(report);
+      expect(updated?.confirmationsCount).toBe(1);
+      expect(report.confirmationsCount).toBe(0);
+      expect(database.reports.get(report.id)).toBe(updated);
+      await expect(reports.findVotes('voter-1', [report.id, 'outro'])).resolves.toEqual(
+        new Map([[report.id, ReportVoteType.CONFIRM]]),
+      );
+    });
+
+    it('deve recusar o voto repetido e o da regra, sem gravar nada', async () => {
+      const report = openTestReport({ authorId: 'author-1' });
+      await reports.create(report, buildPhoto());
+      await reports.vote(report.id, confirm('voter-1'));
+
+      await expect(reports.vote(report.id, confirm('voter-1'))).rejects.toThrow(DuplicateVoteError);
+      await expect(reports.vote(report.id, confirm('author-1'))).rejects.toThrow(
+        OwnReportVoteError,
+      );
+      expect(database.votes).toHaveLength(1);
+      expect(database.reports.get(report.id)?.confirmationsCount).toBe(1);
+    });
+
+    it('deve devolver null para o reporte inexistente ou excluído', async () => {
+      const report = openTestReport({ authorId: 'author-1' });
+      await reports.create(report, buildPhoto());
+      report.delete('author-1');
+
+      await expect(reports.vote(report.id, confirm('voter-1'))).resolves.toBeNull();
+      await expect(reports.vote('inexistente', confirm('voter-1'))).resolves.toBeNull();
+    });
   });
 });

@@ -79,6 +79,8 @@ export const envSchema = z.object({
   // Votos que tornam o reporte CONFIRMED ou REJECTED (RN39).
   REPORT_CONFIRMATIONS_REQUIRED: z.coerce.number().int().positive().default(10),
   REPORT_REJECTIONS_REQUIRED: z.coerce.number().int().positive().default(10),
+  // Distância máxima, em metros, entre quem vota e o reporte (RN38).
+  REPORT_VOTE_MAX_DISTANCE_METERS: z.coerce.number().int().positive().default(500),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -14,7 +14,10 @@ export interface ListMyReportsInput extends PageRequest {
   status?: ReportStatus;
 }
 
-/** Reportes do próprio usuário, em qualquer status e sem os excluídos, do mais novo ao mais antigo. */
+/**
+ * Reportes do próprio usuário, em qualquer status e sem os excluídos, do mais novo ao mais
+ * antigo. O `votes.mine` é sempre `null`: o autor não vota no próprio reporte (RN37).
+ */
 @Injectable()
 export class ListMyReportsUseCase implements UseCase<ListMyReportsInput, Page<ReportOutput>> {
   constructor(
@@ -27,7 +30,7 @@ export class ListMyReportsUseCase implements UseCase<ListMyReportsInput, Page<Re
 
     return {
       ...result,
-      items: result.items.map((report) => toReportOutput(report, userId, this.config)),
+      items: result.items.map((report) => toReportOutput(report, userId, this.config, null)),
     };
   }
 }

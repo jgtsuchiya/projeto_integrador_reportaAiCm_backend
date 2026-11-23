@@ -91,6 +91,8 @@ erDiagram
     users |o--o{ users : "created_by_id"
     users ||--o{ reports : "author_id"
     reports ||--|| report_photos : "report_id"
+    reports ||--o{ report_votes : "report_id"
+    users ||--o{ report_votes : "user_id"
 
     roles {
         smallint id PK
@@ -163,6 +165,13 @@ erDiagram
         mediumblob thumbnail
         datetime created_at
     }
+    report_votes {
+        char id PK
+        char report_id FK
+        char user_id FK
+        enum vote
+        datetime created_at
+    }
 ```
 
 | Tabela            | Conteúdo                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -174,14 +183,15 @@ erDiagram
 | `login_attempts`  | Uma linha por tentativa de login: o e-mail informado (com conta ou não), o IP, o user agent e o resultado. Tem índices em (`email`, `created_at`), para contar as falhas recentes de um e-mail, e em `created_at`, para apagar as linhas antigas                                                                                                                                                 |
 | `reports`         | Os reportes de buracos. O `status` é `PENDING` (em validação), `CONFIRMED` ou `REJECTED`. A `location` é um `POINT SRID 4326`, com índice espacial. As contagens dos votos são cópias, atualizadas com cada voto. `deleted_at` marca a exclusão lógica pelo autor. Tem índice em (`author_id`, `created_at`), para "meus reportes" e o limite por dia, e o UNIQUE da `Idempotency-Key` por autor |
 | `report_photos`   | A foto de cada reporte (uma por reporte, por enquanto), em binário: a imagem (até 2 MB) e a miniatura (até 100 KB), sem os metadados. A largura, a altura e o tamanho são os da foto. A troca da foto apaga a linha e grava outra, com outro id                                                                                                                                                  |
+| `report_votes`    | Os votos da validação comunitária: `CONFIRM` ("está lá") ou `DENY` ("não está lá"), um por usuário e reporte (UNIQUE em `report_id` + `user_id`), com índice em `user_id`. O voto não muda, então a tabela não tem `updated_at`. A localização de quem vota não é gravada (RN38)                                                                                                                 |
 
 As FKs de `client_profiles` e `user_tokens` usam `ON DELETE CASCADE`, porque esses registros não existem sem o usuário. As de `users` (`role_id` e `created_by_id`) usam `RESTRICT`. Na prática, os usuários não são apagados fisicamente: a exclusão é lógica.
 
-A FK de `reports.author_id` usa `RESTRICT`, como as de `users`: os usuários não são apagados fisicamente, e os reportes continuam ligados à conta anonimizada (RN11). Nenhum dado pessoal fica nas tabelas de reportes. A FK de `report_photos` usa `ON DELETE CASCADE`.
+A FK de `reports.author_id` usa `RESTRICT`, como as de `users`: os usuários não são apagados fisicamente, e os reportes e os votos continuam ligados à conta anonimizada (RN11). Nenhum dado pessoal fica nas tabelas de reportes. As FKs de `report_photos` e de `report_votes.report_id` usam `ON DELETE CASCADE`, e a de `report_votes.user_id`, `RESTRICT`. Na API, o reporte só sai pela exclusão lógica, e os votos dele ficam no banco.
 
 `login_attempts` não tem FK para `users` de propósito: o bloqueio do login conta as tentativas de qualquer e-mail informado, com conta ou não ([AUTH.md](AUTH.md#bloqueio-do-login-por-tentativas)). Como a tabela guarda dado pessoal (e-mail e IP), as linhas têm prazo: as com mais de 30 dias são apagadas quando a API sobe e, depois, uma vez por dia (RN19).
 
-As credenciais e as sessões ficam no PostgreSQL do SuperTokens, criado e mantido pelo próprio Core, fora das nossas migrations. O modelo completo e as regras de negócio estão em [sprints/sprint-2-usuarios.md](sprints/sprint-2-usuarios.md). Os tipos de token e a tabela `login_attempts` vêm do plano de login, em [sprints/sprint-3-login.md](sprints/sprint-3-login.md#3-modelagem-mysql).
+As credenciais e as sessões ficam no PostgreSQL do SuperTokens, criado e mantido pelo próprio Core, fora das nossas migrations. O modelo completo e as regras de negócio estão em [sprints/sprint-2-usuarios.md](sprints/sprint-2-usuarios.md). Os tipos de token e a tabela `login_attempts` vêm do plano de login, em [sprints/sprint-3-login.md](sprints/sprint-3-login.md#3-modelagem-mysql), e as tabelas dos reportes, do [plano da sprint 4](sprints/sprint-4-reportes.md#3-modelagem-mysql).
 
 ### Tokens de uso único
 
@@ -210,6 +220,8 @@ As tabelas dos reportes vêm do [plano da sprint 4](sprints/sprint-4-reportes.md
 - **UNIQUE da `Idempotency-Key`.** O índice é `uq_reports_idempotency_key_author_id` (`idempotency_key`, `author_id`), com a chave na frente. Na ordem (`author_id`, `idempotency_key`), o MySQL 9.7 o usa para a FK do autor e deixa de conferi-la nas linhas com a chave nula: um reporte sem a chave entrava com um `author_id` inexistente. Com a chave na frente, a FK usa o índice (`author_id`, `created_at`), que não tem coluna nula.
 - **FK para outro módulo.** A entidade `ReportOrmEntity` declara a FK para `users` pelo nome da tabela (`@ForeignKey('users', ...)`), sem relação com a entidade do módulo `users`. Quem monta um `DataSource` com a lista de entidades (como os testes de integração) inclui a `UserOrmEntity` e a `RoleOrmEntity`.
 - **Imagens.** As colunas `content` e `thumbnail` são `MEDIUMBLOB` (até 16 MB; a miniatura passa dos 64 KB do `BLOB`) e usam `select: false`: nenhuma consulta traz as imagens sem pedir. A foto é lida uma imagem por vez.
+- **Contagens dos votos.** `confirmations_count` e `rejections_count` são cópias da contagem de `report_votes`, para as listagens não contarem os votos. Só o voto as grava, na mesma transação que grava a linha de `report_votes`, com a linha do reporte travada (`SELECT ... FOR UPDATE`): os votos simultâneos no mesmo reporte esperam a vez, e nenhum se perde (RN40). A edição do autor não regrava essas colunas, e só grava se o reporte continua PENDING e sem votos ([REPORTS.md](REPORTS.md#a-trava-da-linha)).
+- **Índices de `report_votes`.** O UNIQUE (`report_id`, `user_id`) barra o voto repetido e serve também à FK do reporte, e o `idx_report_votes_user_id`, à FK do usuário. As duas colunas são NOT NULL, então a FK não cai no caso do UNIQUE da `Idempotency-Key` acima. O teste `database.integration-spec.ts` confere o UNIQUE, a FK do usuário e a cascata com o reporte.
 
 ### Status do usuário
 

@@ -4,6 +4,7 @@ import { ReportHasVotesError } from '../../domain/errors/report-has-votes.error'
 import { ReportNotEditableError } from '../../domain/errors/report-not-editable.error';
 import { ReportNotFoundError } from '../../domain/errors/report-not-found.error';
 import { ReportStatus } from '../../domain/value-objects/report-status';
+import { ReportVoteType } from '../../domain/value-objects/report-vote-type';
 import { InMemoryReportRepository, InMemoryReportsDatabase } from '../../testing/in-memory-reports';
 import {
   buildPhoto,
@@ -113,6 +114,21 @@ describe('EditReportUseCase', () => {
     await expect(
       sut.execute({ reportId: id, userId: AUTHOR, description: 'Depois', photo }),
     ).rejects.toThrow(InvalidReportImageError);
+    expect(database.reports.get(id)?.description?.value).toBe('Antes');
+  });
+  it('deve recusar a edição quando um voto chega entre a leitura e a gravação', async () => {
+    const id = await seed();
+    // A edição lê o reporte ainda sem votos, e um voto é gravado antes da edição.
+    const stale = await repository.findById(id);
+    await repository.vote(id, (report) =>
+      report.registerVote(OTHER, ReportVoteType.CONFIRM, TEST_REPORTS_CONFIG),
+    );
+    jest.spyOn(repository, 'findById').mockResolvedValueOnce(stale);
+
+    await expect(sut.execute({ reportId: id, userId: AUTHOR, description: 'x' })).rejects.toThrow(
+      ReportHasVotesError,
+    );
+    expect(database.reports.get(id)).toMatchObject({ confirmationsCount: 1 });
     expect(database.reports.get(id)?.description?.value).toBe('Antes');
   });
 });

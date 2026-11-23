@@ -1,22 +1,29 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThanOrEqual, QueryFailedError, Repository, SelectQueryBuilder } from 'typeorm';
+import { In, MoreThanOrEqual, QueryFailedError, Repository, SelectQueryBuilder } from 'typeorm';
 
 import { Page, PageRequest } from '@shared/domain/pagination';
 
 import { ReportPhoto } from '../../../domain/entities/report-photo.entity';
+import { ReportVote } from '../../../domain/entities/report-vote.entity';
 import { Report } from '../../../domain/entities/report.entity';
 import { DuplicateIdempotencyKeyError } from '../../../domain/errors/duplicate-idempotency-key.error';
+import { DuplicateVoteError } from '../../../domain/errors/duplicate-vote.error';
+import { ReportHasVotesError } from '../../../domain/errors/report-has-votes.error';
+import { ReportNotDeletableError } from '../../../domain/errors/report-not-deletable.error';
 import {
   NearbyReport,
   ReportFilter,
   ReportRepository,
 } from '../../../domain/repositories/report.repository';
 import { GeoPoint } from '../../../domain/value-objects/geo-point';
-import { PUBLIC_REPORT_STATUSES } from '../../../domain/value-objects/report-status';
+import { PUBLIC_REPORT_STATUSES, ReportStatus } from '../../../domain/value-objects/report-status';
+import { ReportVoteType } from '../../../domain/value-objects/report-vote-type';
 import { ReportPhotoOrmEntity } from '../entities/report-photo.orm-entity';
+import { ReportVoteOrmEntity } from '../entities/report-vote.orm-entity';
 import { ReportOrmEntity, WGS84_SRID } from '../entities/report.orm-entity';
 import { ReportPhotoMapper } from '../mappers/report-photo.mapper';
+import { ReportVoteMapper } from '../mappers/report-vote.mapper';
 import { ReportMapper, ReportRowExtras } from '../mappers/report.mapper';
 
 /** Colunas calculadas da consulta dos reportes, ao lado das da entidade (`report_<coluna>`). */
@@ -27,6 +34,8 @@ interface ReportRawRow extends ReportRowExtras {
 
 /** Restrição que garante uma `Idempotency-Key` por autor (RN31). */
 const IDEMPOTENCY_KEY_CONSTRAINT = 'uq_reports_idempotency_key_author_id';
+/** Restrição que garante um voto por usuário e reporte (RN37). */
+const VOTE_CONSTRAINT = 'uq_report_votes_report_id_user_id';
 
 /** Menor distância de um grau de latitude, no equador, em metros. */
 const MIN_METERS_PER_LATITUDE_DEGREE = 110_574;
@@ -50,6 +59,10 @@ function geometryFromWkt(parameter: string): string {
  *
  * As consultas juntam o id e as dimensões da foto, mas nunca as imagens: as colunas delas usam
  * `select: false`. As consultas do TypeORM ignoram os reportes excluídos (`@DeleteDateColumn`).
+ *
+ * As colunas da validação (o status e as contagens) só são gravadas pelo `vote`, com a linha do
+ * reporte travada. A edição e a exclusão só gravam se o reporte continua como estava quando foi
+ * lido, para um voto simultâneo não ser desfeito nem ignorado.
  */
 @Injectable()
 export class TypeOrmReportRepository implements ReportRepository {
@@ -79,13 +92,29 @@ export class TypeOrmReportRepository implements ReportRepository {
         );
       });
     } catch (error) {
-      throw isDuplicateIdempotencyKey(error) ? new DuplicateIdempotencyKeyError() : error;
+      throw isUniqueViolation(error, IDEMPOTENCY_KEY_CONSTRAINT)
+        ? new DuplicateIdempotencyKeyError()
+        : error;
     }
   }
 
   async save(report: Report, photo?: ReportPhoto): Promise<void> {
     await this.repository.manager.transaction(async (manager) => {
-      await manager.update(ReportOrmEntity, { id: report.id }, ReportMapper.toChanges(report));
+      // Só grava se o reporte continua em validação e sem votos (RN33): um voto gravado depois
+      // da leitura deixa a condição falsa, e a edição é recusada.
+      const { affected } = await manager.update(
+        ReportOrmEntity,
+        {
+          id: report.id,
+          status: ReportStatus.PENDING,
+          confirmationsCount: 0,
+          rejectionsCount: 0,
+        },
+        ReportMapper.toEditChanges(report),
+      );
+      if (!affected) {
+        throw new ReportHasVotesError();
+      }
 
       if (photo) {
         await manager.delete(ReportPhotoOrmEntity, { reportId: report.id });
@@ -175,15 +204,68 @@ export class TypeOrmReportRepository implements ReportRepository {
   }
 
   async softDelete(report: Report): Promise<void> {
-    await this.repository.update(
-      { id: report.id },
+    // Só exclui o reporte que continua em validação (RN34): um voto que o confirmou ou descartou
+    // depois da leitura deixa a condição falsa.
+    const { affected } = await this.repository.update(
+      { id: report.id, status: ReportStatus.PENDING },
       { deletedAt: report.deletedAt, updatedAt: report.updatedAt },
     );
+    if (!affected) {
+      throw new ReportNotDeletableError();
+    }
   }
 
-  /** Reporte com a localização e os dados da foto, sem as imagens. */
-  private selectReports(): SelectQueryBuilder<ReportOrmEntity> {
-    return this.repository
+  async vote(reportId: string, apply: (report: Report) => ReportVote): Promise<Report | null> {
+    try {
+      return await this.repository.manager.transaction(async (manager) => {
+        // A trava vale até o fim da transação: o voto seguinte no mesmo reporte lê as contagens
+        // já com este voto.
+        const [locked] = await this.load(
+          this.selectReports(manager.getRepository(ReportOrmEntity))
+            .where('report.id = :id', { id: reportId })
+            .setLock('pessimistic_write'),
+        );
+        if (!locked) {
+          return null;
+        }
+
+        const { report } = locked;
+        const vote = apply(report);
+        await manager.insert(ReportVoteOrmEntity, ReportVoteMapper.toPersistence(vote));
+        await manager.update(
+          ReportOrmEntity,
+          { id: report.id },
+          ReportMapper.toVotingChanges(report),
+        );
+
+        return report;
+      });
+    } catch (error) {
+      throw isUniqueViolation(error, VOTE_CONSTRAINT) ? new DuplicateVoteError() : error;
+    }
+  }
+
+  async findVotes(voterId: string, reportIds: string[]): Promise<Map<string, ReportVoteType>> {
+    if (reportIds.length === 0) {
+      return new Map();
+    }
+
+    const votes = await this.repository.manager.getRepository(ReportVoteOrmEntity).find({
+      select: { reportId: true, vote: true },
+      where: { userId: voterId, reportId: In(reportIds) },
+    });
+
+    return new Map(votes.map(({ reportId, vote }) => [reportId, vote]));
+  }
+
+  /**
+   * Reporte com a localização e os dados da foto, sem as imagens. O `repository` é o da
+   * transação, quando a consulta faz parte de uma.
+   */
+  private selectReports(
+    repository: Repository<ReportOrmEntity> = this.repository,
+  ): SelectQueryBuilder<ReportOrmEntity> {
+    return repository
       .createQueryBuilder('report')
       .innerJoin(ReportPhotoOrmEntity, 'photo', 'photo.reportId = report.id')
       .addSelect('ST_Latitude(report.location)', 'latitude')
@@ -243,15 +325,15 @@ function boundingBox(center: GeoPoint, radiusMeters: number): string | null {
 }
 
 /**
- * O caso de uso procura a chave antes de gravar, mas dois pedidos simultâneos podem passar pela
- * busca. Nesse caso, quem barra é o índice UNIQUE do MySQL.
+ * Se o erro é o do índice UNIQUE informado. É ele que barra a `Idempotency-Key` de dois pedidos
+ * simultâneos, que passam juntos pela busca do caso de uso, e o voto repetido.
  */
-function isDuplicateIdempotencyKey(error: unknown): boolean {
+function isUniqueViolation(error: unknown, constraint: string): boolean {
   if (!(error instanceof QueryFailedError)) {
     return false;
   }
 
   const { code, sqlMessage } = error.driverError as { code?: string; sqlMessage?: string };
 
-  return code === 'ER_DUP_ENTRY' && (sqlMessage?.includes(IDEMPOTENCY_KEY_CONSTRAINT) ?? false);
+  return code === 'ER_DUP_ENTRY' && (sqlMessage?.includes(constraint) ?? false);
 }

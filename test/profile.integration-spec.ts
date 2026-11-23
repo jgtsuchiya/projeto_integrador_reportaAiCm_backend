@@ -407,7 +407,7 @@ describe('Perfil do usuário autenticado (integração)', () => {
       await expect(signIn.json()).resolves.toMatchObject({ status: 'OK' });
     });
 
-    it('deve responder 401 e manter a senha quando a senha atual está incorreta', async () => {
+    it('deve responder 422 e manter a senha quando a senha atual está incorreta', async () => {
       const admin = await createStaff(Role.ADMIN);
 
       const response = await changePassword(admin, {
@@ -415,7 +415,7 @@ describe('Perfil do usuário autenticado (integração)', () => {
         newPassword: NEW_PASSWORD,
       });
 
-      expect(response.status).toBe(401);
+      expect(response.status).toBe(422);
       await expect(response.json()).resolves.toMatchObject({
         message: 'Senha incorreta.',
         details: { field: 'currentPassword' },
@@ -529,13 +529,13 @@ describe('Perfil do usuário autenticado (integração)', () => {
       });
     });
 
-    it('deve responder 401 e não mudar nada quando a senha está incorreta', async () => {
+    it('deve responder 422 e não mudar nada quando a senha está incorreta', async () => {
       const admin = await createStaff(Role.ADMIN);
       const other = await signIn(admin.email, PASSWORD);
 
       const response = await changeMfa(admin, { enabled: true, password: 'senha-errada-1' });
 
-      expect(response.status).toBe(401);
+      expect(response.status).toBe(422);
       await expect(response.json()).resolves.toMatchObject({
         message: 'Senha incorreta.',
         details: { field: 'password' },
@@ -617,12 +617,16 @@ describe('Perfil do usuário autenticado (integração)', () => {
       createdIds.push(((await again.json()) as { id: string }).id);
     });
 
-    it('deve responder 401 e manter a conta quando a senha está incorreta', async () => {
+    it('deve responder 422 e manter a conta quando a senha está incorreta', async () => {
       const client = await createClient();
 
       const response = await deleteAccount(client, 'senha-errada-1');
 
-      expect(response.status).toBe(401);
+      expect(response.status).toBe(422);
+      await expect(response.json()).resolves.toMatchObject({
+        message: 'Senha incorreta.',
+        details: { field: 'password' },
+      });
       await expect(findRow(client.id)).resolves.toMatchObject({
         email: client.email,
         deletedAt: null,

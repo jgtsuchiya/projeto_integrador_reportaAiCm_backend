@@ -132,6 +132,17 @@ export function buildReportPayload(overrides: Partial<ReportPayload> = {}): Repo
   };
 }
 
+/** Corpo do `POST /api/reports/:id/votes`. */
+export interface VotePayload {
+  vote: 'CONFIRM' | 'DENY';
+  location: { latitude: number; longitude: number; accuracyMeters: number };
+}
+
+/** Voto "está lá" de quem está no ponto dos reportes de teste, com a precisão de 12 m. */
+export function buildVotePayload(overrides: Partial<VotePayload> = {}): VotePayload {
+  return { vote: 'CONFIRM', location: { ...CAMPO_MOURAO, accuracyMeters: 12 }, ...overrides };
+}
+
 /** Colunas do reporte que só a validação comunitária muda, alteradas direto no banco. */
 export type ReportVotingChanges = Partial<
   Pick<ReportOrmEntity, 'status' | 'confirmationsCount' | 'rejectionsCount' | 'statusChangedAt'>
@@ -397,6 +408,43 @@ export class E2eApp {
     return client;
   }
 
+  /** Cadastra `count` Clients com o e-mail verificado, um depois do outro, e faz login. */
+  async registerVerifiedClients(count: number): Promise<Actor[]> {
+    const clients: Actor[] = [];
+    for (let index = 0; index < count; index++) {
+      clients.push(await this.registerVerifiedClient());
+    }
+
+    return clients;
+  }
+
+  /** Voto pela rota do app. A resposta não é conferida: serve aos testes das recusas. */
+  vote(voter: Tokens, reportId: string, payload: VotePayload = buildVotePayload()): request.Test {
+    return this.api()
+      .post(`/api/reports/${reportId}/votes`)
+      .auth(voter.accessToken, { type: 'bearer' })
+      .send(payload);
+  }
+
+  /**
+   * Vota com cada Client, um depois do outro, e devolve o reporte da última resposta. Falha se
+   * algum voto não responder 201: serve para levar o reporte a um ponto da validação.
+   */
+  async voteWithEach(
+    voters: Tokens[],
+    reportId: string,
+    payload: VotePayload = buildVotePayload(),
+  ): Promise<{ status: string; votes: Record<string, unknown> }> {
+    let body: unknown;
+    for (const voter of voters) {
+      const response = await this.vote(voter, reportId, payload);
+      assertStatus(response, 201, 'Voto');
+      body = response.body;
+    }
+
+    return body as { status: string; votes: Record<string, unknown> };
+  }
+
   /** Abre um reporte pela rota do app e devolve o corpo da resposta. */
   async openReport(
     client: Tokens,
@@ -412,8 +460,8 @@ export class E2eApp {
   }
 
   /**
-   * Altera o status e as contagens do reporte direto no banco, como só a validação comunitária
-   * (epic 2) faria. Serve para testar as regras que dependem deles, como a edição com votos.
+   * Altera o status e as contagens do reporte direto no banco, sem os votos. Serve para testar as
+   * regras que dependem deles sem criar uma conta por voto.
    */
   async updateReportVoting(reportId: string, changes: ReportVotingChanges): Promise<void> {
     await this.dataSource.getRepository(ReportOrmEntity).update({ id: reportId }, changes);
@@ -468,15 +516,15 @@ export class E2eApp {
   }
 
   /**
-   * Apaga todos os usuários do banco de teste, os reportes, as tentativas de login e as
-   * credenciais deles no SuperTokens. O Core é o mesmo do ambiente de dev, então só saem dele os
+   * Apaga todos os usuários do banco de teste, os reportes (com as fotos e os votos), as
+   * tentativas de login e as credenciais deles no SuperTokens. O Core é o mesmo do ambiente de dev, então só saem dele os
    * ids encontrados no banco de teste.
    */
   private async clearData(): Promise<void> {
     // As tentativas de login não têm FK para users, então saem à parte.
     await this.dataSource.getRepository(LoginAttemptOrmEntity).deleteAll();
-    // Os reportes referenciam os usuários (RESTRICT), então saem antes deles. As fotos saem
-    // junto (ON DELETE CASCADE).
+    // Os reportes referenciam os usuários (RESTRICT), então saem antes deles. As fotos e os votos
+    // saem junto (ON DELETE CASCADE), e com os votos sai a referência aos eleitores.
     await this.dataSource.getRepository(ReportOrmEntity).deleteAll();
 
     const repository = this.dataSource.getRepository(UserOrmEntity);

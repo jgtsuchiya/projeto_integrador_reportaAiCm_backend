@@ -16,15 +16,13 @@ export interface ReportRowExtras {
   photoHeight: number;
 }
 
-/** Colunas que mudam depois da abertura. A localização e o autor não mudam. */
-export type ReportChanges = Pick<
+/** Colunas que a edição do autor muda (RN33). A localização e o autor não mudam. */
+export type ReportEditChanges = Pick<ReportOrmEntity, 'description' | 'updatedAt'>;
+
+/** Colunas que um voto muda (RN39 e RN40). */
+export type ReportVotingChanges = Pick<
   ReportOrmEntity,
-  | 'status'
-  | 'description'
-  | 'confirmationsCount'
-  | 'rejectionsCount'
-  | 'statusChangedAt'
-  | 'updatedAt'
+  'status' | 'confirmationsCount' | 'rejectionsCount' | 'statusChangedAt' | 'updatedAt'
 >;
 
 export class ReportMapper {
@@ -59,15 +57,25 @@ export class ReportMapper {
     entity.idempotencyKey = report.idempotencyKey;
     entity.createdAt = report.createdAt;
     entity.deletedAt = report.deletedAt;
-    Object.assign(entity, ReportMapper.toChanges(report));
+    Object.assign(entity, ReportMapper.toEditChanges(report), ReportMapper.toVotingChanges(report));
 
     return entity;
   }
 
-  static toChanges(report: Report): ReportChanges {
+  /**
+   * Só a edição: as colunas da validação ficam de fora, para uma edição feita ao mesmo tempo que
+   * um voto não desfazer a contagem que o voto gravou.
+   */
+  static toEditChanges(report: Report): ReportEditChanges {
+    return {
+      description: report.description?.value ?? null,
+      updatedAt: report.updatedAt,
+    };
+  }
+
+  static toVotingChanges(report: Report): ReportVotingChanges {
     return {
       status: report.status,
-      description: report.description?.value ?? null,
       confirmationsCount: report.confirmationsCount,
       rejectionsCount: report.rejectionsCount,
       statusChangedAt: report.statusChangedAt,

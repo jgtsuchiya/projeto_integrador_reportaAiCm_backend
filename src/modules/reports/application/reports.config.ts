@@ -18,4 +18,6 @@ export abstract class ReportsConfig {
   abstract readonly confirmationsRequired: number;
   /** `REPORT_REJECTIONS_REQUIRED`. */
   abstract readonly rejectionsRequired: number;
+  /** `REPORT_VOTE_MAX_DISTANCE_METERS`. */
+  abstract readonly voteMaxDistanceMeters: number;
 }

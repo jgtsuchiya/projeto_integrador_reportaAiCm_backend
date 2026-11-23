@@ -1,5 +1,6 @@
 import { InvalidLocationError } from '../../domain/errors/invalid-location.error';
 import { ReportStatus } from '../../domain/value-objects/report-status';
+import { ReportVoteType } from '../../domain/value-objects/report-vote-type';
 import { InMemoryReportRepository, InMemoryReportsDatabase } from '../../testing/in-memory-reports';
 import {
   buildPhoto,
@@ -89,5 +90,33 @@ describe('ListNearbyReportsUseCase', () => {
     await expect(
       sut.execute({ userId: VIEWER, latitude: 91, longitude: 0, radiusMeters: 100 }),
     ).rejects.toThrow(InvalidLocationError);
+  });
+  it('deve deixar votar só nos reportes de outros, sem o voto do usuário e a até 500 m do ponto', async () => {
+    const near = await seedAt(100);
+    const voted = await seedAt(200);
+    await seedAt(300, { authorId: VIEWER });
+    await seedAt(300, { status: ReportStatus.CONFIRMED });
+    const far = await seedAt(600);
+    await repository.vote(voted, (report) =>
+      report.registerVote(VIEWER, ReportVoteType.CONFIRM, TEST_REPORTS_CONFIG),
+    );
+
+    const result = await sut.execute({ userId: VIEWER, ...CENTER, radiusMeters: 1000 });
+
+    expect(
+      result.items.map(({ id, canVote, votes, isMine, status }) => ({
+        id,
+        canVote,
+        mine: votes.mine,
+        isMine,
+        status,
+      })),
+    ).toEqual([
+      { id: near, canVote: true, mine: null, isMine: false, status: ReportStatus.PENDING },
+      { id: voted, canVote: false, mine: 'CONFIRM', isMine: false, status: ReportStatus.PENDING },
+      expect.objectContaining({ canVote: false, mine: null }),
+      expect.objectContaining({ canVote: false, mine: null }),
+      { id: far, canVote: false, mine: null, isMine: false, status: ReportStatus.PENDING },
+    ]);
   });
 });
