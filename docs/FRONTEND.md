@@ -340,7 +340,7 @@ const response = await fetch(`${API_URL}/api/users/me/mfa`, {
 - **Ativar exige o e-mail verificado** (`emailVerifiedAt` preenchido). Sem ele, a resposta é 422. No app, enquanto o Client não confirmar o e-mail, mostre a opção de [reenviar a verificação](#verificação-de-e-mail) no lugar do botão de ativar.
 - **Ativar encerra as outras sessões da conta**, que caem na renovação seguinte, em até 15 minutos, e pedem o código no próximo login. O aparelho que ativou continua logado, sem pedir o código. Avise o usuário antes de confirmar.
 - Desativar não encerra nenhuma sessão. Ativar o que já está ativo, ou desativar o que já está desativado, responde 200 sem efeito.
-- A senha incorreta responde **401**, que os SDKs confundem com sessão expirada: trate como na troca de senha ([erros](#erros)).
+- A senha incorreta responde **422**, com `details.field` igual a `password`: mostre o erro no campo da senha ([erros](#erros)).
 
 O login de quem ativou segue os três passos abaixo.
 
@@ -381,8 +381,7 @@ const response = await fetch(`${API_URL}/api/mfa/verify`, {
 | ----------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `PATCH /api/users/me/mfa`           | 200      | Verificação ativada ou desativada. O corpo é o perfil, com o `mfaEnabled`                                                    |
 | `PATCH /api/users/me/mfa`           | 400      | Falta o `enabled` (booleano) ou a senha                                                                                      |
-| `PATCH /api/users/me/mfa`           | 401      | Senha incorreta ([erros](#erros))                                                                                            |
-| `PATCH /api/users/me/mfa`           | 422      | Ativação com o e-mail ainda não verificado                                                                                   |
+| `PATCH /api/users/me/mfa`           | 422      | Senha incorreta (`details.field` igual a `password`) ou ativação com o e-mail ainda não verificado                           |
 | `POST /api/mfa/verify`              | 204      | Código conferido e login concluído                                                                                           |
 | `POST /api/mfa/verify`              | 400      | Código fora do formato (6 dígitos)                                                                                           |
 | `POST /api/mfa/verify`              | 422      | Código errado, vencido, já usado ou invalidado por 5 erros. O usuário tenta de novo ou pede outro código                     |
@@ -486,7 +485,7 @@ function onHandleEvent(event: { action: string }) {
 | --------------------------------------------------------------------------- | :--------: | :-: | --------------------------------------------------------------- |
 | `POST /api/auth/signin`, `/session/refresh` e `/signout`                    |     ✔      |  ✔  | Pelo SDK                                                        |
 | `GET` e `PATCH /api/users/me`                                               |     ✔      |  ✔  | O Client também edita `phone` e `birthDate`                     |
-| `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 401     |
+| `PATCH /api/users/me/password`                                              |     ✔      |  ✔  | `{ currentPassword, newPassword }`. Senha atual errada: 422     |
 | `/api/users/me/sessions` (listagem, encerrar uma, encerrar as outras)       |     ✔      |  ✔  | Sessões abertas do usuário logado, de qualquer papel            |
 | `PATCH /api/users/me/mfa`                                                   |     ✔      |  ✔  | `{ enabled, password }`. Ativar exige o e-mail verificado       |
 | `POST /api/mfa/verify` e `POST /api/mfa/code`                               |     ✔      |  ✔  | Tela do código da segunda etapa, com a sessão pendente          |
@@ -534,12 +533,12 @@ As rotas da aplicação respondem os erros sempre no mesmo formato, com a `messa
 | Status | Quando                                        | `details`                                                     |
 | ------ | --------------------------------------------- | ------------------------------------------------------------- |
 | 400    | Campo inválido ou ausente                     | Lista com `field` e `message` de cada campo                   |
-| 401    | Senha de confirmação incorreta (ver abaixo)   | `{ "field": "currentPassword" }` ou `{ "field": "password" }` |
 | 403    | O papel não tem permissão                     | (ausente)                                                     |
 | 403    | Sessão pendente da segunda etapa (ver abaixo) | Formato do SuperTokens, sem `statusCode`                      |
 | 404    | Recurso não encontrado                        | (ausente)                                                     |
 | 409    | E-mail ou CPF já cadastrado                   | `{ "field": "email" }` ou `{ "field": "cpf" }`                |
 | 422    | Regra de negócio (ex.: link expirado)         | Depende da regra                                              |
+| 422    | Senha de confirmação incorreta (ver abaixo)   | `{ "field": "currentPassword" }` ou `{ "field": "password" }` |
 | 429    | Muitas requisições do mesmo IP (ver abaixo)   | (ausente)                                                     |
 
 O 429 vem do limite por IP do login, do cadastro do Client, do aceite do convite, das duas rotas da redefinição de senha e da confirmação do e-mail: cada uma dessas rotas aceita 20 requisições por minuto por IP. A resposta traz o header `Retry-After`, com os segundos que faltam para a próxima tentativa.
@@ -548,7 +547,7 @@ As rotas de `/api/auth` seguem o formato do SuperTokens: o login responde 200 co
 
 A sessão pendente da [verificação em duas etapas](#verificação-em-duas-etapas) também recebe um erro no formato do SuperTokens, em qualquer rota protegida: 403 com `{ "message": "invalid claim", "claimValidationErrors": [...] }`. Diferencie os dois 403 pelo corpo: o da aplicação tem `statusCode`, e este tem `claimValidationErrors`.
 
-> **Atenção à senha de confirmação incorreta.** O `PATCH /api/users/me/password`, o `PATCH /api/users/me/mfa` e o `DELETE /api/users/me` respondem 401 quando a senha informada está errada. Os dois SDKs tratam qualquer 401 da API como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes (`maxRetryAttemptsForSessionRefresh`), e depois lançam um erro em vez de devolver a resposta. Nessas três chamadas, capture o erro e trate-o como senha incorreta.
+**Senha de confirmação incorreta.** O `PATCH /api/users/me/password`, o `PATCH /api/users/me/mfa` e o `DELETE /api/users/me` respondem 422 quando a senha informada está errada, com a `message` `Senha incorreta.` e o campo em `details.field`. Mostre o erro no campo da senha. O 401 fica só para a falta de sessão: os dois SDKs tratam qualquer 401 como sessão expirada e renovam a sessão antes de repetir a chamada.
 
 ## Testando sem o front
 

@@ -608,7 +608,7 @@ Quem tem a verificação em duas etapas ativa (`users.mfa_enabled`) conclui o lo
 
 **Ativação e desativação (`PATCH /api/users/me/mfa`).** Vale para os três papéis, sempre na própria conta (RN24). Recebe `{ "enabled": true, "password": "..." }` e responde 200 com o perfil atualizado, no formato do `GET /api/users/me`, que traz o `mfaEnabled`.
 
-- **A senha atual confirma a mudança**, nos dois sentidos. A senha incorreta responde 401 (`Senha incorreta.`, com `details.field` igual a `password`), como na troca de senha.
+- **A senha atual confirma a mudança**, nos dois sentidos. A senha incorreta responde 422 (`Senha incorreta.`, com `details.field` igual a `password`), como na troca de senha.
 - **Ativar exige o e-mail verificado**, porque é para ele que o código vai. Sem o `email_verified_at`, a resposta é 422. Na prática, só o Client que ainda não confirmou o e-mail cai nesse caso: o ADM e o SuperAdm já nascem verificados.
 - **Ativar revoga as outras sessões** da conta, que passam pela segunda etapa no próximo login. A sessão que ativou continua completa, sem pedir o código: a claim dela foi gravada no login, quando a conta ainda não tinha a verificação, e não é buscada de novo.
 - **Desativar não revoga nada.** Os logins seguintes deixam de pedir o código. Uma sessão que já estava pendente continua pendente e conclui o login com o código que recebeu.
@@ -691,9 +691,9 @@ Limites conhecidos:
 | Sessão ausente, expirada ou roubada (SuperTokens) | 401                          | `{ "message": "unauthorised" }`, `"try refresh token"` ou `"token theft detected"`              |
 | Sessão pendente da segunda etapa (SuperTokens)    | 403                          | `{ "message": "invalid claim", "claimValidationErrors": [{ "id": "mfa-verified", ... }] }`      |
 
-Nas rotas da aplicação: 400 para validação (com a lista de campos em `details`), 401 para senha incorreta, 403 para papel sem permissão, 404 para recurso inexistente, 409 para e-mail ou CPF já cadastrado e 422 para regra de negócio violada.
+Nas rotas da aplicação: 400 para validação (com a lista de campos em `details`), 403 para papel sem permissão, 404 para recurso inexistente, 409 para e-mail ou CPF já cadastrado e 422 para regra de negócio violada, inclusive a senha de confirmação incorreta.
 
-> **Cuidado com o 401 nas rotas da aplicação.** Os SDKs de front tratam qualquer 401 como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes, e depois lançam um erro. Hoje, o único 401 que não vem da sessão é o da senha de confirmação incorreta (`IncorrectPasswordError`, no `PATCH /api/users/me/password`, no `PATCH /api/users/me/mfa` e no `DELETE /api/users/me`), e os fronts precisam tratá-lo à parte ([FRONTEND.md](FRONTEND.md#erros)). Numa rota nova, não use `UnauthorizedError` para um erro que não seja de sessão.
+> **O 401 é só da sessão.** Os SDKs de front tratam qualquer 401 como sessão expirada: renovam a sessão e repetem a chamada, até 10 vezes, e depois lançam um erro, sem entregar o corpo da resposta. Por isso a senha de confirmação incorreta (`IncorrectPasswordError`, no `PATCH /api/users/me/password`, no `PATCH /api/users/me/mfa` e no `DELETE /api/users/me`) responde 422, e não existe categoria de erro de domínio para o 401. Numa rota nova, um erro que não seja de sessão nunca responde 401.
 
 ## Fora do escopo
 
