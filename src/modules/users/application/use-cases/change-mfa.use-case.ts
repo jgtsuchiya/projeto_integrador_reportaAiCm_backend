@@ -22,7 +22,7 @@ export interface ChangeMfaInput {
 
 /**
  * Liga ou desliga a verificação em duas etapas da própria conta (RN24), confirmada com a senha
- * atual. Uma senha incorreta gera `IncorrectPasswordError` (401), e ativar sem o e-mail
+ * atual. Uma senha incorreta gera `IncorrectPasswordError` (422), e ativar sem o e-mail
  * verificado, `EmailNotVerifiedError` (422). Pedir o estado que a conta já tem responde o
  * perfil sem efeito nenhum.
  *

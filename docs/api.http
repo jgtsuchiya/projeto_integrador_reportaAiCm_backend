@@ -396,7 +396,7 @@ Authorization: Bearer {{clientToken}}
 
 ### Troca a própria senha: encerra as outras sessões e mantém a atual
 # O usuário recebe o e-mail de aviso "Sua senha foi alterada".
-# Resposta: 204. Senha atual incorreta: 401.
+# Resposta: 204. Senha atual incorreta: 422, com "details": { "field": "currentPassword" }.
 PATCH {{baseUrl}}/users/me/password
 Content-Type: application/json
 Authorization: Bearer {{clientToken}}
@@ -408,7 +408,7 @@ Authorization: Bearer {{clientToken}}
 
 ### Exclui a própria conta (só o Client), confirmando com a senha
 # Os dados são anonimizados, e o e-mail e o CPF ficam livres para um novo cadastro.
-# Resposta: 204. Senha incorreta: 401. ADM ou SuperAdm: 403.
+# Resposta: 204. Senha incorreta: 422. ADM ou SuperAdm: 403.
 DELETE {{baseUrl}}/users/me
 Content-Type: application/json
 Authorization: Bearer {{clientToken}}
@@ -477,7 +477,7 @@ Authorization: Bearer {{superAdminToken}}
 ### Ativa a verificação em duas etapas, confirmando com a senha atual
 # Encerra as outras sessões do SuperAdm. A sessão desta requisição continua completa, sem pedir
 # o código. A partir daqui, o login do SuperAdm pede o código enviado por e-mail.
-# Resposta: 200, com o perfil e "mfaEnabled": true. Senha incorreta: 401. E-mail não verificado
+# Resposta: 200, com o perfil e "mfaEnabled": true. Senha incorreta: 422. E-mail não verificado
 # (o Client que ainda não confirmou o e-mail): 422. Já ativa: 200, sem efeito.
 PATCH {{baseUrl}}/users/me/mfa
 Content-Type: application/json
@@ -546,7 +546,7 @@ Authorization: Bearer {{verifiedToken}}
 ### Desativa a verificação em duas etapas: os próximos logins não pedem mais o código
 # A coleção desativa aqui, para o login das outras seções voltar ao normal. Nenhuma sessão é
 # encerrada.
-# Resposta: 200, com "mfaEnabled": false. Senha incorreta: 401. Já desativada: 200, sem efeito.
+# Resposta: 200, com "mfaEnabled": false. Senha incorreta: 422. Já desativada: 200, sem efeito.
 PATCH {{baseUrl}}/users/me/mfa
 Content-Type: application/json
 Authorization: Bearer {{verifiedToken}}

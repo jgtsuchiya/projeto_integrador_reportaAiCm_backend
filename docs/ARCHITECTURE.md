@@ -160,9 +160,10 @@ O domínio lança erros de uma das categorias de [`shared/domain/errors`](../src
 | `ConflictError`     | 409    | E-mail ou CPF já cadastrado         |
 | `BusinessRuleError` | 422    | Transição de status inválida        |
 | `ForbiddenError`    | 403    | Operação não permitida para o papel |
-| `UnauthorizedError` | 401    | Senha atual incorreta               |
 
 Os erros de cada feature estendem uma categoria (ex.: `class EmailAlreadyInUseError extends ConflictError`). O segundo argumento do construtor vai para `details`.
+
+Não há categoria para o 401. Os SDKs do SuperTokens tratam todo 401 como sessão vencida: renovam a sessão e repetem a chamada, até 10 vezes, e o front nunca recebe a resposta. O 401 fica só para a falta de sessão, que o SuperTokens responde. Uma senha de confirmação incorreta, por exemplo, é um `BusinessRuleError` (422).
 
 Todas as respostas de erro seguem o mesmo corpo:
 

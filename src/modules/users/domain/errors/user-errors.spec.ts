@@ -3,7 +3,6 @@ import { ConflictError } from '@shared/domain/errors/conflict.error';
 import { DomainError } from '@shared/domain/errors/domain.error';
 import { ForbiddenError } from '@shared/domain/errors/forbidden.error';
 import { NotFoundError } from '@shared/domain/errors/not-found.error';
-import { UnauthorizedError } from '@shared/domain/errors/unauthorized.error';
 
 import { AdminNotPendingError } from './admin-not-pending.error';
 import { ClientOnlyFieldsError } from './client-only-fields.error';
@@ -56,7 +55,7 @@ describe('Erros do domínio de usuários', () => {
     [new SelfDeletionNotAllowedError(), ForbiddenError, undefined],
     [
       new IncorrectPasswordError('currentPassword'),
-      UnauthorizedError,
+      BusinessRuleError,
       { field: 'currentPassword' },
     ],
     [new UserNotFoundError(), NotFoundError, undefined],
